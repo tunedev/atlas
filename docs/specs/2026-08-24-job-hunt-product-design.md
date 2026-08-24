@@ -160,15 +160,32 @@ Add a job portal without a code change. Build a blueprint for a step the product
 anticipate. Write a custom skill. Extracted from epics 4-8 once those exist, shaped by
 the duplication they actually exhibit rather than by a guess made in advance.
 
-## Deliberately not in scope
+## Transport
+
+Service-to-service RPC is gRPC. The same handler serves HTTP/JSON, so the web UI and an
+agent runner call the same method over different protocols. See the transport section of
+`../../../CLAUDE.md` Tenet 1 for the rule and the reasoning; it governs every repo, not
+just this one.
+
+What it means here: the web UI talks JSON to the same `connect-go` handler an agent
+runner talks gRPC to. There is no separate REST layer, no gateway process, and no second
+adapter to keep in sync.
+
+## Not in v1
+
+Deferred, with the reason, so the option stays visible rather than reading as closed:
+
+| Deferred | Why now | What would change the answer |
+|---|---|---|
+| Submitting applications | Drafting is the whole value; submitting is per-portal browser automation with a much larger trust cost | The drafting loop is trusted and the manual submit step is the remaining friction |
+| Referral and warm-introduction pathfinding | Needs a graph of who the user knows, which nothing here has | A real source of that graph appears |
+| Inbound recruiter triage | The product chases roles; inbound is a different flow | Enough inbound to be a burden |
+| Notification channels | The user pulls; nothing pushes yet | The user misses something that mattered |
+
+## Permanently out of scope
 
 - Any sign-in method other than Google.
 - Platform-funded inference. Users bring their own provider.
-- Submitting applications. The platform drafts; the user sends.
-- Browser automation of any kind.
-- Referral and warm-introduction pathfinding.
-- Inbound recruiter triage.
-- Notification channels. The user pulls; nothing pushes to email or chat yet.
 
 ## Open questions
 
