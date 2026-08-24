@@ -114,21 +114,36 @@ claim traces to evidence in the user's corpus. A claim with no supporting eviden
 shown as a visible gap rather than written as fact.
 
 ### 7. Apply loop
-Every application is previewable before it goes anywhere. On top of that sits a rule
-engine with the semantics of Claude Code's permission allowlist:
+Applying means the platform drafts every artifact the user needs in order to apply. The
+platform does not submit and does not drive a browser.
+
+One click on a posting produces the package: CV variant, cover letter, answers, and the
+posting's submission URL and instructions. The user reviews it, edits it, and sends it.
+
+On top of that sits a rule engine with the semantics of Claude Code's permission
+allowlist:
 
 | Rule outcome | Behaviour |
 |---|---|
-| allow | Applies without asking |
-| ask | Preview, then the user decides |
-| deny | Never applies; a deal-breaker match is always deny |
+| allow | Drafts the full package unattended, ready and waiting |
+| ask | Shows the posting and waits for the user |
+| deny | Never drafts; a deal-breaker match is always deny |
 
-Default for an unmatched posting is ask. A repeated decision can be promoted into a
-standing rule.
+Default for an unmatched posting is ask. Deny is evaluated before allow. A repeated
+decision can be promoted into a standing rule.
+
+An allow rule firing wrongly is not free: drafting runs on the user's own provider
+account, so a rule that is too broad spends their tokens on packages they discard.
 
 ### 8. Tracking
 Every application's state, how long it has been there, and what has gone quiet. Follow-up
 prompts. Outcomes recorded through to offer or rejection.
+
+Drafted and submitted are distinct states, and the platform cannot see the boundary
+between them. A package stays drafted until the user says they sent it. That single
+action is what starts the staleness clock, what lets fit judgement be evaluated against
+outcomes, and what distinguishes a package that was used from one that was ignored -
+which is also the signal that an allow rule is firing too broadly.
 
 ### 9. Interview prep
 Company research for a scheduled interview, the user's own STAR examples mapped to the
@@ -149,6 +164,8 @@ the duplication they actually exhibit rather than by a guess made in advance.
 
 - Any sign-in method other than Google.
 - Platform-funded inference. Users bring their own provider.
+- Submitting applications. The platform drafts; the user sends.
+- Browser automation of any kind.
 - Referral and warm-introduction pathfinding.
 - Inbound recruiter triage.
 - Notification channels. The user pulls; nothing pushes to email or chat yet.
@@ -157,9 +174,8 @@ the duplication they actually exhibit rather than by a guess made in advance.
 
 - Tailoring output format. Upstream compiles LaTeX or Typst to PDF and validates the ATS
   text layer with `pdftotext`. That is a heavy toolchain dependency. Whether Atlas
-  generates PDFs or stops at structured text is undecided.
-- How an application is actually submitted in epic 7. Most postings have no API, so
-  "apply" may mean a prepared package the user submits, not an automated submission.
-  This decides whether epic 7 is a rules engine over drafts or over real submissions.
+  generates PDFs or stops at structured text is undecided, and the decision above makes
+  it weightier: the package is the final deliverable, and the user uploads it to a
+  careers page that will not accept markdown.
 - Whether provider connection uses OAuth sign-in or API keys per provider, which differs
   by provider and changes onboarding.
