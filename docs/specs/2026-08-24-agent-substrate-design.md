@@ -146,10 +146,10 @@ wrong, and what it cost — so this is the pack author's debugger, not operator 
 | Templates and `select:` | Conditionals, loops, expressions |
 | Two packs: job hunt, and one trivial unrelated one | Permissions, sandbox, memory |
 | A span per tool invocation | Dashboards, alerting |
-| Whatever storage works | Persistence |
+| Printing each step's output | Persistence of any kind |
 
-**Done when:** the job pack fetches a real posting, scores it and drafts a package, fully
-traced — **and a second unrelated pack runs with no Go changes.**
+**Done when:** the job pack runs end to end against real services, fully traced — **and a
+second unrelated pack runs with no Go changes.**
 
 The second pack is the whole point. Without it the increment proves a Go abstraction and
 says nothing about whether the harness exists.
