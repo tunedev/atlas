@@ -6,13 +6,13 @@
 
 **Architecture:** A tool registry maps names to typed Go implementations. The harness ships two generic tools, `http.request` and `model.complete`. A blueprint is an ordered list of steps, each naming a tool and supplying config. The runner resolves the tool, renders that config as a Go template against accumulated state, executes, narrows the result by an optional path, and stores it under the step id. Every invocation gets a span.
 
-**Tech Stack:** Go 1.24.6, `gopkg.in/yaml.v3`, `text/template`, OpenTelemetry OTLP gRPC, Greenhouse's public board API, Ollama's OpenAI-compatible endpoint.
+**Tech Stack:** Go 1.27, `gopkg.in/yaml.v3`, `text/template`, OpenTelemetry OTLP gRPC, Greenhouse's public board API, Ollama's OpenAI-compatible endpoint.
 
 **Spec:** `docs/specs/2026-08-24-agent-substrate-design.md`
 
 ## Global Constraints
 
-- Go 1.24.6. Module path `forge/atlas`, matching `forge/hello`.
+- Go 1.27. Module path `github.com/tunedev/atlas`, matching `github.com/tunedev/nerve`.
 - **Nothing in the Go tree knows what a job posting is.** No type, field, prompt, URL, or string constant naming a use-case concept outside `packs/`. This is the plan's binding constraint; a task that violates it has failed regardless of its tests.
 - Hexagonal layout per `../../../CLAUDE.md` Tenet 1: `internal/core/{domain,ports,app}`, `internal/adapters/`, `cmd/atlas/main.go` as the only file knowing every concrete type.
 - Ports are written in the core's vocabulary. No core package imports an adapter or a driver, enforced by `internal/arch`.
@@ -38,7 +38,7 @@ The second is the increment. The first is only its excuse.
 
 | File | Responsibility |
 |---|---|
-| `go.mod` | Module `forge/atlas` |
+| `go.mod` | Module `github.com/tunedev/atlas` |
 | `internal/config/config.go` | Typed config, validated at startup |
 | `internal/config/layers.go` | defaults, env, flags — later wins |
 | `internal/arch/arch_test.go` | Fails if core imports an adapter or driver |
@@ -75,7 +75,7 @@ Two guards, not one. The second is this plan's binding constraint made mechanica
 
 ```bash
 cd /home/tunedev/forge/atlas
-go mod init forge/atlas
+go mod init github.com/tunedev/atlas
 ```
 
 - [ ] **Step 2: Write the dependency-direction guard**
@@ -96,14 +96,14 @@ import (
 func TestCoreImportsNoAdapters(t *testing.T) {
 	// Module-qualified, not dot-relative: go test runs this binary with cwd
 	// set to this package's directory, never the module root.
-	out, err := exec.Command("go", "list", "-deps", "forge/atlas/internal/core/...").Output()
+	out, err := exec.Command("go", "list", "-deps", "github.com/tunedev/atlas/internal/core/...").Output()
 	if err != nil {
 		t.Fatalf("go list failed: %v", err)
 	}
 	// Adapter tree and third-party drivers only. Never list stdlib packages:
 	// go list -deps is transitive, so net/http would fail this for the wrong reason.
 	forbidden := []string{
-		"forge/atlas/internal/adapters",
+		"github.com/tunedev/atlas/internal/adapters",
 		"go.opentelemetry.io/otel/exporters",
 		"gopkg.in/yaml.v3",
 	}
@@ -195,7 +195,7 @@ package config_test
 import (
 	"testing"
 
-	"forge/atlas/internal/config"
+	"github.com/tunedev/atlas/internal/config"
 )
 
 func TestLoadAppliesDefaults(t *testing.T) {
@@ -442,7 +442,7 @@ package domain_test
 import (
 	"testing"
 
-	"forge/atlas/internal/core/domain"
+	"github.com/tunedev/atlas/internal/core/domain"
 )
 
 func TestStateKeepsVarsAndStepOutputsApart(t *testing.T) {
@@ -592,8 +592,8 @@ package app_test
 import (
 	"testing"
 
-	"forge/atlas/internal/core/app"
-	"forge/atlas/internal/core/domain"
+	"github.com/tunedev/atlas/internal/core/app"
+	"github.com/tunedev/atlas/internal/core/domain"
 )
 
 func TestRenderSubstitutesVars(t *testing.T) {
@@ -698,7 +698,7 @@ import (
 	"strings"
 	"text/template"
 
-	"forge/atlas/internal/core/domain"
+	"github.com/tunedev/atlas/internal/core/domain"
 )
 
 // Render evaluates one config value as a Go template against state. Packs
@@ -823,9 +823,9 @@ import (
 	"errors"
 	"testing"
 
-	"forge/atlas/internal/core/app"
-	"forge/atlas/internal/core/domain"
-	"forge/atlas/internal/core/ports"
+	"github.com/tunedev/atlas/internal/core/app"
+	"github.com/tunedev/atlas/internal/core/domain"
+	"github.com/tunedev/atlas/internal/core/ports"
 )
 
 type fakeTool struct {
@@ -1015,8 +1015,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
-	"forge/atlas/internal/core/domain"
-	"forge/atlas/internal/core/ports"
+	"github.com/tunedev/atlas/internal/core/domain"
+	"github.com/tunedev/atlas/internal/core/ports"
 )
 
 // selectKey is the runner's own instruction inside a step's config: it names
@@ -1028,7 +1028,7 @@ const selectKey = "select"
 // tracer comes from the global provider, which telemetry.Init installs before
 // any runner is constructed. With tracing disabled the global is a no-op and
 // every span below costs nothing.
-var tracer = otel.Tracer("forge/atlas/runner")
+var tracer = otel.Tracer("github.com/tunedev/atlas/runner")
 
 // Runner executes a blueprint: resolve each step's tool, render its config
 // against accumulated state, invoke, narrow, store.
@@ -1175,7 +1175,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"forge/atlas/internal/adapters/inbound/packfile"
+	"github.com/tunedev/atlas/internal/adapters/inbound/packfile"
 )
 
 func write(t *testing.T, body string) string {
@@ -1299,7 +1299,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"forge/atlas/internal/core/domain"
+	"github.com/tunedev/atlas/internal/core/domain"
 )
 
 type pack struct {
@@ -1415,7 +1415,7 @@ import (
 	"testing"
 	"time"
 
-	"forge/atlas/internal/adapters/outbound/tools"
+	"github.com/tunedev/atlas/internal/adapters/outbound/tools"
 )
 
 func TestHTTPFetchesJSON(t *testing.T) {
@@ -1504,7 +1504,7 @@ import (
 	"testing"
 	"time"
 
-	"forge/atlas/internal/adapters/outbound/tools"
+	"github.com/tunedev/atlas/internal/adapters/outbound/tools"
 )
 
 func modelServer(t *testing.T, reply string, captured *map[string]any) *httptest.Server {
@@ -1615,7 +1615,7 @@ import (
 	"testing"
 	"time"
 
-	"forge/atlas/internal/adapters/outbound/tools"
+	"github.com/tunedev/atlas/internal/adapters/outbound/tools"
 )
 
 func TestRegistryLooksUpByToolName(t *testing.T) {
@@ -1832,7 +1832,7 @@ Create `internal/adapters/outbound/tools/registry.go`:
 ```go
 package tools
 
-import "forge/atlas/internal/core/ports"
+import "github.com/tunedev/atlas/internal/core/ports"
 
 // Registry resolves a tool name to its implementation. Adding a tool is
 // adding it to this map at the composition root; nothing switches on a tool
@@ -1909,7 +1909,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
-	"forge/atlas/internal/config"
+	"github.com/tunedev/atlas/internal/config"
 )
 
 // Init builds the trace provider and returns a shutdown func that must run on
@@ -2012,11 +2012,11 @@ import (
 	"fmt"
 	"os"
 
-	"forge/atlas/internal/adapters/inbound/packfile"
-	"forge/atlas/internal/adapters/outbound/tools"
-	"forge/atlas/internal/config"
-	"forge/atlas/internal/core/app"
-	"forge/atlas/internal/telemetry"
+	"github.com/tunedev/atlas/internal/adapters/inbound/packfile"
+	"github.com/tunedev/atlas/internal/adapters/outbound/tools"
+	"github.com/tunedev/atlas/internal/config"
+	"github.com/tunedev/atlas/internal/core/app"
+	"github.com/tunedev/atlas/internal/telemetry"
 )
 
 func main() {
