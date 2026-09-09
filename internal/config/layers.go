@@ -56,6 +56,11 @@ func applyEnv(c *Config) {
 		c.OTel.Endpoint = v
 		c.OTel.Enabled = true
 	}
+	if v := os.Getenv("ATLAS_OTEL_EXPORT_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			c.OTel.ExportTimeout = d
+		}
+	}
 }
 
 func applyFlags(c *Config, args []string) error {
@@ -68,6 +73,7 @@ func applyFlags(c *Config, args []string) error {
 	fs.DurationVar(&c.Model.Timeout, "model-timeout", c.Model.Timeout, "model call timeout")
 	fs.Int64Var(&c.Model.MaxBytes, "model-max-bytes", c.Model.MaxBytes, "max response body size for model.complete, in bytes")
 	fs.BoolVar(&c.OTel.Enabled, "otel", c.OTel.Enabled, "export traces over OTLP")
+	fs.DurationVar(&c.OTel.ExportTimeout, "otel-export-timeout", c.OTel.ExportTimeout, "timeout for OTLP span export")
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("config: parse flags: %w", err)
 	}

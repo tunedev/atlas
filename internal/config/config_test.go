@@ -55,3 +55,19 @@ func TestZeroTimeoutIsRejected(t *testing.T) {
 		t.Error("Load accepted a zero model timeout; invalid config must fail at boot")
 	}
 }
+
+func TestOTelExportTimeoutFlag(t *testing.T) {
+	cfg, err := config.Load([]string{"-pack", "p.yaml", "-otel-export-timeout", "5s"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.OTel.ExportTimeout.String() != "5s" {
+		t.Errorf("OTel.ExportTimeout = %s, want 5s", cfg.OTel.ExportTimeout)
+	}
+}
+
+func TestZeroOTelExportTimeoutIsRejected(t *testing.T) {
+	if _, err := config.Load([]string{"-pack", "p.yaml", "-otel-export-timeout", "0s"}); err == nil {
+		t.Error("Load accepted a zero otel export timeout; invalid config must fail at boot")
+	}
+}

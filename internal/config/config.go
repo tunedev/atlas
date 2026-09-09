@@ -58,5 +58,8 @@ func (c Config) validate() error {
 	if c.Model.BaseURL == "" {
 		return fmt.Errorf("config: model base URL is empty")
 	}
+	if c.OTel.ExportTimeout <= 0 {
+		return fmt.Errorf("config: otel export timeout must be positive, got %s", c.OTel.ExportTimeout)
+	}
 	return nil
 }
