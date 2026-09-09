@@ -17,16 +17,50 @@ func TestCoreImportsNoAdapters(t *testing.T) {
 	}
 	// Adapter tree and third-party drivers only. Never list stdlib packages:
 	// go list -deps is transitive, so net/http would fail this for the wrong reason.
-	forbidden := []string{
+	//
+	// The otel root package is forbidden by exact name, not prefix: it pulls in
+	// propagation, which pulls in net/http and the TLS stack, but its
+	// subpackages (trace, attribute, codes) are plain types with no such
+	// weight and share its string prefix, so a prefix match here would also
+	// reject those.
+	forbiddenExact := []string{
+		"go.opentelemetry.io/otel",
+	}
+	forbiddenPrefix := []string{
 		"github.com/tunedev/atlas/internal/adapters",
 		"go.opentelemetry.io/otel/exporters",
+		"go.opentelemetry.io/otel/propagation",
 		"gopkg.in/yaml.v3",
 	}
 	for _, dep := range strings.Split(string(out), "\n") {
-		for _, bad := range forbidden {
-			if strings.HasPrefix(strings.TrimSpace(dep), bad) {
+		dep = strings.TrimSpace(dep)
+		for _, bad := range forbiddenExact {
+			if dep == bad {
 				t.Errorf("core imports %q; dependencies must point inward", dep)
 			}
+		}
+		for _, bad := range forbiddenPrefix {
+			if strings.HasPrefix(dep, bad) {
+				t.Errorf("core imports %q; dependencies must point inward", dep)
+			}
+		}
+	}
+}
+
+// The core must never compile in a network or TLS stack. This is the
+// property the otel root-package ban exists to protect, checked directly so
+// a future import of anything that drags in net/http or crypto/tls fails
+// here even if it does not go through otel.
+func TestCoreHasNoNetworkOrTLSDependency(t *testing.T) {
+	out, err := exec.Command("go", "list", "-deps", "github.com/tunedev/atlas/internal/core/...").Output()
+	if err != nil {
+		t.Fatalf("go list failed: %v", err)
+	}
+	forbidden := map[string]bool{"net/http": true, "crypto/tls": true}
+	for _, dep := range strings.Split(string(out), "\n") {
+		dep = strings.TrimSpace(dep)
+		if forbidden[dep] {
+			t.Errorf("core imports %q; the core must not compile in a network or TLS stack", dep)
 		}
 	}
 }

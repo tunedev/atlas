@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/tunedev/atlas/internal/core/domain"
 	"github.com/tunedev/atlas/internal/core/ports"
@@ -18,25 +19,33 @@ import (
 // business and a tool that knew about it would be less generic.
 const selectKey = "select"
 
-// tracer comes from the global provider, which telemetry.Init installs before
-// any runner is constructed. With tracing disabled the global is a no-op and
-// every span below costs nothing.
-var tracer = otel.Tracer("github.com/tunedev/atlas/runner")
-
 // Runner executes a blueprint: resolve each step's tool, render its config
 // against accumulated state, invoke, narrow, store.
 //
 // Nothing here knows what any tool does or what any pack is for.
 type Runner struct {
 	registry ports.Registry
+	tracer   trace.Tracer
 }
 
-func NewRunner(r ports.Registry) *Runner { return &Runner{registry: r} }
+// NewRunner builds a Runner against the given registry. It traces with a
+// no-op tracer unless a real one is set through WithTracer, so a caller that
+// does not care about tracing pays nothing and writes nothing extra.
+func NewRunner(r ports.Registry) *Runner {
+	return &Runner{registry: r, tracer: noop.NewTracerProvider().Tracer("")}
+}
+
+// WithTracer replaces the Runner's tracer, returning the same Runner for
+// chaining at construction time.
+func (r *Runner) WithTracer(t trace.Tracer) *Runner {
+	r.tracer = t
+	return r
+}
 
 // Run executes every step in order and stops at the first failure. The
 // returned State carries each completed step's output keyed by step id.
 func (r *Runner) Run(ctx context.Context, b domain.Blueprint) (*domain.State, error) {
-	ctx, span := tracer.Start(ctx, "blueprint."+b.Name)
+	ctx, span := r.tracer.Start(ctx, "blueprint."+b.Name)
 	defer span.End()
 	span.SetAttributes(attribute.Int("blueprint.steps", len(b.Steps)))
 
@@ -55,7 +64,7 @@ func (r *Runner) Run(ctx context.Context, b domain.Blueprint) (*domain.State, er
 // untraced, and traces are how a pack author -- who cannot read Go -- finds
 // out which step was slow or wrong.
 func (r *Runner) runStep(ctx context.Context, blueprint string, s domain.Step, state *domain.State) error {
-	ctx, span := tracer.Start(ctx, "tool."+s.Tool)
+	ctx, span := r.tracer.Start(ctx, "tool."+s.Tool)
 	defer span.End()
 	span.SetAttributes(
 		attribute.String("blueprint.name", blueprint),
