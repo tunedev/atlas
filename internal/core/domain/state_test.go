@@ -1,0 +1,44 @@
+package domain_test
+
+import (
+	"testing"
+
+	"github.com/tunedev/atlas/internal/core/domain"
+)
+
+func TestStateKeepsVarsAndStepOutputsApart(t *testing.T) {
+	s := domain.NewState(map[string]string{"board": "acme"})
+	s.Put("first", map[string]any{"title": "a title"})
+
+	if got := s.Vars()["board"]; got != "acme" {
+		t.Errorf("Vars()[board] = %q", got)
+	}
+	out, ok := s.Outputs()["first"]
+	if !ok {
+		t.Fatal("Outputs() has no entry for step first")
+	}
+	m, ok := out.(map[string]any)
+	if !ok || m["title"] != "a title" {
+		t.Errorf("Outputs()[first] = %#v", out)
+	}
+}
+
+func TestOutputsIsNotNilBeforeAnyStepRuns(t *testing.T) {
+	// A template referencing .steps before any step has run must render an
+	// empty value, not panic on a nil map.
+	if domain.NewState(nil).Outputs() == nil {
+		t.Error("Outputs() is nil on a fresh State")
+	}
+	if domain.NewState(nil).Vars() == nil {
+		t.Error("Vars() is nil on a fresh State")
+	}
+}
+
+func TestPutOverwritesTheSameStepID(t *testing.T) {
+	s := domain.NewState(nil)
+	s.Put("x", "first")
+	s.Put("x", "second")
+	if s.Outputs()["x"] != "second" {
+		t.Errorf("Outputs()[x] = %v, want second", s.Outputs()["x"])
+	}
+}
