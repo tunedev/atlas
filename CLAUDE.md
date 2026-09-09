@@ -10,13 +10,14 @@ restated here. This file covers only what is specific to Atlas.
 
 ## Status
 
-Not started. Atlas is step 3 in the Forge build order — `infra/` and the `hello` workload
-come first, so that Atlas deploys onto a platform that has already been proven end to end.
+Design, no code. `internal/` does not exist. Step 3 in the Forge build order is unblocked:
+`infra/` and the `hello` workload are built, so Atlas deploys onto a platform already
+proven end to end.
 
 The first slice is job hunting, modelled on the fork at
-`github.com/tunedev/ai-job-search` (not yet cloned locally), using the crudest storage that
-works. The resource kernel is extracted afterwards, shaped by what that slice actually
-needed rather than by what we imagined it would need.
+`github.com/tunedev/ai-job-search`, using the crudest storage that works. The resource
+kernel is extracted afterwards, shaped by what that slice actually needed rather than by
+what we imagined it would need.
 
 ## Layout
 
