@@ -25,12 +25,14 @@ func Load(args []string) (Config, error) {
 func defaults() Config {
 	return Config{
 		Pack: PackConfig{
-			HTTPTimeout: 20 * time.Second,
+			HTTPTimeout:  20 * time.Second,
+			HTTPMaxBytes: 10 * 1024 * 1024,
 		},
 		Model: ModelConfig{
-			BaseURL: "http://localhost:11434/v1",
-			Name:    "qwen3.5:9b",
-			Timeout: 5 * time.Minute,
+			BaseURL:  "http://localhost:11434/v1",
+			Name:     "qwen3.5:9b",
+			Timeout:  5 * time.Minute,
+			MaxBytes: 10 * 1024 * 1024,
 		},
 		OTel: OTelConfig{
 			Endpoint:      "localhost:4317",
@@ -60,9 +62,11 @@ func applyFlags(c *Config, args []string) error {
 	fs := flag.NewFlagSet("atlas", flag.ContinueOnError)
 	fs.StringVar(&c.Pack.Path, "pack", c.Pack.Path, "path to a pack file")
 	fs.DurationVar(&c.Pack.HTTPTimeout, "http-timeout", c.Pack.HTTPTimeout, "timeout for http.request")
+	fs.Int64Var(&c.Pack.HTTPMaxBytes, "http-max-bytes", c.Pack.HTTPMaxBytes, "max response body size for http.request, in bytes")
 	fs.StringVar(&c.Model.BaseURL, "model-base-url", c.Model.BaseURL, "OpenAI-compatible base URL")
 	fs.StringVar(&c.Model.Name, "model-name", c.Model.Name, "model identifier")
 	fs.DurationVar(&c.Model.Timeout, "model-timeout", c.Model.Timeout, "model call timeout")
+	fs.Int64Var(&c.Model.MaxBytes, "model-max-bytes", c.Model.MaxBytes, "max response body size for model.complete, in bytes")
 	fs.BoolVar(&c.OTel.Enabled, "otel", c.OTel.Enabled, "export traces over OTLP")
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("config: parse flags: %w", err)

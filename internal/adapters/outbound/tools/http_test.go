@@ -20,7 +20,7 @@ func TestHTTPFetchesJSON(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	out, err := tools.NewHTTP(5*time.Second).Invoke(context.Background(),
+	out, err := tools.NewHTTP(5*time.Second, 1<<20).Invoke(context.Background(),
 		map[string]string{"url": srv.URL})
 	if err != nil {
 		t.Fatalf("Invoke: %v", err)
@@ -41,7 +41,7 @@ func TestHTTPReturnsNonJSONAsText(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	out, err := tools.NewHTTP(5*time.Second).Invoke(context.Background(),
+	out, err := tools.NewHTTP(5*time.Second, 1<<20).Invoke(context.Background(),
 		map[string]string{"url": srv.URL})
 	if err != nil {
 		t.Fatalf("Invoke: %v", err)
@@ -56,7 +56,7 @@ func TestHTTPReturnsNonJSONAsText(t *testing.T) {
 }
 
 func TestHTTPFailsWithoutAURL(t *testing.T) {
-	if _, err := tools.NewHTTP(time.Second).Invoke(context.Background(), map[string]string{}); err == nil {
+	if _, err := tools.NewHTTP(time.Second, 1<<20).Invoke(context.Background(), map[string]string{}); err == nil {
 		t.Error("Invoke succeeded with no url")
 	}
 }
@@ -67,14 +67,45 @@ func TestHTTPFailsOnUpstreamError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := tools.NewHTTP(5*time.Second).Invoke(context.Background(),
+	if _, err := tools.NewHTTP(5*time.Second, 1<<20).Invoke(context.Background(),
 		map[string]string{"url": srv.URL}); err == nil {
 		t.Error("Invoke succeeded on a 503")
 	}
 }
 
 func TestHTTPName(t *testing.T) {
-	if got := tools.NewHTTP(time.Second).Name(); got != "http.request" {
+	if got := tools.NewHTTP(time.Second, 1<<20).Name(); got != "http.request" {
 		t.Errorf("Name = %q", got)
+	}
+}
+
+func TestHTTPFailsWhenBodyExceedsMaxBytes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("0123456789"))
+	}))
+	defer srv.Close()
+
+	if _, err := tools.NewHTTP(5*time.Second, 9).Invoke(context.Background(),
+		map[string]string{"url": srv.URL}); err == nil {
+		t.Error("Invoke succeeded with a body larger than maxBytes")
+	}
+}
+
+func TestHTTPSucceedsWhenBodyIsExactlyAtMaxBytes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("0123456789"))
+	}))
+	defer srv.Close()
+
+	out, err := tools.NewHTTP(5*time.Second, 10).Invoke(context.Background(),
+		map[string]string{"url": srv.URL})
+	if err != nil {
+		t.Fatalf("Invoke: %v", err)
+	}
+	m, ok := out.(map[string]any)
+	if !ok || m["body"] != "0123456789" {
+		t.Errorf("out = %#v; a body exactly at maxBytes should still succeed", out)
 	}
 }

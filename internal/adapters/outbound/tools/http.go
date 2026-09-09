@@ -7,19 +7,21 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 )
 
 // HTTP fetches a URL. A JSON object body is returned parsed so packs can
 // select into it by path; anything else is returned as text under "body".
+// A response body over maxBytes fails the call rather than being truncated:
+// a downstream step must never act on partial data believing it complete.
 type HTTP struct {
-	client *http.Client
+	client   *http.Client
+	maxBytes int64
 }
 
-func NewHTTP(timeout time.Duration) *HTTP {
-	return &HTTP{client: &http.Client{Timeout: timeout}}
+func NewHTTP(timeout time.Duration, maxBytes int64) *HTTP {
+	return &HTTP{client: &http.Client{Timeout: timeout}, maxBytes: maxBytes}
 }
 
 func (h *HTTP) Name() string { return "http.request" }
@@ -45,7 +47,7 @@ func (h *HTTP) Invoke(ctx context.Context, with map[string]string) (any, error) 
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimited(resp.Body, h.maxBytes)
 	if err != nil {
 		return nil, fmt.Errorf("http.request: read body: %w", err)
 	}

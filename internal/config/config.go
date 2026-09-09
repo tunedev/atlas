@@ -18,14 +18,16 @@ type Config struct {
 }
 
 type PackConfig struct {
-	Path        string
-	HTTPTimeout time.Duration
+	Path         string
+	HTTPTimeout  time.Duration
+	HTTPMaxBytes int64
 }
 
 type ModelConfig struct {
-	BaseURL string
-	Name    string
-	Timeout time.Duration
+	BaseURL  string
+	Name     string
+	Timeout  time.Duration
+	MaxBytes int64
 }
 
 type OTelConfig struct {
@@ -41,8 +43,14 @@ func (c Config) validate() error {
 	if c.Pack.HTTPTimeout <= 0 {
 		return fmt.Errorf("config: http timeout must be positive, got %s", c.Pack.HTTPTimeout)
 	}
+	if c.Pack.HTTPMaxBytes <= 0 {
+		return fmt.Errorf("config: http max bytes must be positive, got %d", c.Pack.HTTPMaxBytes)
+	}
 	if c.Model.Timeout <= 0 {
 		return fmt.Errorf("config: model timeout must be positive, got %s", c.Model.Timeout)
+	}
+	if c.Model.MaxBytes <= 0 {
+		return fmt.Errorf("config: model max bytes must be positive, got %d", c.Model.MaxBytes)
 	}
 	if c.Model.Name == "" {
 		return fmt.Errorf("config: model name is empty")

@@ -16,17 +16,22 @@ import (
 //
 // With expect=json the reply is parsed into fields a pack can select by path.
 // Without it the reply is returned as text under "text".
+//
+// A response body over maxBytes fails the call rather than being truncated:
+// a downstream step must never act on partial data believing it complete.
 type Model struct {
-	baseURL string
-	model   string
-	client  *http.Client
+	baseURL  string
+	model    string
+	client   *http.Client
+	maxBytes int64
 }
 
-func NewModel(baseURL, model string, timeout time.Duration) *Model {
+func NewModel(baseURL, model string, timeout time.Duration, maxBytes int64) *Model {
 	return &Model{
-		baseURL: strings.TrimSuffix(baseURL, "/"),
-		model:   model,
-		client:  &http.Client{Timeout: timeout},
+		baseURL:  strings.TrimSuffix(baseURL, "/"),
+		model:    model,
+		client:   &http.Client{Timeout: timeout},
+		maxBytes: maxBytes,
 	}
 }
 
@@ -69,6 +74,11 @@ func (m *Model) Invoke(ctx context.Context, with map[string]string) (any, error)
 		return nil, fmt.Errorf("model.complete: model %s returned %d", m.model, resp.StatusCode)
 	}
 
+	body, err := readLimited(resp.Body, m.maxBytes)
+	if err != nil {
+		return nil, fmt.Errorf("model.complete: read body: %w", err)
+	}
+
 	var out struct {
 		Choices []struct {
 			Message struct {
@@ -76,7 +86,7 @@ func (m *Model) Invoke(ctx context.Context, with map[string]string) (any, error)
 			} `json:"message"`
 		} `json:"choices"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, fmt.Errorf("model.complete: decode: %w", err)
 	}
 	if len(out.Choices) == 0 {

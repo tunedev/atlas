@@ -35,7 +35,7 @@ func TestModelReturnsTextByDefault(t *testing.T) {
 	srv := modelServer(t, "an answer", &sent)
 	defer srv.Close()
 
-	out, err := tools.NewModel(srv.URL, "m", 5*time.Second).Invoke(context.Background(),
+	out, err := tools.NewModel(srv.URL, "m", 5*time.Second, 1<<20).Invoke(context.Background(),
 		map[string]string{"system": "be terse", "user": "a question"})
 	if err != nil {
 		t.Fatalf("Invoke: %v", err)
@@ -54,7 +54,7 @@ func TestModelParsesJSONWhenAsked(t *testing.T) {
 	srv := modelServer(t, `{"decision":"yes","reasons":["a","b"]}`, nil)
 	defer srv.Close()
 
-	out, err := tools.NewModel(srv.URL, "m", 5*time.Second).Invoke(context.Background(),
+	out, err := tools.NewModel(srv.URL, "m", 5*time.Second, 1<<20).Invoke(context.Background(),
 		map[string]string{"system": "s", "user": "u", "expect": "json"})
 	if err != nil {
 		t.Fatalf("Invoke: %v", err)
@@ -71,7 +71,7 @@ func TestModelStripsAFenceBeforeParsingJSON(t *testing.T) {
 	srv := modelServer(t, "```json\n{\"ok\":true}\n```", nil)
 	defer srv.Close()
 
-	out, err := tools.NewModel(srv.URL, "m", 5*time.Second).Invoke(context.Background(),
+	out, err := tools.NewModel(srv.URL, "m", 5*time.Second, 1<<20).Invoke(context.Background(),
 		map[string]string{"system": "s", "user": "u", "expect": "json"})
 	if err != nil {
 		t.Fatalf("Invoke: %v", err)
@@ -86,7 +86,7 @@ func TestModelFailsWhenJSONIsExpectedAndNotReturned(t *testing.T) {
 	srv := modelServer(t, "not json at all", nil)
 	defer srv.Close()
 
-	if _, err := tools.NewModel(srv.URL, "m", 5*time.Second).Invoke(context.Background(),
+	if _, err := tools.NewModel(srv.URL, "m", 5*time.Second, 1<<20).Invoke(context.Background(),
 		map[string]string{"system": "s", "user": "u", "expect": "json"}); err == nil {
 		t.Error("Invoke succeeded with expect=json and a non-JSON reply")
 	}
@@ -96,14 +96,48 @@ func TestModelFailsWithoutAUserMessage(t *testing.T) {
 	srv := modelServer(t, "x", nil)
 	defer srv.Close()
 
-	if _, err := tools.NewModel(srv.URL, "m", time.Second).Invoke(context.Background(),
+	if _, err := tools.NewModel(srv.URL, "m", time.Second, 1<<20).Invoke(context.Background(),
 		map[string]string{"system": "s"}); err == nil {
 		t.Error("Invoke succeeded with no user message")
 	}
 }
 
 func TestModelName(t *testing.T) {
-	if got := tools.NewModel("http://x", "m", time.Second).Name(); got != "model.complete" {
+	if got := tools.NewModel("http://x", "m", time.Second, 1<<20).Name(); got != "model.complete" {
 		t.Errorf("Name = %q", got)
+	}
+}
+
+func rawBodyServer(body []byte) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
+}
+
+func TestModelFailsWhenBodyExceedsMaxBytes(t *testing.T) {
+	body := []byte(`{"choices":[{"message":{"content":"ok"}}]}`)
+	srv := rawBodyServer(body)
+	defer srv.Close()
+
+	if _, err := tools.NewModel(srv.URL, "m", 5*time.Second, int64(len(body)-1)).Invoke(context.Background(),
+		map[string]string{"system": "s", "user": "u"}); err == nil {
+		t.Error("Invoke succeeded with a body larger than maxBytes")
+	}
+}
+
+func TestModelSucceedsWhenBodyIsExactlyAtMaxBytes(t *testing.T) {
+	body := []byte(`{"choices":[{"message":{"content":"ok"}}]}`)
+	srv := rawBodyServer(body)
+	defer srv.Close()
+
+	out, err := tools.NewModel(srv.URL, "m", 5*time.Second, int64(len(body))).Invoke(context.Background(),
+		map[string]string{"system": "s", "user": "u"})
+	if err != nil {
+		t.Fatalf("Invoke: %v", err)
+	}
+	m, ok := out.(map[string]any)
+	if !ok || m["text"] != "ok" {
+		t.Errorf("out = %#v; a body exactly at maxBytes should still succeed", out)
 	}
 }
