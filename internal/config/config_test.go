@@ -71,3 +71,10 @@ func TestZeroOTelExportTimeoutIsRejected(t *testing.T) {
 		t.Error("Load accepted a zero otel export timeout; invalid config must fail at boot")
 	}
 }
+
+func TestMalformedOTelExportTimeoutEnvVarIsRejected(t *testing.T) {
+	t.Setenv("ATLAS_OTEL_EXPORT_TIMEOUT", "5seconds")
+	if _, err := config.Load([]string{"-pack", "p.yaml"}); err == nil {
+		t.Error("Load accepted malformed ATLAS_OTEL_EXPORT_TIMEOUT; invalid env must fail at boot")
+	}
+}

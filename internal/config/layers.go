@@ -12,7 +12,9 @@ import (
 // the HTTP one is not.
 func Load(args []string) (Config, error) {
 	cfg := defaults()
-	applyEnv(&cfg)
+	if err := applyEnv(&cfg); err != nil {
+		return Config{}, err
+	}
 	if err := applyFlags(&cfg, args); err != nil {
 		return Config{}, err
 	}
@@ -42,7 +44,7 @@ func defaults() Config {
 	}
 }
 
-func applyEnv(c *Config) {
+func applyEnv(c *Config) error {
 	if v := os.Getenv("ATLAS_PACK"); v != "" {
 		c.Pack.Path = v
 	}
@@ -57,10 +59,13 @@ func applyEnv(c *Config) {
 		c.OTel.Enabled = true
 	}
 	if v := os.Getenv("ATLAS_OTEL_EXPORT_TIMEOUT"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			c.OTel.ExportTimeout = d
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_OTEL_EXPORT_TIMEOUT: invalid duration %q: %w", v, err)
 		}
+		c.OTel.ExportTimeout = d
 	}
+	return nil
 }
 
 func applyFlags(c *Config, args []string) error {
