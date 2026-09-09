@@ -87,3 +87,15 @@ func TestSelectFailsOnAnOutOfRangeIndex(t *testing.T) {
 		t.Error("Select succeeded on an out-of-range index")
 	}
 }
+
+func TestRenderFailsOnMalformedTemplate(t *testing.T) {
+	if _, err := app.Render("{{ .vars.host ", domain.NewState(nil)); err == nil {
+		t.Error("Render succeeded on malformed template")
+	}
+}
+
+func TestSelectReturnsErrorNotPanicOnScalar(t *testing.T) {
+	if _, err := app.Select("a string value", "foo"); err == nil {
+		t.Error("Select succeeded on scalar with non-empty path")
+	}
+}
