@@ -61,8 +61,12 @@ steps:
 
 func TestLoadRejectsAStepWithNoID(t *testing.T) {
 	path := write(t, "name: x\nsteps:\n  - tool: http.request\n")
-	if _, err := packfile.Load(path); err == nil {
+	b, err := packfile.Load(path)
+	if err == nil {
 		t.Error("Load accepted a step with no id; later steps reference output by id")
+	}
+	if b.Name != "" || len(b.Steps) != 0 {
+		t.Errorf("returned non-zero Blueprint on error: Name=%q, Steps=%d", b.Name, len(b.Steps))
 	}
 }
 
@@ -75,22 +79,34 @@ steps:
   - id: same
     tool: b
 `)
-	if _, err := packfile.Load(path); err == nil {
+	b, err := packfile.Load(path)
+	if err == nil {
 		t.Error("Load accepted a duplicate step id; the second would overwrite the first's output")
+	}
+	if b.Name != "" || len(b.Steps) != 0 {
+		t.Errorf("returned non-zero Blueprint on error: Name=%q, Steps=%d", b.Name, len(b.Steps))
 	}
 }
 
 func TestLoadRejectsAStepWithNoTool(t *testing.T) {
 	path := write(t, "name: x\nsteps:\n  - id: one\n")
-	if _, err := packfile.Load(path); err == nil {
+	b, err := packfile.Load(path)
+	if err == nil {
 		t.Error("Load accepted a step with no tool")
+	}
+	if b.Name != "" || len(b.Steps) != 0 {
+		t.Errorf("returned non-zero Blueprint on error: Name=%q, Steps=%d", b.Name, len(b.Steps))
 	}
 }
 
 func TestLoadRejectsAPackWithNoSteps(t *testing.T) {
 	path := write(t, "name: x\nsteps: []\n")
-	if _, err := packfile.Load(path); err == nil {
+	b, err := packfile.Load(path)
+	if err == nil {
 		t.Error("Load accepted a pack with no steps")
+	}
+	if b.Name != "" || len(b.Steps) != 0 {
+		t.Errorf("returned non-zero Blueprint on error: Name=%q, Steps=%d", b.Name, len(b.Steps))
 	}
 }
 
