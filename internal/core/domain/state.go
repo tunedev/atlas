@@ -19,9 +19,23 @@ func NewState(vars map[string]string) *State {
 	return &State{vars: vars, outputs: map[string]any{}}
 }
 
-func (s *State) Vars() map[string]string { return s.vars }
+func (s *State) Vars() map[string]string {
+	vars := make(map[string]string, len(s.vars))
+	for k, v := range s.vars {
+		vars[k] = v
+	}
+	return vars
+}
 
-func (s *State) Outputs() map[string]any { return s.outputs }
+// Outputs returns a shallow copy of step outputs. The copy protects the map
+// itself but not nested values: a caller can mutate a map inside a value.
+func (s *State) Outputs() map[string]any {
+	outputs := make(map[string]any, len(s.outputs))
+	for k, v := range s.outputs {
+		outputs[k] = v
+	}
+	return outputs
+}
 
 // Put records a step's output under its id, replacing any previous value.
 func (s *State) Put(stepID string, out any) { s.outputs[stepID] = out }

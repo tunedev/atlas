@@ -42,3 +42,33 @@ func TestPutOverwritesTheSameStepID(t *testing.T) {
 		t.Errorf("Outputs()[x] = %v, want second", s.Outputs()["x"])
 	}
 }
+
+func TestAccessorsReturnCopiesSoMutationDoesNotAffectState(t *testing.T) {
+	s := domain.NewState(map[string]string{"key": "value"})
+	s.Put("step", "output")
+
+	// Mutate the returned vars map.
+	vars := s.Vars()
+	vars["key"] = "tampered"
+	vars["new"] = "added"
+
+	// Mutate the returned outputs map.
+	outputs := s.Outputs()
+	outputs["step"] = "forged"
+	outputs["new"] = "forged output"
+
+	// State should be unchanged.
+	if got := s.Vars()["key"]; got != "value" {
+		t.Errorf("Vars()[key] = %q, want value", got)
+	}
+	if _, ok := s.Vars()["new"]; ok {
+		t.Error("Vars() has new key, should not")
+	}
+	if got := s.Outputs()["step"]; got != "output" {
+		t.Errorf("Outputs()[step] = %q, want output", got)
+	}
+	if _, ok := s.Outputs()["new"]; ok {
+		t.Error("Outputs() has new key, should not")
+	}
+}
+
