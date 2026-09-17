@@ -71,11 +71,11 @@ implementation is nameable, and each row names one.
 |---|---|---|
 | `Tool` | the shipped generic tools | every later tool |
 | `Agent` | Gemini CLI over ACP | Claude Code via its ACP adapter |
-| `Provider` | Ollama, local | a user's own key; a free tier |
-| `Judge` | local constrained decoding | TypeSafe |
+| `Provider` | vLLM, local | Ollama; a user's own key; a free tier |
+| `Judge` | local, constrained decoding plus logprobs | TypeSafe |
 | `Source` | the postings feed, pulled as a git remote | a local Colly crawler |
 | `Docs` | git | a plain directory |
-| `Index` | SQLite | DuckDB, if the corpus work outgrows it |
+| `Index` | SQLite | DuckDB, built alongside it |
 
 Ports never speak an adapter's vocabulary. `*colly.Collector`, a git object, an ACP
 JSON-RPC message and a TypeSafe response all stop at the adapter boundary.
@@ -122,7 +122,8 @@ decides afterwards which mattered. "Is this a stretch", "which deal-breaker trip
 "how senior is this" together cost one round trip; asked in sequence they cost three and
 invite the model to contradict itself.
 
-`Judge` is a core port. The default adapter runs locally against `Provider`. TypeSafe is
+`Judge` is a core port. The default adapter runs locally against `Provider`, using
+constrained decoding for the shape of an answer and token logprobs for its probability. TypeSafe is
 one implementation, opt-in per workspace, and the UI states plainly when a workspace
 enables it — TypeSafe is hosted only and its request body carries the content being judged.
 
@@ -136,9 +137,15 @@ portability come free, and the history *is* the corpus. The user can push it to 
 or nowhere.
 
 **SQLite is a derived index**, never authoritative: postings, scores, pipeline state, run
-state. Its second implementation is nameable and likely: the corpus work described below is
-analytical, and DuckDB is what that becomes if SQLite stops being enough. It exists because
-git is not a query engine — "which postings mention Kubernetes"
+state. **DuckDB is built alongside it**, not held in reserve: the corpus work described
+below is analytical, and an analytical engine is the right tool for it. SQLite serves the
+transactional path — what is in the pipeline, what state a run is in — and DuckDB serves
+the questions that scan history. Both are derived, so the port is not a choice the user
+makes but a routing decision the app makes per query.
+
+Both statically link, so the app stays one binary. The cost is cgo, which means building
+per platform in CI rather than cross-compiling from one machine. It exists because git is
+not a query engine — "which postings mention Kubernetes"
 across five hundred files is grep, not SQL. It must be rebuildable from git at any time, so
 losing it is a rebuild rather than a loss.
 
@@ -189,9 +196,9 @@ One unknown each, as the tenets require.
 | # | Increment | The unknown it adds | Done when |
 |---|---|---|---|
 | **0** | Finish the tracer | none — it is written | Both packs run from YAML; the second needed no Go |
-| **1** | `Docs` and `Index` | git as a store; derived SQLite | A document is committed and found again by query; deleting the index and rebuilding it loses nothing |
-| **2** | `Provider` port | provider routing | A pack runs on Ollama and on a hosted key with only config changed |
-| **3** | `Judge` port, local | constrained decoding, calibration | Six typed questions return values in one call, offline |
+| **1** | `Docs` and `Index` | git as a store; derived SQLite and DuckDB | A document is committed and found again by query; deleting both indices and rebuilding them loses nothing |
+| **2** | `Provider` port | vLLM, provider routing | A pack runs on local vLLM and on a hosted key with only config changed |
+| **3** | `Judge` port, local | constrained decoding, logprobs | Six typed questions return values with probabilities in one call, offline, and each is recorded so it can be checked against an outcome later |
 | **4** | `Agent` port | ACP over JSON-RPC/stdio | A real agent completes a multi-step pack, with permission requests surfaced |
 | **5** | The postings feed | a scheduled Action, normalisation | Postings land in a public repo on a schedule; the app pulls them |
 | **6** | Profile | document ingest | A CV becomes structured history the user can correct |
@@ -205,13 +212,34 @@ One unknown each, as the tenets require.
 Increment 12 is where Svelte enters, deliberately late: clients come once there is an API
 worth consuming, and 0-11 are what make one.
 
+## Inference
+
+vLLM is the local provider. It was going to be deferred until batch scoring hurt; it is
+adopted now because the `Judge` port needs token logprobs and vLLM exposes them where
+Ollama's support is thin. Continuous batching — the reason to want it for scoring two
+hundred postings — arrives as a second benefit rather than the justification.
+
+It serves an OpenAI-compatible API, so the `Provider` adapter is one shape pointed at
+different base URLs: vLLM locally, a hosted key remotely, Ollama for anyone who prefers it.
+
+Two facts to design within rather than discover:
+
+- **8 GB of VRAM** on the development machine bounds the model to roughly a 7B at four bits
+  or a 3-4B at full precision, plus KV cache. That is a ceiling on the scorer's quality,
+  and the answer when it binds is a hosted `Provider`, not a bigger local model.
+- **vLLM is a Python service, not a Go library.** The app stays a single binary; vLLM is a
+  process it talks to. For a product meant to be installed by a friend, that is a real
+  burden, which is precisely why `Provider` is a port: vLLM is the reference implementation
+  and the one the scorer is calibrated against, while Ollama and a hosted key remain
+  first-class for people who will not run a Python server.
+
 ## Cost
 
 The constraint is that a month bills nothing.
 
 | Thing | Cost |
 |---|---|
-| The app, Ollama, SQLite, git, the local crawler | free, local |
+| The app, vLLM, Ollama, SQLite, DuckDB, git, the local crawler | free, local |
 | The postings feed | free — public repo, standard runners |
 | A user's own agent or API key | their bill, by design |
 | Gemini and Groq free tiers | free, rate limited |
@@ -228,25 +256,23 @@ The constraint is that a month bills nothing.
 | Scraping behind a login | Contractual and account risk taken on the user's behalf | Nothing foreseen |
 | Accounts, sign-in, multi-tenancy | There is no server to have accounts on | Nothing foreseen |
 | Postgres | The local product has no server to run one | Nothing foreseen |
-| vLLM | Deferred on evidence, not refused | Increment 3 needs logprobs, or batch scoring bottlenecks |
 | Nerve as a store | Git covers the record; no pack has shown a need git cannot meet | A pack runs out of what git and SQLite give it |
 
 ## Open questions
 
-- **Calibration, and what it may cost.** Two problems hide here. *Shape* is easy: Ollama
-  constrains output to a JSON schema, so a `choice` comes back as one of the allowed
-  options. *Probability* is not. A `noul` only means something if it is a real likelihood,
-  which needs token logprobs — vLLM exposes them, Ollama's support is thin. So increment 3
-  may pull vLLM from "deferred" to "required", and the evidence will be logprobs rather
-  than throughput. Increment 3 must settle it before increment 7 depends on it.
-  Separately, nothing yet checks a probability against an outcome; until applications have
-  results, a calibrated-looking number is still an assertion.
+- **Calibration.** Adopting vLLM settles how a probability is obtained — logprobs — but
+  not whether it is any good. Nothing yet checks a stated likelihood against an outcome, and
+  until applications have results to compare against, a calibrated-looking number is still
+  an assertion. Increment 3 must at minimum record the number and the eventual outcome in a
+  way that makes the check possible later, or increment 7 inherits confident nonsense.
 - **Scheduled workflows on an idle repository.** GitHub disables scheduled workflows on
   repositories after a period of inactivity. Whether commits made by the Action itself
   count as activity determines whether the feed quietly stops. Verify before relying on it,
   and have the app notice a stale feed rather than trusting it.
-- **Distribution.** A local-first product has to be installed. A single static Go binary is
-  the cheapest answer; whether that is enough for a non-technical user is unresolved.
+- **Distribution.** A local-first product has to be installed. The app is one static
+  binary, built per platform in CI because DuckDB needs cgo. vLLM is a separate Python
+  service, so the easy path for a non-technical user is Ollama or a hosted key, and whether
+  that is enough is unresolved.
 - **Binary artifacts in git.** Generated PDFs bloat history. Whether to commit them, keep
   them untracked, or stop at structured text is undecided, and increment 9 forces it.
 - **Whether `Judge` and `Provider` stay separate.** They may collapse once the local
