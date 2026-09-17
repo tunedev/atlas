@@ -73,7 +73,7 @@ implementation is nameable, and each row names one.
 | `Agent` | Gemini CLI over ACP | Claude Code via its ACP adapter |
 | `Provider` | vLLM, local | Ollama; a user's own key; a free tier |
 | `Judge` | local, constrained decoding plus logprobs | TypeSafe |
-| `Source` | the postings feed, pulled as a git remote | a local Colly crawler |
+| `Source` | the postings feed, pulled as a git remote | a local Colly crawler; a rendered fetch |
 | `Docs` | git | a plain directory |
 | `Index` | SQLite | DuckDB, built alongside it |
 
@@ -165,6 +165,22 @@ data-engineering-shaped part of the system: per-host rate limiting, `robots.txt`
 with backoff, incremental recrawl, and extraction rules that go stale silently when a page
 changes.
 
+**Rendered sources** exist because Colly does not execute JavaScript, and a large share of
+careers pages are single-page applications that return an empty shell to an HTTP fetch. The
+renderer is Rod: it waits for elements by default and its `Race` handles the "cookie banner
+or content or interstitial" problem that is the actual shape of scraping, where a driver
+requiring an explicit wait before every interaction produces flakes that reproduce only on
+a slow day.
+
+Where it runs is the design decision, not which library. **Rendering runs in the feed.** A
+GitHub runner already has a browser and the compute is free; a friend installing a single
+binary should not be handed a 150 MB download. Locally it is off by default, and a user who
+opts in gets `launcher.LookPath()` against a browser they already have — Rod can download a
+pinned revision and must not be allowed to.
+
+A page that needs rendering and is fetched without it must report **needs rendering**, never
+zero results. Silent zero is the failure nobody notices.
+
 Both are `Source` implementations. A failing source degrades discovery to the remaining
 sources and never fails the run. Deduplication is across sources, because the same role
 appears on a board, an aggregator and the company's own page, and counting it three times
@@ -240,6 +256,7 @@ The constraint is that a month bills nothing.
 | Thing | Cost |
 |---|---|
 | The app, vLLM, Ollama, SQLite, DuckDB, git, the local crawler | free, local |
+| Rendering in the feed | free — the runner already has a browser |
 | The postings feed | free — public repo, standard runners |
 | A user's own agent or API key | their bill, by design |
 | Gemini and Groq free tiers | free, rate limited |
@@ -254,6 +271,7 @@ The constraint is that a month bills nothing.
 | Submitting applications | Per-portal automation, much larger trust cost, and drafting is the value | The drafting loop is trusted and manual submit is the remaining friction |
 | Driving a browser to fill forms | As above, plus it is what gets accounts banned | As above |
 | Scraping behind a login | Contractual and account risk taken on the user's behalf | Nothing foreseen |
+| Downloading a browser onto a user's machine | It breaks the one-binary promise for a minority of sources | Nothing foreseen; the feed renders instead |
 | Accounts, sign-in, multi-tenancy | There is no server to have accounts on | Nothing foreseen |
 | Postgres | The local product has no server to run one | Nothing foreseen |
 | Nerve as a store | Git covers the record; no pack has shown a need git cannot meet | A pack runs out of what git and SQLite give it |
