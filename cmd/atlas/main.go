@@ -24,6 +24,13 @@ func main() {
 	}
 }
 
+func buildRegistry(cfg config.Config) tools.Registry {
+	return tools.NewRegistry(
+		tools.NewHTTP(cfg.Pack.HTTPTimeout, cfg.Pack.HTTPMaxBytes),
+		tools.NewModel(cfg.Model.BaseURL, cfg.Model.Name, cfg.Model.Timeout, cfg.Model.MaxBytes),
+	)
+}
+
 func run() error {
 	ctx := context.Background()
 
@@ -43,10 +50,7 @@ func run() error {
 		return err
 	}
 
-	registry := tools.NewRegistry(
-		tools.NewHTTP(cfg.Pack.HTTPTimeout, cfg.Pack.HTTPMaxBytes),
-		tools.NewModel(cfg.Model.BaseURL, cfg.Model.Name, cfg.Model.Timeout, cfg.Model.MaxBytes),
-	)
+	registry := buildRegistry(cfg)
 
 	// telemetry.Init has already installed the tracer provider, so the
 	// tracer obtained here is the real one when tracing is enabled and the
