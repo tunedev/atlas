@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"testing"
 	"time"
 
@@ -106,5 +108,29 @@ func TestRunIsSeparateFromMainSoDefersExecute(t *testing.T) {
 			t.Errorf("os.Exit called from %s(); defers will be skipped", fn.Name.Name)
 			return true
 		})
+	}
+}
+
+// The runner defaults to a no-op tracer and no longer reads the global
+// registry, so a composition root that does not call WithTracer produces no
+// blueprint spans at all.
+func TestCompositionRootInjectsATracer(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	if !bytes.Contains(src, []byte("WithTracer(")) {
+		t.Error("main.go never calls WithTracer; the runner will keep its no-op tracer")
+	}
+	initAt := bytes.Index(src, []byte("telemetry.Init("))
+	tracerAt := bytes.Index(src, []byte("otel.Tracer("))
+	if initAt < 0 {
+		t.Fatal("main.go never calls telemetry.Init")
+	}
+	if tracerAt < 0 {
+		t.Fatal("main.go never obtains a tracer")
+	}
+	if tracerAt < initAt {
+		t.Error("the tracer is obtained before telemetry.Init installs a provider; it will be the no-op one")
 	}
 }
