@@ -161,7 +161,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"testing"
 	"time"
 
@@ -304,7 +303,7 @@ func TestCompositionRootInjectsATracer(t *testing.T) {
 }
 ```
 
-Add import `"bytes"`.
+Add imports `"bytes"` and `"os"`. Both are new to this file: Task 2's tests parse `main.go` through `parser.ParseFile` and never read it as bytes.
 
 - [ ] **Step 2: Run it**
 
