@@ -32,7 +32,7 @@ func defaults() Config {
 		},
 		Model: ModelConfig{
 			BaseURL:  "http://localhost:11434/v1",
-			Name:     "qwen3.5:9b",
+			Name:     "qwen2.5-coder:7b",
 			Timeout:  5 * time.Minute,
 			MaxBytes: 10 * 1024 * 1024,
 		},
