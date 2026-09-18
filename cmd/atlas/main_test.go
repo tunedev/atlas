@@ -51,7 +51,7 @@ func TestBuildRegistryPassesNoLiterals(t *testing.T) {
 			if !ok {
 				return true
 			}
-			if lit.Kind == token.INT || lit.Kind == token.FLOAT {
+			if lit.Kind == token.INT || lit.Kind == token.FLOAT || lit.Kind == token.STRING {
 				t.Errorf("buildRegistry contains the literal %s; every value must come from config", lit.Value)
 			}
 			return true
@@ -69,6 +69,8 @@ func TestRunIsSeparateFromMainSoDefersExecute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse main.go: %v", err)
 	}
+
+	// Verify main() contains no defer statements.
 	for _, decl := range f.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
 		if !ok || fn.Name.Name != "main" {
@@ -78,6 +80,30 @@ func TestRunIsSeparateFromMainSoDefersExecute(t *testing.T) {
 			if _, ok := n.(*ast.DeferStmt); ok {
 				t.Error("main() contains a defer; os.Exit will skip it")
 			}
+			return true
+		})
+	}
+
+	// Verify os.Exit is called only from main(), not from run() or other functions.
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Name.Name == "main" {
+			continue
+		}
+		ast.Inspect(fn, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			pkg, ok := sel.X.(*ast.Ident)
+			if !ok || pkg.Name != "os" || sel.Sel.Name != "Exit" {
+				return true
+			}
+			t.Errorf("os.Exit called from %s(); defers will be skipped", fn.Name.Name)
 			return true
 		})
 	}
