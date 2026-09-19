@@ -5,6 +5,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -244,7 +246,9 @@ func TestListReturnsPathsUnderAPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("list returned %v, want two paths under a/", got)
+	sort.Strings(got)
+	want := []string{"a/one.md", "a/two.md"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("list(a/) = %v, want %v", got, want)
 	}
 }
