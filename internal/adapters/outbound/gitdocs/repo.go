@@ -79,7 +79,7 @@ func (s *Store) Put(ctx context.Context, path string, body []byte, message strin
 		Email: commitAuthorEmail,
 		When:  time.Now(),
 	}
-	hash, err := wt.Commit(message, &git.CommitOptions{Author: author})
+	hash, err := wt.Commit(message, &git.CommitOptions{Author: author, AllowEmptyCommits: true})
 	if err != nil {
 		return "", rollback(full, hadPrior, prior, fmt.Errorf("gitdocs: commit %s: %w", path, err))
 	}
