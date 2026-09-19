@@ -156,6 +156,39 @@ func TestFindReturnsOnlyRecordsMatchingTheQuery(t *testing.T) {
 	}
 }
 
+// TestUpsertDropsAFieldNoLongerSet guards the case
+// TestUpsertReplacesRatherThanDuplicates does not: re-upserting the same
+// key with a new value never removes a field, only re-upserting with a
+// field absent from Fields does.
+func TestUpsertDropsAFieldNoLongerSet(t *testing.T) {
+	ctx := context.Background()
+	idx := open(t)
+
+	if err := idx.Upsert(ctx, ports.Record{
+		Path: "items/one.md", Rev: "r", Kind: "item",
+		Fields: map[string]string{"state": "open", "owner": "alpha"}, When: time.Now(),
+	}); err != nil {
+		t.Fatalf("upsert with owner: %v", err)
+	}
+	if err := idx.Upsert(ctx, ports.Record{
+		Path: "items/one.md", Rev: "r", Kind: "item",
+		Fields: map[string]string{"state": "open"}, When: time.Now(),
+	}); err != nil {
+		t.Fatalf("upsert without owner: %v", err)
+	}
+
+	got, err := idx.Find(ctx, ports.Query{Kind: "item"})
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("found %d records, want 1", len(got))
+	}
+	if _, present := got[0].Fields["owner"]; present {
+		t.Fatalf("Fields = %v, want no owner key", got[0].Fields)
+	}
+}
+
 // TestWhenSurvivesARoundTrip guards the corpus timeline: when_utc is stored
 // as an INTEGER, and a timezone or precision bug there would pass every
 // other test in this file while corrupting every timestamp in the index.
