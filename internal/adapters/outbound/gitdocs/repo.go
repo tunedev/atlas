@@ -45,10 +45,13 @@ func Open(ctx context.Context, root string) (*Store, error) {
 }
 
 // Put writes body to path, committing the change, and returns the resulting
-// revision. If staging or committing fails, path is restored to whatever it
-// held before this call: the working tree never diverges from the last
-// successful commit, which is what makes Get and List safe to read straight
-// off it.
+// revision. A body identical to what is already committed at path still
+// produces a new revision: git's own empty-commit rejection is disabled
+// deliberately, so writing the same content again remains a recorded event
+// with its own message and timestamp rather than a silent no-op. If staging
+// or committing fails, path is restored to whatever it held before this
+// call: the working tree never diverges from the last successful commit,
+// which is what makes Get and List safe to read straight off it.
 func (s *Store) Put(ctx context.Context, path string, body []byte, message string) (ports.Revision, error) {
 	rel, err := safeRelPath(path)
 	if err != nil {
