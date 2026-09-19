@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-git/go-git/v5"
+
 	"github.com/tunedev/atlas/internal/adapters/outbound/gitdocs"
 )
 
@@ -29,13 +31,18 @@ func chmodTree(t *testing.T, root string, mode os.FileMode) {
 
 func TestPutThenGetReturnsTheBody(t *testing.T) {
 	ctx := context.Background()
-	store, err := gitdocs.Open(ctx, t.TempDir())
+	root := t.TempDir()
+	store, err := gitdocs.Open(ctx, root)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 
-	if _, err := store.Put(ctx, "notes/one.md", []byte("first"), "add one"); err != nil {
+	rev, err := store.Put(ctx, "notes/one.md", []byte("first"), "add one")
+	if err != nil {
 		t.Fatalf("put: %v", err)
+	}
+	if rev == "" {
+		t.Fatal("put returned an empty revision")
 	}
 
 	got, err := store.Get(ctx, "notes/one.md")
@@ -44,6 +51,25 @@ func TestPutThenGetReturnsTheBody(t *testing.T) {
 	}
 	if string(got) != "first" {
 		t.Fatalf("body = %q, want first", got)
+	}
+
+	// Put's contract is that a write becomes a recorded revision, not just a
+	// file on disk. Verify HEAD actually carries a commit with the message,
+	// through a fresh handle on the repository rather than the Store.
+	repo, err := git.PlainOpen(root)
+	if err != nil {
+		t.Fatalf("plain open for verification: %v", err)
+	}
+	head, err := repo.Head()
+	if err != nil {
+		t.Fatalf("head: %v", err)
+	}
+	commit, err := repo.CommitObject(head.Hash())
+	if err != nil {
+		t.Fatalf("commit object: %v", err)
+	}
+	if commit.Message != "add one" {
+		t.Fatalf("HEAD commit message = %q, want %q", commit.Message, "add one")
 	}
 }
 
