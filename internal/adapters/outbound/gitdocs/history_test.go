@@ -66,6 +66,41 @@ func TestHistoryListsRevisionsNewestFirst(t *testing.T) {
 	}
 }
 
+func TestHistoryEntryRevisionCanBeReadWithGetAt(t *testing.T) {
+	ctx := context.Background()
+	store, err := gitdocs.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	for _, body := range []string{"first", "second", "third"} {
+		if _, err := store.Put(ctx, "a.md", []byte(body), body); err != nil {
+			t.Fatalf("put %s: %v", body, err)
+		}
+	}
+
+	got, err := store.History(ctx, "a.md")
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("history returned %d revisions, want 3", len(got))
+	}
+	for _, entry := range got {
+		if entry.When.IsZero() {
+			t.Fatalf("revision %q has a zero When", entry.Rev)
+		}
+	}
+
+	oldest := got[len(got)-1]
+	body, err := store.GetAt(ctx, "a.md", oldest.Rev)
+	if err != nil {
+		t.Fatalf("get at oldest history revision: %v", err)
+	}
+	if string(body) != "first" {
+		t.Fatalf("body at oldest history revision = %q, want first", body)
+	}
+}
+
 func TestHistoryOfOnePathIgnoresOtherPaths(t *testing.T) {
 	ctx := context.Background()
 	store, err := gitdocs.Open(ctx, t.TempDir())
