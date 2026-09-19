@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tunedev/atlas/internal/adapters/outbound/gitdocs"
@@ -142,6 +143,27 @@ func TestAFailedPutLeavesTheWorktreeUnchanged(t *testing.T) {
 
 	if _, err := store.Get(ctx, "notes/two.md"); err == nil {
 		t.Fatal("new path should not exist on disk after its commit failed")
+	}
+}
+
+func TestListExcludesTheGitDirectory(t *testing.T) {
+	ctx := context.Background()
+	store, err := gitdocs.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := store.Put(ctx, "notes/one.md", []byte("x"), "add one"); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+
+	got, err := store.List(ctx, "")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, p := range got {
+		if p == ".git" || strings.HasPrefix(p, ".git/") {
+			t.Fatalf("list under an empty prefix returned a path inside .git: %q", p)
+		}
 	}
 }
 
