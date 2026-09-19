@@ -20,6 +20,13 @@ import (
 // model is asked to work from a gap and answers anyway — a silently wrong
 // result rather than a failed run.
 //
+// missingkey=error only fires when a key is absent, not when it is present
+// with a JSON null. sanitizeStepData drops null-valued keys before the
+// template ever sees them, so a null behaves exactly like a missing key and
+// the same option catches both. It also reformats an integral float64 as an
+// int64: JSON numbers decode as float64, and text/template's default
+// formatting renders a large integral one in scientific notation.
+//
 // Deliberately no conditionals, loops, or expression language: a blueprint is
 // a sequence, not a program. The cheapest way to learn what expressiveness a
 // pack actually needs is to run out of it with a real pack in hand.
@@ -31,7 +38,7 @@ func Render(tmpl string, s *domain.State) (string, error) {
 
 	data := map[string]any{
 		"vars":  s.Vars(),
-		"steps": s.Outputs(),
+		"steps": sanitizeStepData(s.Outputs()),
 	}
 
 	var out strings.Builder
@@ -39,6 +46,36 @@ func Render(tmpl string, s *domain.State) (string, error) {
 		return "", fmt.Errorf("render: execute %q: %w", tmpl, err)
 	}
 	return out.String(), nil
+}
+
+// sanitizeStepData walks a step output tree, dropping null-valued map keys
+// and reformatting integral float64 values as int64, so a template renders a
+// missing value as an error and a whole number as a whole number.
+func sanitizeStepData(v any) any {
+	switch val := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(val))
+		for k, e := range val {
+			if e == nil {
+				continue
+			}
+			out[k] = sanitizeStepData(e)
+		}
+		return out
+	case []any:
+		out := make([]any, len(val))
+		for i, e := range val {
+			out[i] = sanitizeStepData(e)
+		}
+		return out
+	case float64:
+		if whole := int64(val); float64(whole) == val {
+			return whole
+		}
+		return val
+	default:
+		return v
+	}
 }
 
 // Select narrows a tool's result by a dotted path before it is stored, so a

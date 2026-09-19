@@ -39,6 +39,37 @@ func TestRenderFailsOnAMissingKeyRatherThanEmittingNoValue(t *testing.T) {
 	}
 }
 
+func TestRenderFailsOnAPresentKeyWithAJSONNullValue(t *testing.T) {
+	// missingkey=error only fires when a key is absent. A key present with a
+	// JSON null decodes to a nil interface, which the default template
+	// formatter renders as the literal string "<no value>" rather than
+	// erroring. That string reaching a prompt is exactly the silently wrong
+	// result missingkey=error exists to prevent.
+	s := domain.NewState(nil)
+	s.Put("item", map[string]any{"title": nil})
+
+	if _, err := app.Render("{{ .steps.item.title }}", s); err == nil {
+		t.Error("Render succeeded on a present key with a null value")
+	}
+}
+
+func TestRenderFormatsAnIntegralFloatWithoutScientificNotation(t *testing.T) {
+	// Tool results decode JSON numbers as float64. text/template's default
+	// %v formatting renders a large integral float64 in scientific notation,
+	// which mangles an id, a timestamp, or any other whole number a pack
+	// interpolates into a prompt.
+	s := domain.NewState(nil)
+	s.Put("item", map[string]any{"time": float64(1175714200)})
+
+	got, err := app.Render("{{ .steps.item.time }}", s)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if got != "1175714200" {
+		t.Errorf("got %q, want plain integer", got)
+	}
+}
+
 func TestRenderLeavesPlainTextAlone(t *testing.T) {
 	got, err := app.Render("no templates here", domain.NewState(nil))
 	if err != nil {
