@@ -55,8 +55,8 @@ func TestEnabledPathDoesNotBlockOnUnreachableEndpoint(t *testing.T) {
 
 	// Shutdown only exercises the export path if there is something to
 	// flush: with zero spans recorded, the batch processor returns
-	// immediately regardless of whether the exporter's dial blocks, so this
-	// test could not previously fail for the reason it names.
+	// immediately regardless of whether the exporter's dial blocks. Recording
+	// one span makes Shutdown actually attempt the export this test measures.
 	_, span := otel.Tracer("telemetry_test").Start(context.Background(), "probe")
 	span.End()
 

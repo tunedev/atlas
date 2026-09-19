@@ -129,7 +129,7 @@ func TestLoadRejectsStepIDsThatAreNotValidTemplateIdentifiers(t *testing.T) {
 			path := write(t, fmt.Sprintf("name: x\nsteps:\n  - id: %q\n    tool: a\n", id))
 			b, err := packfile.Load(path)
 			if err == nil {
-				t.Errorf("Load accepted step id %q", id)
+				t.Fatalf("Load accepted step id %q", id)
 			}
 			if b.Name != "" || len(b.Steps) != 0 {
 				t.Errorf("returned non-zero Blueprint on error: Name=%q, Steps=%d", b.Name, len(b.Steps))

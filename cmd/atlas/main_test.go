@@ -113,11 +113,9 @@ func TestRunIsSeparateFromMainSoDefersExecute(t *testing.T) {
 // registry, so a composition root that does not call WithTracer produces no
 // blueprint spans at all.
 //
-// This walks the AST of run() rather than scanning source text: main.go's
-// package comment already contains the text "telemetry.Init" in prose, so a
-// substring search could find a comment instead of the call, and would keep
-// passing if the file were reordered so that comment moved above the real
-// call.
+// This walks the AST of run() to find an actual call to telemetry.Init,
+// rather than searching source text, so the test asserts run() calls it
+// regardless of where else that name appears in the file.
 func TestCompositionRootInjectsATracer(t *testing.T) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "main.go", nil, 0)

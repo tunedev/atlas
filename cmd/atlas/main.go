@@ -43,9 +43,8 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	// Bounded by the same export timeout the exporter itself uses, rather
-	// than context.Background(), so shutdown cannot outlive that budget on
-	// an unreachable collector.
+	// Bounded by the same export timeout the exporter itself uses, so
+	// shutdown cannot outlive that budget on an unreachable collector.
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.OTel.ExportTimeout)
 		defer cancel()
