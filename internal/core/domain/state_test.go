@@ -24,8 +24,9 @@ func TestStateKeepsVarsAndStepOutputsApart(t *testing.T) {
 }
 
 func TestOutputsIsNotNilBeforeAnyStepRuns(t *testing.T) {
-	// A template referencing .steps before any step has run must render an
-	// empty value, not panic on a nil map.
+	// Outputs and Vars must never panic on a nil map, even before any step
+	// has run. A template referencing a step that has not run still fails at
+	// render time, via missingkey=error, rather than rendering empty.
 	if domain.NewState(nil).Outputs() == nil {
 		t.Error("Outputs() is nil on a fresh State")
 	}

@@ -5,8 +5,10 @@ package domain
 //
 // A pointer with unexported maps rather than a value type: the runner appends
 // to it step by step, and templates read it by path. Both maps are non-nil
-// from construction so a template referencing a step that has not run yet
-// renders empty rather than panicking.
+// from construction so reading Outputs or Vars before any step has run never
+// panics on a nil map. A template referencing a step that has not run yet
+// still fails: Render's missingkey=error rejects the absent key rather than
+// rendering it empty.
 type State struct {
 	vars    map[string]string
 	outputs map[string]any
