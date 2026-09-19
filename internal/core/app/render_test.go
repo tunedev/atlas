@@ -1,6 +1,7 @@
 package app_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/tunedev/atlas/internal/core/app"
@@ -50,6 +51,65 @@ func TestRenderFailsOnAPresentKeyWithAJSONNullValue(t *testing.T) {
 
 	if _, err := app.Render("{{ .steps.item.title }}", s); err == nil {
 		t.Error("Render succeeded on a present key with a null value")
+	}
+}
+
+func TestRenderFailsOnANullSliceElementAndNamesItsPath(t *testing.T) {
+	// A null cannot be dropped from a slice the way a null map value is
+	// dropped: dropping it would shift every later index. So a null inside a
+	// slice must reject the render outright, and the error must name the
+	// offending element so a pack author can find it.
+	s := domain.NewState(nil)
+	s.Put("item", map[string]any{"kids": []any{nil, "b"}})
+
+	_, err := app.Render("{{ index .steps.item.kids 0 }}", s)
+	if err == nil {
+		t.Fatal("Render succeeded on a slice containing a null element")
+	}
+	if !strings.Contains(err.Error(), "steps.item.kids[0]") {
+		t.Errorf("error %q does not name the path steps.item.kids[0]", err.Error())
+	}
+}
+
+func TestRenderFailsOnANullNestedInsideASliceInsideAMapInsideASlice(t *testing.T) {
+	s := domain.NewState(nil)
+	s.Put("item", []any{map[string]any{"kids": []any{"a", nil}}})
+
+	_, err := app.Render("{{ .steps.item }}", s)
+	if err == nil {
+		t.Fatal("Render succeeded on a deeply nested null slice element")
+	}
+	if !strings.Contains(err.Error(), "steps.item[0].kids[1]") {
+		t.Errorf("error %q does not name the path steps.item[0].kids[1]", err.Error())
+	}
+}
+
+func TestRenderStillDropsANullMapKeyLazilyRatherThanErroringEagerly(t *testing.T) {
+	// A null-valued map key is dropped before the template runs, so a
+	// template that never references that key still renders successfully.
+	// Only a null inside a slice is rejected eagerly.
+	s := domain.NewState(nil)
+	s.Put("item", map[string]any{"title": "ok", "extra": nil})
+
+	got, err := app.Render("{{ .steps.item.title }}", s)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if got != "ok" {
+		t.Errorf("got %q, want %q", got, "ok")
+	}
+}
+
+func TestRenderLeavesASliceWithoutNullsUnaffected(t *testing.T) {
+	s := domain.NewState(nil)
+	s.Put("item", map[string]any{"kids": []any{"a", "b"}})
+
+	got, err := app.Render("{{ index .steps.item.kids 0 }}", s)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if got != "a" {
+		t.Errorf("got %q, want %q", got, "a")
 	}
 }
 

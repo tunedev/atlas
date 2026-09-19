@@ -21,11 +21,16 @@ import (
 // result rather than a failed run.
 //
 // missingkey=error only fires when a key is absent, not when it is present
-// with a JSON null. sanitizeStepData drops null-valued keys before the
+// with a JSON null. sanitizeStepData drops null-valued map keys before the
 // template ever sees them, so a null behaves exactly like a missing key and
 // the same option catches both. It also reformats an integral float64 as an
 // int64: JSON numbers decode as float64, and text/template's default
 // formatting renders a large integral one in scientific notation.
+//
+// A null cannot be dropped the same way when it is a slice element: dropping
+// it would shift every later index rather than remove a name. sanitizeStepData
+// rejects that case outright, naming the element's path in the error, so the
+// run fails loudly instead of handing a rendered "<nil>" to a model.
 //
 // Deliberately no conditionals, loops, or expression language: a blueprint is
 // a sequence, not a program. The cheapest way to learn what expressiveness a
@@ -36,9 +41,14 @@ func Render(tmpl string, s *domain.State) (string, error) {
 		return "", fmt.Errorf("render: parse %q: %w", tmpl, err)
 	}
 
+	steps, err := sanitizeStepData(s.Outputs(), "steps")
+	if err != nil {
+		return "", fmt.Errorf("render: %w", err)
+	}
+
 	data := map[string]any{
 		"vars":  s.Vars(),
-		"steps": sanitizeStepData(s.Outputs()),
+		"steps": steps,
 	}
 
 	var out strings.Builder
@@ -50,8 +60,10 @@ func Render(tmpl string, s *domain.State) (string, error) {
 
 // sanitizeStepData walks a step output tree, dropping null-valued map keys
 // and reformatting integral float64 values as int64, so a template renders a
-// missing value as an error and a whole number as a whole number.
-func sanitizeStepData(v any) any {
+// missing value as an error and a whole number as a whole number. A null
+// found as a slice element is rejected with an error naming its path, since
+// unlike a map key it cannot be dropped without shifting later indices.
+func sanitizeStepData(v any, path string) (any, error) {
 	switch val := v.(type) {
 	case map[string]any:
 		out := make(map[string]any, len(val))
@@ -59,22 +71,34 @@ func sanitizeStepData(v any) any {
 			if e == nil {
 				continue
 			}
-			out[k] = sanitizeStepData(e)
+			sanitized, err := sanitizeStepData(e, path+"."+k)
+			if err != nil {
+				return nil, err
+			}
+			out[k] = sanitized
 		}
-		return out
+		return out, nil
 	case []any:
 		out := make([]any, len(val))
 		for i, e := range val {
-			out[i] = sanitizeStepData(e)
+			elemPath := fmt.Sprintf("%s[%d]", path, i)
+			if e == nil {
+				return nil, fmt.Errorf("null value at %s", elemPath)
+			}
+			sanitized, err := sanitizeStepData(e, elemPath)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = sanitized
 		}
-		return out
+		return out, nil
 	case float64:
 		if whole := int64(val); float64(whole) == val {
-			return whole
+			return whole, nil
 		}
-		return val
+		return val, nil
 	default:
-		return v
+		return v, nil
 	}
 }
 
