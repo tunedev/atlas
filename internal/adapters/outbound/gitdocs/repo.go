@@ -39,7 +39,7 @@ func Open(ctx context.Context, root string) (*Store, error) {
 		repo, err = git.PlainInit(root, false)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("open repository at %s: %w", root, err)
+		return nil, fmt.Errorf("gitdocs: open repository at %s: %w", root, err)
 	}
 	return &Store{repo: repo, root: root}, nil
 }
@@ -60,18 +60,18 @@ func (s *Store) Put(ctx context.Context, path string, body []byte, message strin
 	hadPrior := priorErr == nil
 
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-		return "", fmt.Errorf("create directories for %s: %w", path, err)
+		return "", fmt.Errorf("gitdocs: create directories for %s: %w", path, err)
 	}
 	if err := os.WriteFile(full, body, 0o644); err != nil {
-		return "", fmt.Errorf("write %s: %w", path, err)
+		return "", fmt.Errorf("gitdocs: write %s: %w", path, err)
 	}
 
 	wt, err := s.repo.Worktree()
 	if err != nil {
-		return "", rollback(full, hadPrior, prior, fmt.Errorf("worktree: %w", err))
+		return "", rollback(full, hadPrior, prior, fmt.Errorf("gitdocs: worktree: %w", err))
 	}
 	if _, err := wt.Add(rel); err != nil {
-		return "", rollback(full, hadPrior, prior, fmt.Errorf("stage %s: %w", path, err))
+		return "", rollback(full, hadPrior, prior, fmt.Errorf("gitdocs: stage %s: %w", path, err))
 	}
 
 	author := &object.Signature{
@@ -81,7 +81,7 @@ func (s *Store) Put(ctx context.Context, path string, body []byte, message strin
 	}
 	hash, err := wt.Commit(message, &git.CommitOptions{Author: author})
 	if err != nil {
-		return "", rollback(full, hadPrior, prior, fmt.Errorf("commit %s: %w", path, err))
+		return "", rollback(full, hadPrior, prior, fmt.Errorf("gitdocs: commit %s: %w", path, err))
 	}
 	return ports.Revision(hash.String()), nil
 }
@@ -98,7 +98,7 @@ func rollback(full string, hadPrior bool, prior []byte, cause error) error {
 		rbErr = os.Remove(full)
 	}
 	if rbErr != nil {
-		return errors.Join(cause, fmt.Errorf("rollback %s: %w", full, rbErr))
+		return errors.Join(cause, fmt.Errorf("gitdocs: rollback %s: %w", full, rbErr))
 	}
 	return cause
 }
@@ -111,7 +111,7 @@ func (s *Store) Get(ctx context.Context, path string) ([]byte, error) {
 	}
 	body, err := os.ReadFile(filepath.Join(s.root, rel))
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", path, err)
+		return nil, fmt.Errorf("gitdocs: read %s: %w", path, err)
 	}
 	return body, nil
 }
@@ -143,7 +143,7 @@ func (s *Store) List(ctx context.Context, prefix string) ([]string, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("list under %s: %w", prefix, err)
+		return nil, fmt.Errorf("gitdocs: list under %s: %w", prefix, err)
 	}
 	return paths, nil
 }
@@ -154,11 +154,11 @@ func (s *Store) List(ctx context.Context, prefix string) ([]string, error) {
 // the wrong place.
 func safeRelPath(p string) (string, error) {
 	if p == "" || filepath.IsAbs(p) {
-		return "", fmt.Errorf("path %q must be relative and non-empty", p)
+		return "", fmt.Errorf("gitdocs: path %q must be relative and non-empty", p)
 	}
 	clean := filepath.Clean(p)
 	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path %q escapes the root", p)
+		return "", fmt.Errorf("gitdocs: path %q escapes the root", p)
 	}
 	return clean, nil
 }
