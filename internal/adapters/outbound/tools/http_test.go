@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -89,6 +90,23 @@ func TestHTTPFailsWhenBodyExceedsMaxBytes(t *testing.T) {
 	if _, err := tools.NewHTTP(5*time.Second, 9).Invoke(context.Background(),
 		map[string]string{"url": srv.URL}); err == nil {
 		t.Error("Invoke succeeded with a body larger than maxBytes")
+	}
+}
+
+func TestHTTPReportsTheStatusOnAnUpstreamErrorWithAnOverLimitBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("0123456789"))
+	}))
+	defer srv.Close()
+
+	_, err := tools.NewHTTP(5*time.Second, 9).Invoke(context.Background(),
+		map[string]string{"url": srv.URL})
+	if err == nil {
+		t.Fatal("Invoke succeeded on a 500")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("error %q does not name the 500 status; the over-limit body must not mask it", err)
 	}
 }
 

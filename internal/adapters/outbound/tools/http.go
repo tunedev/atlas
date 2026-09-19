@@ -47,12 +47,13 @@ func (h *HTTP) Invoke(ctx context.Context, with map[string]string) (any, error) 
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, fmt.Errorf("http.request: %s returned %d", url, resp.StatusCode)
+	}
+
 	body, err := readLimited(resp.Body, h.maxBytes)
 	if err != nil {
 		return nil, fmt.Errorf("http.request: read body: %w", err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, fmt.Errorf("http.request: %s returned %d", url, resp.StatusCode)
 	}
 
 	var parsed map[string]any
