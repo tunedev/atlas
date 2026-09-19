@@ -17,6 +17,9 @@ jobs:
           go-version: "1.27"
       # DuckDB requires cgo, so a binary for one OS/arch cannot be produced by
       # cross-compiling from another; each platform must build and test on
-      # its own runner.
+      # its own runner. windows-latest does not ship a C toolchain by
+      # default, and cgo needs one; this is a known unknown for this matrix,
+      # unverified here, and the windows-latest job may need an explicit C
+      # toolchain setup step added once it has actually been run.
       - run: go build ./...
       - run: go test ./... -race
