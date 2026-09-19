@@ -15,6 +15,7 @@ type Config struct {
 	Pack  PackConfig
 	Model ModelConfig
 	OTel  OTelConfig
+	Store StoreConfig
 }
 
 type PackConfig struct {
@@ -34,6 +35,15 @@ type OTelConfig struct {
 	Endpoint      string
 	ExportTimeout time.Duration
 	Enabled       bool
+}
+
+// StoreConfig locates the git-backed record and its two derived indices.
+// Root, IndexPath and HistoryPath are expanded from a leading "~" at load
+// time, so nothing downstream handles that expansion itself.
+type StoreConfig struct {
+	Root        string
+	IndexPath   string
+	HistoryPath string
 }
 
 func (c Config) validate() error {
@@ -60,6 +70,15 @@ func (c Config) validate() error {
 	}
 	if c.OTel.ExportTimeout <= 0 {
 		return fmt.Errorf("config: otel export timeout must be positive, got %s", c.OTel.ExportTimeout)
+	}
+	if c.Store.Root == "" {
+		return fmt.Errorf("config: store root is empty")
+	}
+	if c.Store.IndexPath == "" {
+		return fmt.Errorf("config: store index path is empty")
+	}
+	if c.Store.HistoryPath == "" {
+		return fmt.Errorf("config: store history path is empty")
 	}
 	return nil
 }

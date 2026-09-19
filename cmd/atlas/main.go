@@ -11,6 +11,9 @@ import (
 	"go.opentelemetry.io/otel"
 
 	"github.com/tunedev/atlas/internal/adapters/inbound/packfile"
+	"github.com/tunedev/atlas/internal/adapters/outbound/duckindex"
+	"github.com/tunedev/atlas/internal/adapters/outbound/gitdocs"
+	"github.com/tunedev/atlas/internal/adapters/outbound/sqlindex"
 	"github.com/tunedev/atlas/internal/adapters/outbound/tools"
 	"github.com/tunedev/atlas/internal/config"
 	"github.com/tunedev/atlas/internal/core/app"
@@ -50,6 +53,26 @@ func run() error {
 		defer cancel()
 		_ = shutdown(shutdownCtx)
 	}()
+
+	// Opened here so a bad store path fails loudly at startup. Nothing reads
+	// or writes through them yet: no pack touches storage this increment.
+	docs, err := gitdocs.Open(ctx, cfg.Store.Root)
+	if err != nil {
+		return err
+	}
+	_ = docs
+
+	idx, err := sqlindex.Open(ctx, cfg.Store.IndexPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = idx.Close() }()
+
+	history, err := duckindex.Open(ctx, cfg.Store.HistoryPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = history.Close() }()
 
 	blueprint, err := packfile.Load(cfg.Pack.Path)
 	if err != nil {
