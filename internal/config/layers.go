@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -48,15 +49,49 @@ func applyEnv(c *Config) error {
 	if v := os.Getenv("ATLAS_PACK"); v != "" {
 		c.Pack.Path = v
 	}
+	if v := os.Getenv("ATLAS_PACK_HTTP_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_PACK_HTTP_TIMEOUT: invalid duration %q: %w", v, err)
+		}
+		c.Pack.HTTPTimeout = d
+	}
+	if v := os.Getenv("ATLAS_PACK_HTTP_MAX_BYTES"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_PACK_HTTP_MAX_BYTES: invalid integer %q: %w", v, err)
+		}
+		c.Pack.HTTPMaxBytes = n
+	}
 	if v := os.Getenv("ATLAS_MODEL_BASE_URL"); v != "" {
 		c.Model.BaseURL = v
 	}
 	if v := os.Getenv("ATLAS_MODEL_NAME"); v != "" {
 		c.Model.Name = v
 	}
+	if v := os.Getenv("ATLAS_MODEL_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_MODEL_TIMEOUT: invalid duration %q: %w", v, err)
+		}
+		c.Model.Timeout = d
+	}
+	if v := os.Getenv("ATLAS_MODEL_MAX_BYTES"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_MODEL_MAX_BYTES: invalid integer %q: %w", v, err)
+		}
+		c.Model.MaxBytes = n
+	}
 	if v := os.Getenv("ATLAS_OTEL_ENDPOINT"); v != "" {
 		c.OTel.Endpoint = v
-		c.OTel.Enabled = true
+	}
+	if v := os.Getenv("ATLAS_OTEL_ENABLED"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_OTEL_ENABLED: invalid bool %q: %w", v, err)
+		}
+		c.OTel.Enabled = b
 	}
 	if v := os.Getenv("ATLAS_OTEL_EXPORT_TIMEOUT"); v != "" {
 		d, err := time.ParseDuration(v)
