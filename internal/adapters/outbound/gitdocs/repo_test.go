@@ -167,6 +167,37 @@ func TestListExcludesTheGitDirectory(t *testing.T) {
 	}
 }
 
+func TestListMatchesOnPathBoundaries(t *testing.T) {
+	ctx := context.Background()
+	store, err := gitdocs.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	for _, p := range []string{"a/one.md", "ab/two.md"} {
+		if _, err := store.Put(ctx, p, []byte("x"), "add"); err != nil {
+			t.Fatalf("put %s: %v", p, err)
+		}
+	}
+
+	for _, prefix := range []string{"a", "a/"} {
+		got, err := store.List(ctx, prefix)
+		if err != nil {
+			t.Fatalf("list %q: %v", prefix, err)
+		}
+		if len(got) != 1 || got[0] != "a/one.md" {
+			t.Fatalf("list(%q) = %v, want [a/one.md]", prefix, got)
+		}
+	}
+
+	got, err := store.List(ctx, "ab")
+	if err != nil {
+		t.Fatalf("list ab: %v", err)
+	}
+	if len(got) != 1 || got[0] != "ab/two.md" {
+		t.Fatalf("list(ab) = %v, want [ab/two.md]", got)
+	}
+}
+
 func TestListReturnsPathsUnderAPrefix(t *testing.T) {
 	ctx := context.Background()
 	store, err := gitdocs.Open(ctx, t.TempDir())

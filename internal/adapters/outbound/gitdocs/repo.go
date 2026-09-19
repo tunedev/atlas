@@ -116,8 +116,12 @@ func (s *Store) Get(ctx context.Context, path string) ([]byte, error) {
 	return body, nil
 }
 
-// List returns the slash-separated paths of every file under prefix.
+// List returns the slash-separated paths of every file under prefix. prefix
+// is a directory boundary, not a literal string prefix: "a" and "a/" both
+// match "a/one.md" but neither matches "ab/two.md". An empty prefix matches
+// every path.
 func (s *Store) List(ctx context.Context, prefix string) ([]string, error) {
+	boundary := strings.TrimSuffix(prefix, "/")
 	var paths []string
 	err := filepath.WalkDir(s.root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -137,7 +141,7 @@ func (s *Store) List(ctx context.Context, prefix string) ([]string, error) {
 			return nil
 		}
 		relSlash := filepath.ToSlash(rel)
-		if strings.HasPrefix(relSlash, prefix) {
+		if boundary == "" || strings.HasPrefix(relSlash, boundary+"/") {
 			paths = append(paths, relSlash)
 		}
 		return nil
