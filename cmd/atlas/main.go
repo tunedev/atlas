@@ -43,7 +43,14 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = shutdown(context.Background()) }()
+	// Bounded by the same export timeout the exporter itself uses, rather
+	// than context.Background(), so shutdown cannot outlive that budget on
+	// an unreachable collector.
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.OTel.ExportTimeout)
+		defer cancel()
+		_ = shutdown(shutdownCtx)
+	}()
 
 	blueprint, err := packfile.Load(cfg.Pack.Path)
 	if err != nil {
