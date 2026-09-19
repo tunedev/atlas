@@ -1,0 +1,15 @@
+name: hn-summary
+vars:
+  item: "8863"
+
+steps:
+  - id: item
+    tool: http.request
+    with:
+      url: "https://hacker-news.firebaseio.com/v0/item/{{ .vars.item }}.json"
+
+  - id: summary
+    tool: model.complete
+    with:
+      system: "You summarise a discussion in one sentence. Be plain and specific."
+      user: "Title: {{ .steps.item.title }}\nBy: {{ .steps.item.by }}\nScore: {{ .steps.item.score }}"

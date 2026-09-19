@@ -935,8 +935,63 @@ git commit -m "Give a run somewhere to wait that outlives the process running it
 - Modify: `cmd/atlas/main.go`, `internal/config/config.go`
 
 **Interfaces:**
-- Consumes: `ports.Tool` from Part 1 Task 4, with `Invoke(ctx context.Context, cfg map[string]any, st domain.State) (json.RawMessage, error)`.
+- Consumes: `ports.Tool` from Part 1 Task 4, as Part 1 leaves it: `Invoke(ctx context.Context, with map[string]string) (any, error)`. **Step 0 widens it**; every later task assumes the widened form.
 - Produces: `ports.Store` with `Workspace(ctx context.Context, runID string) (string, error)` returning a host path; `ports.Sandbox` with `Exec(ctx context.Context, runID string, cmd []string) (ports.ExecResult, error)` and `Destroy(ctx context.Context, runID string) error`; `ports.ExecResult` with `Stdout string`, `Stderr string`, `ExitCode int`; `sandbox.NewDocker(cli *client.Client, store ports.Store, cfg sandbox.Config) *sandbox.Docker`.
+
+- [ ] **Step 0: Widen the Tool contract**
+
+Part 1's tool contract is `Invoke(ctx context.Context, with map[string]string) (any, error)`, and `domain.Step.With` is `map[string]string`. That is correct for Part 1: `http.request` and `model.complete` take flat string config.
+
+`sandbox.exec` does not. Its `cmd` is a list, which `map[string]string` cannot hold. And it needs to know which run it is serving, which nothing currently passes.
+
+Widen both, once, here — not per tool later:
+
+```go
+// ports.Tool, in internal/core/ports/ports.go
+type Tool interface {
+	Name() string
+	Invoke(ctx context.Context, with map[string]any, st *domain.State) (any, error)
+}
+```
+
+```go
+// domain.Step, in internal/core/domain/blueprint.go
+type Step struct {
+	ID   string
+	Tool string
+	With map[string]any
+}
+```
+
+```go
+// domain.State gains the run it belongs to.
+type State struct {
+	RunID   string
+	vars    map[string]string
+	outputs map[string]any
+}
+```
+
+`NewState` gains a run id: `NewState(runID string, vars map[string]string) *State`.
+
+Everything that must follow:
+
+- `internal/adapters/inbound/packfile/load.go`: the YAML `with:` unmarshals to `map[string]any`. This is what YAML gives you naturally; the string map was the narrowing.
+- `internal/core/app/render.go`: `renderConfig` walks the config rather than ranging a flat map. Render every string leaf; recurse into `map[string]any` and `[]any`; leave numbers and booleans alone.
+- `internal/adapters/outbound/tools/http.go` and `model.go`: signature updated, and each reads its keys with a checked type assertion (`with["url"].(string)`) instead of a direct index. A missing or wrong-typed key is an error naming the key, not a panic.
+- Every Part 1 test constructing `With: map[string]string{...}` becomes `map[string]any{...}`.
+
+- [ ] **Step 0b: Prove Part 1 still passes**
+
+Run: `go test ./... -race`
+Expected: PASS, with no test deleted or weakened. Then:
+
+```bash
+go run ./cmd/atlas -pack packs/job-hunt.yaml
+go run ./cmd/atlas -pack packs/hn-summary.yaml
+```
+
+Expected: both still run. The widening changed types, not behaviour. Paste the output.
 
 - [ ] **Step 1: Write the ports**
 
@@ -1380,7 +1435,7 @@ func NewExec(sb ports.Sandbox) *Exec { return &Exec{sandbox: sb} }
 
 func (e *Exec) Name() string { return "sandbox.exec" }
 
-func (e *Exec) Invoke(ctx context.Context, cfg map[string]any, st domain.State) (json.RawMessage, error) {
+func (e *Exec) Invoke(ctx context.Context, cfg map[string]any, st *domain.State) (any, error) {
 	raw, ok := cfg["cmd"].([]any)
 	if !ok || len(raw) == 0 {
 		return nil, fmt.Errorf("sandbox.exec needs a non-empty cmd list")
@@ -1398,15 +1453,15 @@ func (e *Exec) Invoke(ctx context.Context, cfg map[string]any, st domain.State) 
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(map[string]any{
+	return map[string]any{
 		"stdout":    res.Stdout,
 		"stderr":    res.Stderr,
 		"exit_code": res.ExitCode,
-	})
+	}, nil
 }
 ```
 
-`domain.State` gains a `RunID string` field; add it in `internal/core/domain/state.go` and set it where the runner constructs state.
+`st.RunID` is the field Step 0 added to `domain.State`.
 
 - [ ] **Step 11: Wire it and run both packs through the container**
 
@@ -1634,14 +1689,13 @@ Part 1 produces `Runner.Run(ctx context.Context, bp domain.Blueprint, vars map[s
 Rewrite `internal/core/app/runner.go` around this shape:
 
 ```go
-// Registry maps a tool name to its implementation.
-type Registry map[string]ports.Tool
-
 // Runner executes a blueprint's steps in order against a run.
+// The registry is Part 1's ports.Registry, unchanged.
 type Runner struct {
-	registry Registry
-	rules    domain.RuleSet
-	packs    map[string]domain.Blueprint
+	registry  ports.Registry
+	rules     domain.RuleSet
+	packs     map[string]domain.Blueprint
+	assumeYes bool
 }
 
 // Option configures a Runner at construction.
@@ -1657,7 +1711,7 @@ func WithPacks(packs map[string]domain.Blueprint) Option {
 	return func(r *Runner) { r.packs = packs }
 }
 
-func NewRunner(reg Registry, opts ...Option) *Runner {
+func NewRunner(reg ports.Registry, opts ...Option) *Runner {
 	r := &Runner{registry: reg, packs: map[string]domain.Blueprint{}}
 	for _, o := range opts {
 		o(r)
@@ -1684,7 +1738,7 @@ func (r *Runner) Execute(ctx context.Context, run *domain.Run, bp domain.Bluepri
 	for i := run.CurrentStep; i < len(bp.Steps); i++ {
 		step := bp.Steps[i]
 
-		tool, ok := r.registry[step.Tool]
+		tool, ok := r.registry.Lookup(step.Tool)
 		if !ok {
 			return fmt.Errorf("step %s: no tool named %q", step.ID, step.Tool)
 		}
@@ -1711,19 +1765,25 @@ func (r *Runner) Execute(ctx context.Context, run *domain.Run, bp domain.Bluepri
 		if err != nil {
 			return fmt.Errorf("step %s: %w", step.ID, err)
 		}
-		if sel, ok := step.With["select"].(string); ok && sel != "" {
+		if sel, ok := cfg["select"].(string); ok && sel != "" {
 			if out, err = narrow(out, sel); err != nil {
 				return fmt.Errorf("step %s: select: %w", step.ID, err)
 			}
 		}
-		run.Advance(i, out)
+		// Invoke returns any, per Part 1. Run.Outputs is json.RawMessage so a
+		// suspended run round-trips through Postgres unchanged.
+		raw, err := json.Marshal(out)
+		if err != nil {
+			return fmt.Errorf("step %s: marshal output: %w", step.ID, err)
+		}
+		run.Advance(i, raw)
 	}
 	run.Complete()
 	return nil
 }
 ```
 
-`render`, `narrow` and `stateOf` are Part 1's template rendering and path selector, unchanged except that `stateOf(run)` builds a `domain.State` from `run.Vars` and `run.Outputs` rather than from a standalone accumulator. Add `assumeYes bool` to `Runner` with a `WithAssumeYes()` option; the `-yes` flag sets it.
+`render` and `narrow` are Part 1's `renderConfig` and `Select`, unchanged. `stateOf(run)` builds a `*domain.State` from `run.RunID`, `run.Vars` and `run.Outputs` rather than from a standalone accumulator; it unmarshals each `json.RawMessage` output back to `any` so templates see the same shape Part 1 gave them. Add a `WithAssumeYes()` option setting `assumeYes`; the `-yes` flag sets it.
 
 A suspended run returns `nil`, not an error. A suspension is not a failure, and a caller that treats it as one will mark the run failed and lose it.
 
@@ -2003,11 +2063,11 @@ func (m *memRuns) Load(_ context.Context, id string) (domain.Run, error) {
 
 func TestSuspendResumeRunsEachStepExactlyOnce(t *testing.T) {
 	var executed []string
-	runner := app.NewRunner(app.Registry{
-		"tool.a": recordingTool(&executed, "a"),
-		"tool.b": recordingTool(&executed, "b"),
-		"tool.c": recordingTool(&executed, "c"),
-	}, app.WithRules(domain.RuleSet{Rules: []domain.Rule{
+	runner := app.NewRunner(tools.NewRegistry(
+		recordingTool(&executed, "tool.a", "a"),
+		recordingTool(&executed, "tool.b", "b"),
+		recordingTool(&executed, "tool.c", "c"),
+	), app.WithRules(domain.RuleSet{Rules: []domain.Rule{
 		{Tool: "tool.a", Match: "*", Outcome: domain.OutcomeAllow},
 		{Tool: "tool.b", Match: "*", Outcome: domain.OutcomeSuspend, Integration: "gmail"},
 		{Tool: "tool.c", Match: "*", Outcome: domain.OutcomeAllow},
@@ -2070,7 +2130,7 @@ func TestSuspendResumeRunsEachStepExactlyOnce(t *testing.T) {
 }
 ```
 
-Add `recordingTool` in the same file: a `ports.Tool` whose `Invoke` appends its label to the slice and returns `json.RawMessage("{}")`.
+Add `recordingTool(dst *[]string, name, label string) ports.Tool` in the same file: its `Name()` returns `name`, and its `Invoke` appends `label` to `*dst` and returns `map[string]any{}`. It takes the widened signature from Task 11 Step 0.
 
 The assertion that matters is `executed` equalling `[a b c]` — one `a`, not two. A resume that re-runs the steps before the suspension is the failure mode this test exists to catch.
 
@@ -2235,26 +2295,25 @@ func TestBrowserFetchReturnsRenderedText(t *testing.T) {
 	defer page.Close()
 
 	b := tools.NewBrowser(tools.BrowserConfig{Timeout: 20 * time.Second})
-	out, err := b.Invoke(context.Background(), map[string]any{"url": page.URL}, domain.State{})
+	out, err := b.Invoke(context.Background(), map[string]any{"url": page.URL}, domain.NewState("r1", nil))
 	if err != nil {
 		t.Fatalf("invoke: %v", err)
 	}
 
-	var body struct {
-		Text string `json:"text"`
+	body, ok := out.(map[string]any)
+	if !ok {
+		t.Fatalf("browser.fetch returned %T, want map[string]any", out)
 	}
-	if err := json.Unmarshal(out, &body); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
+	text, _ := body["text"].(string)
 	// "after" proves the page was rendered, not merely downloaded.
-	if !strings.Contains(body.Text, "after") {
-		t.Fatalf("text = %q; the page was not rendered", body.Text)
+	if !strings.Contains(text, "after") {
+		t.Fatalf("text = %q; the page was not rendered", text)
 	}
 }
 
 func TestBrowserFetchRefusesANonHTTPScheme(t *testing.T) {
 	b := tools.NewBrowser(tools.BrowserConfig{Timeout: 5 * time.Second})
-	if _, err := b.Invoke(context.Background(), map[string]any{"url": "file:///etc/passwd"}, domain.State{}); err == nil {
+	if _, err := b.Invoke(context.Background(), map[string]any{"url": "file:///etc/passwd"}, domain.NewState("r1", nil)); err == nil {
 		t.Fatal("a file:// url was accepted")
 	}
 }
@@ -2301,7 +2360,7 @@ func NewBrowser(cfg BrowserConfig) *Browser { return &Browser{cfg: cfg} }
 
 func (b *Browser) Name() string { return "browser.fetch" }
 
-func (b *Browser) Invoke(ctx context.Context, cfg map[string]any, _ domain.State) (json.RawMessage, error) {
+func (b *Browser) Invoke(ctx context.Context, cfg map[string]any, _ *domain.State) (any, error) {
 	raw, ok := cfg["url"].(string)
 	if !ok || raw == "" {
 		return nil, fmt.Errorf("browser.fetch needs a url")
@@ -2335,7 +2394,7 @@ func (b *Browser) Invoke(ctx context.Context, cfg map[string]any, _ domain.State
 	if err != nil {
 		return nil, fmt.Errorf("render %s: %w", u.Redacted(), err)
 	}
-	return json.Marshal(map[string]any{"url": u.String(), "text": text})
+	return map[string]any{"url": u.String(), "text": text}, nil
 }
 ```
 

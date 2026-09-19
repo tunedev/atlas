@@ -1,0 +1,46 @@
+name: job-hunt
+vars:
+  board_api: https://boards-api.greenhouse.io
+  board: gitlab
+  profile: "Backend engineer. Go, distributed systems, Kubernetes, Postgres, OpenTelemetry."
+
+steps:
+  - id: role
+    tool: http.request
+    with:
+      url: "{{ .vars.board_api }}/v1/boards/{{ .vars.board }}/jobs?content=true"
+      select: jobs.0
+
+  - id: verdict
+    tool: model.complete
+    with:
+      expect: json
+      system: |
+        You judge whether a job advertisement suits a candidate.
+        Reply with JSON only: {"decision":"apply|stretch|skip","reasons":["...","..."]}
+        decision must be exactly one of apply, stretch, or skip.
+        reasons must be short and specific to this role and this candidate.
+      user: |
+        Candidate: {{ .vars.profile }}
+
+        Role: {{ .steps.role.title }} at {{ .steps.role.company_name }}
+        Location: {{ .steps.role.location.name }}
+
+        {{ .steps.role.content }}
+
+  - id: documents
+    tool: model.complete
+    with:
+      system: |
+        You draft application documents.
+        Output exactly two sections separated by a line containing only ---
+        Section one is a tailored CV. Section two is a letter of application.
+        Use only facts given about the candidate. State a gap plainly rather
+        than inventing experience.
+      user: |
+        Candidate: {{ .vars.profile }}
+        Verdict was {{ .steps.verdict.decision }}.
+
+        Role: {{ .steps.role.title }} at {{ .steps.role.company_name }}
+
+        {{ .steps.role.content }}

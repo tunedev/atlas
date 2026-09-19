@@ -1,0 +1,121 @@
+package config
+
+import (
+	"flag"
+	"fmt"
+	"os"
+	"strconv"
+	"time"
+)
+
+// Load resolves configuration from defaults, then environment, then flags.
+// A model call on a laptop is slow, so its timeout default is generous where
+// the HTTP one is not.
+func Load(args []string) (Config, error) {
+	cfg := defaults()
+	if err := applyEnv(&cfg); err != nil {
+		return Config{}, err
+	}
+	if err := applyFlags(&cfg, args); err != nil {
+		return Config{}, err
+	}
+	if err := cfg.validate(); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
+}
+
+func defaults() Config {
+	return Config{
+		Pack: PackConfig{
+			HTTPTimeout:  20 * time.Second,
+			HTTPMaxBytes: 10 * 1024 * 1024,
+		},
+		Model: ModelConfig{
+			BaseURL:  "http://localhost:11434/v1",
+			Name:     "qwen2.5-coder:7b",
+			Timeout:  5 * time.Minute,
+			MaxBytes: 10 * 1024 * 1024,
+		},
+		OTel: OTelConfig{
+			Endpoint:      "localhost:4317",
+			ExportTimeout: 10 * time.Second,
+			Enabled:       false,
+		},
+	}
+}
+
+func applyEnv(c *Config) error {
+	if v := os.Getenv("ATLAS_PACK"); v != "" {
+		c.Pack.Path = v
+	}
+	if v := os.Getenv("ATLAS_PACK_HTTP_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_PACK_HTTP_TIMEOUT: invalid duration %q: %w", v, err)
+		}
+		c.Pack.HTTPTimeout = d
+	}
+	if v := os.Getenv("ATLAS_PACK_HTTP_MAX_BYTES"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_PACK_HTTP_MAX_BYTES: invalid integer %q: %w", v, err)
+		}
+		c.Pack.HTTPMaxBytes = n
+	}
+	if v := os.Getenv("ATLAS_MODEL_BASE_URL"); v != "" {
+		c.Model.BaseURL = v
+	}
+	if v := os.Getenv("ATLAS_MODEL_NAME"); v != "" {
+		c.Model.Name = v
+	}
+	if v := os.Getenv("ATLAS_MODEL_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_MODEL_TIMEOUT: invalid duration %q: %w", v, err)
+		}
+		c.Model.Timeout = d
+	}
+	if v := os.Getenv("ATLAS_MODEL_MAX_BYTES"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_MODEL_MAX_BYTES: invalid integer %q: %w", v, err)
+		}
+		c.Model.MaxBytes = n
+	}
+	if v := os.Getenv("ATLAS_OTEL_ENDPOINT"); v != "" {
+		c.OTel.Endpoint = v
+	}
+	if v := os.Getenv("ATLAS_OTEL_ENABLED"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_OTEL_ENABLED: invalid bool %q: %w", v, err)
+		}
+		c.OTel.Enabled = b
+	}
+	if v := os.Getenv("ATLAS_OTEL_EXPORT_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_OTEL_EXPORT_TIMEOUT: invalid duration %q: %w", v, err)
+		}
+		c.OTel.ExportTimeout = d
+	}
+	return nil
+}
+
+func applyFlags(c *Config, args []string) error {
+	fs := flag.NewFlagSet("atlas", flag.ContinueOnError)
+	fs.StringVar(&c.Pack.Path, "pack", c.Pack.Path, "path to a pack file")
+	fs.DurationVar(&c.Pack.HTTPTimeout, "http-timeout", c.Pack.HTTPTimeout, "timeout for http.request")
+	fs.Int64Var(&c.Pack.HTTPMaxBytes, "http-max-bytes", c.Pack.HTTPMaxBytes, "max response body size for http.request, in bytes")
+	fs.StringVar(&c.Model.BaseURL, "model-base-url", c.Model.BaseURL, "OpenAI-compatible base URL")
+	fs.StringVar(&c.Model.Name, "model-name", c.Model.Name, "model identifier")
+	fs.DurationVar(&c.Model.Timeout, "model-timeout", c.Model.Timeout, "model call timeout")
+	fs.Int64Var(&c.Model.MaxBytes, "model-max-bytes", c.Model.MaxBytes, "max response body size for model.complete, in bytes")
+	fs.BoolVar(&c.OTel.Enabled, "otel", c.OTel.Enabled, "export traces over OTLP")
+	fs.DurationVar(&c.OTel.ExportTimeout, "otel-export-timeout", c.OTel.ExportTimeout, "timeout for OTLP span export")
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("config: parse flags: %w", err)
+	}
+	return nil
+}
