@@ -2,9 +2,11 @@ package gitdocs_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/tunedev/atlas/internal/adapters/outbound/gitdocs"
+	"github.com/tunedev/atlas/internal/core/ports"
 )
 
 func TestAPriorRevisionIsStillReadable(t *testing.T) {
@@ -98,6 +100,45 @@ func TestHistoryEntryRevisionCanBeReadWithGetAt(t *testing.T) {
 	}
 	if string(body) != "first" {
 		t.Fatalf("body at oldest history revision = %q, want first", body)
+	}
+}
+
+func TestGetAtAnUnknownRevisionIsAnError(t *testing.T) {
+	ctx := context.Background()
+	store, err := gitdocs.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := store.Put(ctx, "a.md", []byte("one"), "first"); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+
+	bogus := ports.Revision(strings.Repeat("0", 40))
+	if _, err := store.GetAt(ctx, "a.md", bogus); err == nil {
+		t.Fatal("get at an unknown revision returned no error")
+	} else if !strings.Contains(err.Error(), "a.md") || !strings.Contains(err.Error(), string(bogus)) {
+		t.Fatalf("error %q does not name both path and revision", err)
+	}
+}
+
+func TestGetAtAPathAbsentFromThatRevisionIsAnError(t *testing.T) {
+	ctx := context.Background()
+	store, err := gitdocs.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	rev, err := store.Put(ctx, "a.md", []byte("one"), "first")
+	if err != nil {
+		t.Fatalf("put a: %v", err)
+	}
+	if _, err := store.Put(ctx, "b.md", []byte("two"), "second"); err != nil {
+		t.Fatalf("put b: %v", err)
+	}
+
+	if _, err := store.GetAt(ctx, "b.md", rev); err == nil {
+		t.Fatal("get at a path absent from that revision returned no error")
+	} else if !strings.Contains(err.Error(), "b.md") || !strings.Contains(err.Error(), string(rev)) {
+		t.Fatalf("error %q does not name both path and revision", err)
 	}
 }
 
