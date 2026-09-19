@@ -2,6 +2,7 @@ package gitdocs_test
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -56,13 +57,35 @@ func TestGetAnAbsentPathIsAnError(t *testing.T) {
 
 func TestAPathCannotEscapeTheRoot(t *testing.T) {
 	ctx := context.Background()
-	store, err := gitdocs.Open(ctx, t.TempDir())
+	root := t.TempDir()
+	store, err := gitdocs.Open(ctx, root)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	for _, p := range []string{"../escape.md", "a/../../escape.md", "/etc/passwd"} {
-		if _, err := store.Put(ctx, p, []byte("x"), "escape"); err == nil {
-			t.Errorf("path %q was accepted", p)
+
+	// Both relative escapes clean down to the same target once joined onto
+	// root: a file named escape.md next to root, one directory up. An
+	// absolute path is caught before any relative resolution, so it has no
+	// such target to check.
+	escapeTarget := filepath.Join(filepath.Dir(root), "escape.md")
+	cases := []struct {
+		path   string
+		target string
+	}{
+		{"../escape.md", escapeTarget},
+		{"a/../../escape.md", escapeTarget},
+		{"/etc/passwd", ""},
+	}
+
+	for _, c := range cases {
+		if _, err := store.Put(ctx, c.path, []byte("x"), "escape"); err == nil {
+			t.Errorf("path %q was accepted", c.path)
+		}
+		if c.target == "" {
+			continue
+		}
+		if _, statErr := os.Stat(c.target); !os.IsNotExist(statErr) {
+			t.Errorf("path %q escaped the root: found file at %q (stat err = %v)", c.path, c.target, statErr)
 		}
 	}
 }

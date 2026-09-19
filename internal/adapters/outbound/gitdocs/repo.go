@@ -47,7 +47,7 @@ func Open(ctx context.Context, root string) (*Store, error) {
 // Put writes body to path, committing the change, and returns the resulting
 // revision.
 func (s *Store) Put(ctx context.Context, path string, body []byte, message string) (ports.Revision, error) {
-	rel, err := safeRelPath(s.root, path)
+	rel, err := safeRelPath(path)
 	if err != nil {
 		return "", err
 	}
@@ -82,7 +82,7 @@ func (s *Store) Put(ctx context.Context, path string, body []byte, message strin
 
 // Get reads the current body of path from the worktree.
 func (s *Store) Get(ctx context.Context, path string) ([]byte, error) {
-	rel, err := safeRelPath(s.root, path)
+	rel, err := safeRelPath(path)
 	if err != nil {
 		return nil, err
 	}
@@ -126,10 +126,10 @@ func (s *Store) List(ctx context.Context, prefix string) ([]string, error) {
 }
 
 // safeRelPath cleans p and rejects it if it is empty, absolute, or escapes
-// root once cleaned. It refuses rather than normalises: a cleaned path and a
-// refused path are indistinguishable to a caller that then writes to the
-// wrong place.
-func safeRelPath(root, p string) (string, error) {
+// the root once cleaned. It refuses rather than normalises: a cleaned path
+// and a refused path are indistinguishable to a caller that then writes to
+// the wrong place.
+func safeRelPath(p string) (string, error) {
 	if p == "" || filepath.IsAbs(p) {
 		return "", fmt.Errorf("path %q must be relative and non-empty", p)
 	}
