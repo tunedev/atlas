@@ -125,6 +125,37 @@ func TestAMatchValueContainingSQLIsTreatedAsData(t *testing.T) {
 	}
 }
 
+// TestFindReturnsOnlyRecordsMatchingTheQuery guards Match filtering with the
+// one fixture shape the earlier tests lack: two records of the same Kind
+// that disagree on the matched field. With a single candidate record, an
+// unfiltered query happens to return the same answer as a filtered one;
+// with two, only a real filter tells them apart.
+func TestFindReturnsOnlyRecordsMatchingTheQuery(t *testing.T) {
+	ctx := context.Background()
+	idx := open(t)
+
+	if err := idx.Upsert(ctx, ports.Record{
+		Path: "items/one.md", Rev: "r", Kind: "item",
+		Fields: map[string]string{"state": "open"}, When: time.Now(),
+	}); err != nil {
+		t.Fatalf("upsert one: %v", err)
+	}
+	if err := idx.Upsert(ctx, ports.Record{
+		Path: "items/two.md", Rev: "r", Kind: "item",
+		Fields: map[string]string{"state": "closed"}, When: time.Now(),
+	}); err != nil {
+		t.Fatalf("upsert two: %v", err)
+	}
+
+	got, err := idx.Find(ctx, ports.Query{Kind: "item", Match: map[string]string{"state": "open"}})
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	if len(got) != 1 || got[0].Path != "items/one.md" {
+		t.Fatalf("find returned %v, want only items/one.md", got)
+	}
+}
+
 // TestWhenSurvivesARoundTrip guards the corpus timeline: when_utc is stored
 // as an INTEGER, and a timezone or precision bug there would pass every
 // other test in this file while corrupting every timestamp in the index.
