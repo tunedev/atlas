@@ -23,4 +23,6 @@ type Docs interface {
 	Put(ctx context.Context, path string, body []byte, message string) (Revision, error)
 	Get(ctx context.Context, path string) ([]byte, error)
 	List(ctx context.Context, prefix string) ([]string, error)
+	History(ctx context.Context, path string) ([]DocMeta, error)
+	GetAt(ctx context.Context, path string, rev Revision) ([]byte, error)
 }
