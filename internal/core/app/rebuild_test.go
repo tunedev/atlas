@@ -49,6 +49,34 @@ func findStateLine(body []byte) (string, bool) {
 	return "", false
 }
 
+// wantItemCount is items/one.md and items/two.md. other/three.md must be
+// excluded by extractItem's own rejection, not merely absent by coincidence.
+const wantItemCount = 2
+
+// assertOnlyExpectedItemsIndexed checks the Kind:"item" result directly
+// against the paths that should be present, and separately checks the index
+// for records extract rejected: an implementation that ignores extract's ok
+// return and upserts a zero-value Record anyway would produce rows with an
+// empty Kind, which a Kind:"item" query alone would never surface.
+func assertOnlyExpectedItemsIndexed(t *testing.T, idx ports.Index, records []ports.Record) {
+	t.Helper()
+	if len(records) != wantItemCount {
+		t.Fatalf("rebuild indexed %d items, want %d", len(records), wantItemCount)
+	}
+	for _, r := range records {
+		if strings.HasPrefix(r.Path, "other/") {
+			t.Errorf("record %+v has path under other/; extract's rejection was not honoured", r)
+		}
+	}
+	rejected, err := idx.Find(context.Background(), ports.Query{Kind: ""})
+	if err != nil {
+		t.Fatalf("find records with empty kind: %v", err)
+	}
+	if len(rejected) != 0 {
+		t.Errorf("found %d records with empty Kind; a rejected path was indexed anyway", len(rejected))
+	}
+}
+
 func TestDeletingTheIndexAndRebuildingLosesNothing(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -75,9 +103,7 @@ func TestDeletingTheIndexAndRebuildingLosesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("find before: %v", err)
 	}
-	if len(before) == 0 {
-		t.Fatal("rebuild indexed nothing; the test cannot discriminate")
-	}
+	assertOnlyExpectedItemsIndexed(t, idx, before)
 	if err := idx.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
@@ -99,6 +125,7 @@ func TestDeletingTheIndexAndRebuildingLosesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("find after: %v", err)
 	}
+	assertOnlyExpectedItemsIndexed(t, rebuilt, after)
 
 	if len(after) != len(before) {
 		t.Fatalf("rebuilt index holds %d records, original held %d", len(after), len(before))
