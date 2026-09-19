@@ -6,11 +6,18 @@ package packfile
 import (
 	"fmt"
 	"os"
+	"regexp"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/tunedev/atlas/internal/core/domain"
 )
+
+// stepIDPattern is what a step id becomes at render time: a Go template map
+// key reached as .steps.<id>. It must be a legal template identifier, which
+// this single pattern covers along with a hyphen, a dot, whitespace, and
+// empty in one check rather than separate special cases.
+var stepIDPattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 type pack struct {
 	Name  string            `yaml:"name"`
@@ -52,6 +59,9 @@ func Load(path string) (domain.Blueprint, error) {
 	for i, s := range p.Steps {
 		if s.ID == "" {
 			return domain.Blueprint{}, fmt.Errorf("packfile: %s step %d has no id", path, i)
+		}
+		if !stepIDPattern.MatchString(s.ID) {
+			return domain.Blueprint{}, fmt.Errorf("packfile: %s step %q: id must match %s, since it becomes a template map key", path, s.ID, stepIDPattern)
 		}
 		if seen[s.ID] {
 			return domain.Blueprint{}, fmt.Errorf("packfile: %s has two steps with id %q", path, s.ID)

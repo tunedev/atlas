@@ -1,8 +1,10 @@
 package packfile_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tunedev/atlas/internal/adapters/inbound/packfile"
@@ -113,5 +115,38 @@ func TestLoadRejectsAPackWithNoSteps(t *testing.T) {
 func TestLoadReportsAMissingFile(t *testing.T) {
 	if _, err := packfile.Load(filepath.Join(t.TempDir(), "absent.yaml")); err == nil {
 		t.Error("Load succeeded on a missing file")
+	}
+}
+
+// A step id becomes a Go template map key via .steps.<id>, so it must be a
+// legal template identifier. Anything else either fails at render time with
+// an error naming neither the pack file nor the id, or, worse, parses and
+// silently resolves to the wrong path.
+func TestLoadRejectsStepIDsThatAreNotValidTemplateIdentifiers(t *testing.T) {
+	cases := []string{"fetch-top", "fetch.item", " ", "1leading"}
+	for _, id := range cases {
+		t.Run(id, func(t *testing.T) {
+			path := write(t, fmt.Sprintf("name: x\nsteps:\n  - id: %q\n    tool: a\n", id))
+			b, err := packfile.Load(path)
+			if err == nil {
+				t.Errorf("Load accepted step id %q", id)
+			}
+			if b.Name != "" || len(b.Steps) != 0 {
+				t.Errorf("returned non-zero Blueprint on error: Name=%q, Steps=%d", b.Name, len(b.Steps))
+			}
+			if !strings.Contains(err.Error(), path) {
+				t.Errorf("error %q does not name the pack file", err)
+			}
+			if !strings.Contains(err.Error(), id) {
+				t.Errorf("error %q does not name the offending id %q", err, id)
+			}
+		})
+	}
+}
+
+func TestLoadAcceptsAStepIDThatIsAValidTemplateIdentifier(t *testing.T) {
+	path := write(t, "name: x\nsteps:\n  - id: fetch_top\n    tool: a\n")
+	if _, err := packfile.Load(path); err != nil {
+		t.Fatalf("Load: %v", err)
 	}
 }
