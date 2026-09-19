@@ -76,6 +76,38 @@ func TestARecordIsFoundByField(t *testing.T) {
 	}
 }
 
+// TestMatchIsScopedToTheRevisionNotTheWholePath guards the tuple subquery
+// in Find: fields belong to one revision, not one path, so a path with two
+// revisions whose field values disagree must not have those revisions
+// cross-contaminate each other's match. Degrading the (path, rev) tuple
+// subquery to a path-only one (sqlindex's shape) would let a stale
+// revision's field value satisfy a query meant for the current one.
+func TestMatchIsScopedToTheRevisionNotTheWholePath(t *testing.T) {
+	ctx := context.Background()
+	idx := open(t)
+
+	if err := idx.Upsert(ctx, ports.Record{
+		Path: "items/one.md", Rev: "r1", Kind: "item",
+		Fields: map[string]string{"state": "open"}, When: time.Now(),
+	}); err != nil {
+		t.Fatalf("upsert r1: %v", err)
+	}
+	if err := idx.Upsert(ctx, ports.Record{
+		Path: "items/one.md", Rev: "r2", Kind: "item",
+		Fields: map[string]string{"state": "closed"}, When: time.Now(),
+	}); err != nil {
+		t.Fatalf("upsert r2: %v", err)
+	}
+
+	got, err := idx.Find(ctx, ports.Query{Kind: "item", Match: map[string]string{"state": "open"}})
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	if len(got) != 1 || got[0].Rev != "r1" {
+		t.Fatalf("find returned %v, want exactly the r1 revision", got)
+	}
+}
+
 // TestUpsertReplacesTheSameRevision asserts the primary key is (path, rev),
 // not path: upserting the same path and same rev twice replaces the one row
 // rather than erroring or duplicating it.
