@@ -45,7 +45,10 @@ func Open(ctx context.Context, root string) (*Store, error) {
 }
 
 // Put writes body to path, committing the change, and returns the resulting
-// revision.
+// revision. If staging or committing fails, path is restored to whatever it
+// held before this call: the working tree never diverges from the last
+// successful commit, which is what makes Get and List safe to read straight
+// off it.
 func (s *Store) Put(ctx context.Context, path string, body []byte, message string) (ports.Revision, error) {
 	rel, err := safeRelPath(path)
 	if err != nil {
@@ -53,6 +56,9 @@ func (s *Store) Put(ctx context.Context, path string, body []byte, message strin
 	}
 
 	full := filepath.Join(s.root, rel)
+	prior, priorErr := os.ReadFile(full)
+	hadPrior := priorErr == nil
+
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return "", fmt.Errorf("create directories for %s: %w", path, err)
 	}
@@ -62,10 +68,10 @@ func (s *Store) Put(ctx context.Context, path string, body []byte, message strin
 
 	wt, err := s.repo.Worktree()
 	if err != nil {
-		return "", fmt.Errorf("worktree: %w", err)
+		return "", rollback(full, hadPrior, prior, fmt.Errorf("worktree: %w", err))
 	}
 	if _, err := wt.Add(rel); err != nil {
-		return "", fmt.Errorf("stage %s: %w", path, err)
+		return "", rollback(full, hadPrior, prior, fmt.Errorf("stage %s: %w", path, err))
 	}
 
 	author := &object.Signature{
@@ -75,9 +81,26 @@ func (s *Store) Put(ctx context.Context, path string, body []byte, message strin
 	}
 	hash, err := wt.Commit(message, &git.CommitOptions{Author: author})
 	if err != nil {
-		return "", fmt.Errorf("commit %s: %w", path, err)
+		return "", rollback(full, hadPrior, prior, fmt.Errorf("commit %s: %w", path, err))
 	}
 	return ports.Revision(hash.String()), nil
+}
+
+// rollback restores full to the state it held before a Put that failed after
+// already writing it: removed if it did not exist before, rewritten with
+// prior if it did. It returns cause, joined with any error the restore
+// itself hits.
+func rollback(full string, hadPrior bool, prior []byte, cause error) error {
+	var rbErr error
+	if hadPrior {
+		rbErr = os.WriteFile(full, prior, 0o644)
+	} else {
+		rbErr = os.Remove(full)
+	}
+	if rbErr != nil {
+		return errors.Join(cause, fmt.Errorf("rollback %s: %w", full, rbErr))
+	}
+	return cause
 }
 
 // Get reads the current body of path from the worktree.

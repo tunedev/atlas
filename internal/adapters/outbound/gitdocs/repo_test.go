@@ -2,12 +2,29 @@ package gitdocs_test
 
 import (
 	"context"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/tunedev/atlas/internal/adapters/outbound/gitdocs"
 )
+
+// chmodTree sets mode on every entry under root, so a whole .git directory
+// can be made unwritable to force a failure after Put has already written
+// the working-tree file.
+func chmodTree(t *testing.T, root string, mode os.FileMode) {
+	t.Helper()
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		return os.Chmod(p, mode)
+	})
+	if err != nil {
+		t.Fatalf("chmod %s to %o: %v", root, mode, err)
+	}
+}
 
 func TestPutThenGetReturnsTheBody(t *testing.T) {
 	ctx := context.Background()
@@ -87,6 +104,44 @@ func TestAPathCannotEscapeTheRoot(t *testing.T) {
 		if _, statErr := os.Stat(c.target); !os.IsNotExist(statErr) {
 			t.Errorf("path %q escaped the root: found file at %q (stat err = %v)", c.path, c.target, statErr)
 		}
+	}
+}
+
+func TestAFailedPutLeavesTheWorktreeUnchanged(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	store, err := gitdocs.Open(ctx, root)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := store.Put(ctx, "notes/one.md", []byte("original"), "add one"); err != nil {
+		t.Fatalf("seed put: %v", err)
+	}
+
+	// Force staging or committing to fail after the working-tree write has
+	// already happened: git needs to write a new blob object and update the
+	// index, both of which require write access inside .git.
+	gitDir := filepath.Join(root, ".git")
+	chmodTree(t, gitDir, 0o555)
+	t.Cleanup(func() { chmodTree(t, gitDir, 0o755) })
+
+	if _, err := store.Put(ctx, "notes/one.md", []byte("changed"), "change one"); err == nil {
+		t.Fatal("put on an existing path succeeded despite the commit being forced to fail")
+	}
+	if _, err := store.Put(ctx, "notes/two.md", []byte("new"), "add two"); err == nil {
+		t.Fatal("put on a new path succeeded despite the commit being forced to fail")
+	}
+
+	got, err := store.Get(ctx, "notes/one.md")
+	if err != nil {
+		t.Fatalf("get existing path after failed put: %v", err)
+	}
+	if string(got) != "original" {
+		t.Fatalf("existing path = %q after failed put, want original content restored", got)
+	}
+
+	if _, err := store.Get(ctx, "notes/two.md"); err == nil {
+		t.Fatal("new path should not exist on disk after its commit failed")
 	}
 }
 
