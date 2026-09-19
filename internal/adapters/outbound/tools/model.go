@@ -70,7 +70,7 @@ func (m *Model) Invoke(ctx context.Context, with map[string]string) (any, error)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, fmt.Errorf("model.complete: model %s returned %d", m.model, resp.StatusCode)
 	}
 

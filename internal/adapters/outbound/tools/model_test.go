@@ -102,6 +102,28 @@ func TestModelFailsWithoutAUserMessage(t *testing.T) {
 	}
 }
 
+func TestModelAcceptsA2xxStatusOtherThan200(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		out, _ := json.Marshal(map[string]any{
+			"choices": []any{map[string]any{"message": map[string]any{"content": "an answer"}}},
+		})
+		_, _ = w.Write(out)
+	}))
+	defer srv.Close()
+
+	out, err := tools.NewModel(srv.URL, "m", 5*time.Second, 1<<20).Invoke(context.Background(),
+		map[string]string{"system": "s", "user": "u"})
+	if err != nil {
+		t.Fatalf("Invoke: %v; an OpenAI-compatible gateway answering 202 must still succeed", err)
+	}
+	m, ok := out.(map[string]any)
+	if !ok || m["text"] != "an answer" {
+		t.Errorf("out = %#v", out)
+	}
+}
+
 func TestModelName(t *testing.T) {
 	if got := tools.NewModel("http://x", "m", time.Second, 1<<20).Name(); got != "model.complete" {
 		t.Errorf("Name = %q", got)
