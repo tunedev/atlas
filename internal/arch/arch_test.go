@@ -6,15 +6,27 @@ import (
 	"testing"
 )
 
+// runGoListDeps runs `go list -deps` on pkg and fails the test with the
+// command's stderr on error, rather than the bare exit status Output()
+// alone would report.
+func runGoListDeps(t *testing.T, pkg string) []byte {
+	t.Helper()
+	out, err := exec.Command("go", "list", "-deps", pkg).Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			t.Fatalf("go list failed: %v: %s", err, exitErr.Stderr)
+		}
+		t.Fatalf("go list failed: %v", err)
+	}
+	return out
+}
+
 // The core owns its interfaces and must not import any driver or adapter.
 // This is the mechanical form of "dependencies point inward".
 func TestCoreImportsNoAdapters(t *testing.T) {
 	// Module-qualified, not dot-relative: go test runs this binary with cwd
 	// set to this package's directory, never the module root.
-	out, err := exec.Command("go", "list", "-deps", "github.com/tunedev/atlas/internal/core/...").Output()
-	if err != nil {
-		t.Fatalf("go list failed: %v", err)
-	}
+	out := runGoListDeps(t, "github.com/tunedev/atlas/internal/core/...")
 	// Adapter tree and third-party drivers only. Never list stdlib packages:
 	// go list -deps is transitive, so net/http would fail this for the wrong reason.
 	//
@@ -52,10 +64,7 @@ func TestCoreImportsNoAdapters(t *testing.T) {
 // a future import of anything that drags in net/http or crypto/tls fails
 // here even if it does not go through otel.
 func TestCoreHasNoNetworkOrTLSDependency(t *testing.T) {
-	out, err := exec.Command("go", "list", "-deps", "github.com/tunedev/atlas/internal/core/...").Output()
-	if err != nil {
-		t.Fatalf("go list failed: %v", err)
-	}
+	out := runGoListDeps(t, "github.com/tunedev/atlas/internal/core/...")
 	forbidden := map[string]bool{"net/http": true, "crypto/tls": true}
 	for _, dep := range strings.Split(string(out), "\n") {
 		dep = strings.TrimSpace(dep)
