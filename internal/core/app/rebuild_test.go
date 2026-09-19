@@ -24,25 +24,38 @@ func byPath(records []ports.Record) {
 // extractItem is a use-case-neutral extractor used only to exercise Rebuild:
 // it indexes any path under items/ with Kind "item", reading a "state:
 // <value>" line from the body. Anything else, including a path under
-// items/ with no state line, is not indexed.
+// items/ with no state line, is not indexed. It also reads optional "rev:
+// <value>" and "when: <RFC3339>" lines, used only by tests that need to
+// prove Record.Rev and Record.When survive a rebuild too; a caller that
+// sets them itself after extract runs (as RebuildHistory does) overwrites
+// whatever these lines produced.
 func extractItem(path string, body []byte) (ports.Record, bool) {
 	if !strings.HasPrefix(path, "items/") {
 		return ports.Record{}, false
 	}
-	state, ok := findStateLine(body)
+	state, ok := findLine(body, "state: ")
 	if !ok {
 		return ports.Record{}, false
 	}
-	return ports.Record{
+	rec := ports.Record{
 		Path:   path,
 		Kind:   "item",
 		Fields: map[string]string{"state": state},
-	}, true
+	}
+	if rev, ok := findLine(body, "rev: "); ok {
+		rec.Rev = ports.Revision(rev)
+	}
+	if when, ok := findLine(body, "when: "); ok {
+		if t, err := time.Parse(time.RFC3339, when); err == nil {
+			rec.When = t
+		}
+	}
+	return rec, true
 }
 
-func findStateLine(body []byte) (string, bool) {
+func findLine(body []byte, prefix string) (string, bool) {
 	for _, line := range strings.Split(string(body), "\n") {
-		if v, ok := strings.CutPrefix(line, "state: "); ok {
+		if v, ok := strings.CutPrefix(line, prefix); ok {
 			return strings.TrimSpace(v), true
 		}
 	}
@@ -86,8 +99,13 @@ func TestDeletingTheIndexAndRebuildingLosesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open docs: %v", err)
 	}
+	bodies := map[string][]byte{
+		"items/one.md":   []byte("state: open\nrev: fixture-one\nwhen: 2024-01-01T00:00:00Z\n"),
+		"items/two.md":   []byte("state: closed\nrev: fixture-two\nwhen: 2024-02-02T00:00:00Z\n"),
+		"other/three.md": []byte("state: open\n"),
+	}
 	for _, p := range []string{"items/one.md", "items/two.md", "other/three.md"} {
-		if _, err := docs.Put(ctx, p, []byte("state: open\n"), "add"); err != nil {
+		if _, err := docs.Put(ctx, p, bodies[p], "add"); err != nil {
 			t.Fatalf("put %s: %v", p, err)
 		}
 	}
@@ -104,6 +122,14 @@ func TestDeletingTheIndexAndRebuildingLosesNothing(t *testing.T) {
 		t.Fatalf("find before: %v", err)
 	}
 	assertOnlyExpectedItemsIndexed(t, idx, before)
+	for _, r := range before {
+		if r.Rev == "" {
+			t.Errorf("record %+v has empty Rev; the fixture failed to seed one", r)
+		}
+		if r.When.IsZero() {
+			t.Errorf("record %+v has zero When; the fixture failed to seed one", r)
+		}
+	}
 	if err := idx.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
@@ -133,7 +159,10 @@ func TestDeletingTheIndexAndRebuildingLosesNothing(t *testing.T) {
 	byPath(before)
 	byPath(after)
 	for i := range before {
-		if after[i].Path != before[i].Path || after[i].Fields["state"] != before[i].Fields["state"] {
+		if after[i].Path != before[i].Path ||
+			after[i].Fields["state"] != before[i].Fields["state"] ||
+			after[i].Rev != before[i].Rev ||
+			!after[i].When.Equal(before[i].When) {
 			t.Errorf("record %d differs: before %+v, after %+v", i, before[i], after[i])
 		}
 	}
