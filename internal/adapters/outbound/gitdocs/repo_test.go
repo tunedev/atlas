@@ -83,8 +83,13 @@ func TestOpenInitialisesAnEmptyDirectory(t *testing.T) {
 	if _, err := gitdocs.Open(ctx, root); err != nil {
 		t.Fatalf("second open on an existing repo: %v", err)
 	}
-	if _, err := filepath.Abs(root); err != nil {
-		t.Fatalf("abs: %v", err)
+
+	info, err := os.Stat(filepath.Join(root, ".git"))
+	if err != nil {
+		t.Fatalf("stat .git: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatal(".git exists at root but is not a directory")
 	}
 }
 
