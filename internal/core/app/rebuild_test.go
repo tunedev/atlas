@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,12 @@ import (
 	"github.com/tunedev/atlas/internal/core/app"
 	"github.com/tunedev/atlas/internal/core/ports"
 )
+
+// byPath sorts records by Path. ports.Index.Find makes no ordering promise,
+// so comparing two Find results positionally requires sorting them first.
+func byPath(records []ports.Record) {
+	sort.Slice(records, func(i, j int) bool { return records[i].Path < records[j].Path })
+}
 
 // extractItem is a use-case-neutral extractor used only to exercise Rebuild:
 // it indexes any path under items/ with Kind "item", reading a "state:
@@ -96,6 +103,8 @@ func TestDeletingTheIndexAndRebuildingLosesNothing(t *testing.T) {
 	if len(after) != len(before) {
 		t.Fatalf("rebuilt index holds %d records, original held %d", len(after), len(before))
 	}
+	byPath(before)
+	byPath(after)
 	for i := range before {
 		if after[i].Path != before[i].Path || after[i].Fields["state"] != before[i].Fields["state"] {
 			t.Errorf("record %d differs: before %+v, after %+v", i, before[i], after[i])
