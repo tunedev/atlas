@@ -1,11 +1,9 @@
 package main
 
 import (
-	"bytes"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"testing"
 	"time"
 
@@ -114,23 +112,68 @@ func TestRunIsSeparateFromMainSoDefersExecute(t *testing.T) {
 // The runner defaults to a no-op tracer and no longer reads the global
 // registry, so a composition root that does not call WithTracer produces no
 // blueprint spans at all.
+//
+// This walks the AST of run() rather than scanning source text: main.go's
+// package comment already contains the text "telemetry.Init" in prose, so a
+// substring search could find a comment instead of the call, and would keep
+// passing if the file were reordered so that comment moved above the real
+// call.
 func TestCompositionRootInjectsATracer(t *testing.T) {
-	src, err := os.ReadFile("main.go")
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "main.go", nil, 0)
 	if err != nil {
-		t.Fatalf("read main.go: %v", err)
+		t.Fatalf("parse main.go: %v", err)
 	}
-	if !bytes.Contains(src, []byte("WithTracer(")) {
-		t.Error("main.go never calls WithTracer; the runner will keep its no-op tracer")
+
+	var run *ast.FuncDecl
+	for _, decl := range f.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "run" {
+			run = fn
+			break
+		}
 	}
-	initAt := bytes.Index(src, []byte("telemetry.Init("))
-	tracerAt := bytes.Index(src, []byte("otel.Tracer("))
-	if initAt < 0 {
-		t.Fatal("main.go never calls telemetry.Init")
+	if run == nil {
+		t.Fatal("run() not found in main.go")
 	}
-	if tracerAt < 0 {
-		t.Fatal("main.go never obtains a tracer")
+
+	var initPos, tracerPos token.Pos
+	var sawWithTracer bool
+	ast.Inspect(run, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		if sel.Sel.Name == "WithTracer" {
+			sawWithTracer = true
+			return true
+		}
+		pkg, ok := sel.X.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		switch {
+		case pkg.Name == "telemetry" && sel.Sel.Name == "Init":
+			initPos = call.Pos()
+		case pkg.Name == "otel" && sel.Sel.Name == "Tracer":
+			tracerPos = call.Pos()
+		}
+		return true
+	})
+
+	if !sawWithTracer {
+		t.Error("run() never calls WithTracer; the runner will keep its no-op tracer")
 	}
-	if tracerAt < initAt {
+	if initPos == token.NoPos {
+		t.Fatal("run() never calls telemetry.Init")
+	}
+	if tracerPos == token.NoPos {
+		t.Fatal("run() never obtains a tracer via otel.Tracer")
+	}
+	if tracerPos < initPos {
 		t.Error("the tracer is obtained before telemetry.Init installs a provider; it will be the no-op one")
 	}
 }
