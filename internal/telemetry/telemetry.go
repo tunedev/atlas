@@ -1,7 +1,9 @@
 // Package telemetry wires OpenTelemetry's trace pipeline to an OTLP gRPC
-// endpoint and installs the tracer provider as the process-wide global. It is
-// called once, from cmd/atlas, before the runner is constructed: the runner
-// reads otel.Tracer at package init, so Init must run first.
+// endpoint and installs the tracer provider as the process-wide global.
+// cmd/atlas calls Init once, then fetches a tracer with otel.Tracer and
+// injects it into the runner via WithTracer. Init must run first: the runner
+// itself starts with a no-op tracer and never reads the global, so a tracer
+// fetched before Init would be the no-op one.
 package telemetry
 
 import (
