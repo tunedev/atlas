@@ -38,6 +38,7 @@ func TestDeletingDuckindexAndRebuildingHistoryLosesNoRevision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open index: %v", err)
 	}
+	t.Cleanup(func() { _ = idx.Close() })
 	if err := app.RebuildHistory(ctx, docs, idx, extractItem); err != nil {
 		t.Fatalf("first rebuild: %v", err)
 	}
