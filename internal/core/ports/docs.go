@@ -17,8 +17,10 @@ type DocMeta struct {
 	Message string
 }
 
-// Docs is the system of record. Every write is a new revision; nothing is
-// overwritten in place.
+// Docs is the system of record. A write that changes a path's body produces
+// a new revision; a write that repeats the current body exactly is a no-op
+// and returns that path's current revision. Nothing already committed is
+// ever overwritten in place.
 type Docs interface {
 	Put(ctx context.Context, path string, body []byte, message string) (Revision, error)
 	Get(ctx context.Context, path string) ([]byte, error)

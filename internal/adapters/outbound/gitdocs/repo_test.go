@@ -231,6 +231,62 @@ func TestListMatchesOnPathBoundaries(t *testing.T) {
 	}
 }
 
+func TestIdenticalPutsReturnTheSameRevision(t *testing.T) {
+	ctx := context.Background()
+	store, err := gitdocs.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	first, err := store.Put(ctx, "a.md", []byte("same"), "add")
+	if err != nil {
+		t.Fatalf("put first: %v", err)
+	}
+	second, err := store.Put(ctx, "a.md", []byte("same"), "add again")
+	if err != nil {
+		t.Fatalf("put second: %v", err)
+	}
+	if first != second {
+		t.Fatalf("identical puts returned different revisions: %q, %q", first, second)
+	}
+
+	history, err := store.History(ctx, "a.md")
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("history has %d entries after two identical puts, want 1", len(history))
+	}
+}
+
+func TestAChangedPutReturnsADifferentRevision(t *testing.T) {
+	ctx := context.Background()
+	store, err := gitdocs.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	first, err := store.Put(ctx, "a.md", []byte("one"), "add")
+	if err != nil {
+		t.Fatalf("put first: %v", err)
+	}
+	second, err := store.Put(ctx, "a.md", []byte("two"), "change")
+	if err != nil {
+		t.Fatalf("put second: %v", err)
+	}
+	if first == second {
+		t.Fatalf("changed puts returned the same revision: %q", first)
+	}
+
+	history, err := store.History(ctx, "a.md")
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	if len(history) != 2 {
+		t.Fatalf("history has %d entries after two changed puts, want 2", len(history))
+	}
+}
+
 func TestListOnAnEmptyRepositoryReturnsNothing(t *testing.T) {
 	ctx := context.Background()
 	store, err := gitdocs.Open(ctx, t.TempDir())

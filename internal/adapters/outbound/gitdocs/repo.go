@@ -3,6 +3,7 @@
 package gitdocs
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -45,18 +46,26 @@ func Open(ctx context.Context, root string) (*Store, error) {
 }
 
 // Put writes body to path, committing the change, and returns the resulting
-// revision. A body identical to what is already committed at path still
-// produces a new revision: git's own empty-commit rejection is disabled
-// deliberately, so writing the same content again remains a recorded event
-// with its own message and timestamp rather than a silent no-op. If staging
-// or committing fails, path is restored to whatever it held before this
-// call: the working tree never diverges from the last successful commit.
-// Get and List read from HEAD, not the working tree, so this restore is
-// about leaving the working tree consistent, not about read safety.
+// revision. A body byte-identical to what HEAD already holds at path is a
+// no-op: Put returns that path's current revision and creates no commit.
+// This is not a policy choice but the only representable behaviour — git has
+// no way to record "this path was re-asserted unchanged"; an empty commit
+// records no path at all, so there is no revision such a write could produce
+// that History could ever enumerate. If staging or committing fails, path is
+// restored to whatever it held before this call: the working tree never
+// diverges from the last successful commit. Get and List read from HEAD, not
+// the working tree, so this restore is about leaving the working tree
+// consistent, not about read safety.
 func (s *Store) Put(ctx context.Context, path string, body []byte, message string) (ports.Revision, error) {
 	rel, err := safeRelPath(path)
 	if err != nil {
 		return "", err
+	}
+
+	if rev, ok, err := s.unchangedRevision(ctx, path, rel, body); err != nil {
+		return "", err
+	} else if ok {
+		return rev, nil
 	}
 
 	full := filepath.Join(s.root, rel)
@@ -83,11 +92,48 @@ func (s *Store) Put(ctx context.Context, path string, body []byte, message strin
 		Email: commitAuthorEmail,
 		When:  time.Now(),
 	}
-	hash, err := wt.Commit(message, &git.CommitOptions{Author: author, AllowEmptyCommits: true})
+	hash, err := wt.Commit(message, &git.CommitOptions{Author: author})
 	if err != nil {
 		return "", rollback(full, hadPrior, prior, fmt.Errorf("gitdocs: commit %s: %w", path, err))
 	}
 	return ports.Revision(hash.String()), nil
+}
+
+// unchangedRevision reports whether body is byte-identical to what HEAD
+// already holds at path. When it is, it also returns the revision that
+// produced it, taken from History rather than HEAD itself, since HEAD may by
+// now point at a commit that changed a different path.
+func (s *Store) unchangedRevision(ctx context.Context, path, rel string, body []byte) (ports.Revision, bool, error) {
+	tree, err := s.headTree()
+	if err != nil {
+		return "", false, fmt.Errorf("gitdocs: check %s: %w", path, err)
+	}
+	if tree == nil {
+		return "", false, nil
+	}
+	file, err := tree.File(rel)
+	if errors.Is(err, object.ErrFileNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("gitdocs: check %s: %w", path, err)
+	}
+	contents, err := file.Contents()
+	if err != nil {
+		return "", false, fmt.Errorf("gitdocs: check %s: %w", path, err)
+	}
+	if !bytes.Equal([]byte(contents), body) {
+		return "", false, nil
+	}
+
+	history, err := s.History(ctx, path)
+	if err != nil {
+		return "", false, fmt.Errorf("gitdocs: check %s: %w", path, err)
+	}
+	if len(history) == 0 {
+		return "", false, nil
+	}
+	return history[0].Rev, true, nil
 }
 
 // rollback restores full to the state it held before a Put that failed after
