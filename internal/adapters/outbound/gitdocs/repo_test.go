@@ -142,6 +142,9 @@ func TestAPathCannotEscapeTheRoot(t *testing.T) {
 }
 
 func TestAFailedPutLeavesTheWorktreeUnchanged(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file permission bits, so chmod cannot force a write failure")
+	}
 	ctx := context.Background()
 	root := t.TempDir()
 	store, err := gitdocs.Open(ctx, root)

@@ -16,6 +16,9 @@ import (
 	"github.com/tunedev/atlas/internal/core/ports"
 )
 
+// fields has no foreign key to records: the adapter manages both tables by
+// hand. Upsert deletes and rewrites a path's fields itself, and Reset clears
+// both tables directly, so nothing here relies on referential cleanup.
 const schema = `
 CREATE TABLE IF NOT EXISTS records (
     path TEXT PRIMARY KEY,
@@ -24,7 +27,7 @@ CREATE TABLE IF NOT EXISTS records (
     when_utc INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS fields (
-    path  TEXT NOT NULL REFERENCES records(path) ON DELETE CASCADE,
+    path  TEXT NOT NULL,
     name  TEXT NOT NULL,
     value TEXT NOT NULL,
     PRIMARY KEY (path, name)
@@ -44,10 +47,6 @@ func Open(ctx context.Context, path string) (*Index, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("sqlindex: open %s: %w", path, err)
-	}
-	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = ON;"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("sqlindex: enable foreign keys: %w", err)
 	}
 	if _, err := db.ExecContext(ctx, schema); err != nil {
 		db.Close()

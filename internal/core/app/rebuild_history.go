@@ -32,21 +32,21 @@ type revisionIndex interface {
 
 func RebuildHistory(ctx context.Context, docs ports.Docs, idx revisionIndex, extract func(path string, body []byte) (ports.Record, bool)) error {
 	if err := idx.Reset(ctx); err != nil {
-		return fmt.Errorf("rebuild history: reset: %w", err)
+		return fmt.Errorf("rebuildhistory: reset: %w", err)
 	}
 	paths, err := docs.List(ctx, "")
 	if err != nil {
-		return fmt.Errorf("rebuild history: list: %w", err)
+		return fmt.Errorf("rebuildhistory: list: %w", err)
 	}
 	for _, p := range paths {
 		history, err := docs.History(ctx, p)
 		if err != nil {
-			return fmt.Errorf("rebuild history: history %s: %w", p, err)
+			return fmt.Errorf("rebuildhistory: history %s: %w", p, err)
 		}
 		for _, meta := range history {
 			body, err := docs.GetAt(ctx, p, meta.Rev)
 			if err != nil {
-				return fmt.Errorf("rebuild history: read %s@%s: %w", p, meta.Rev, err)
+				return fmt.Errorf("rebuildhistory: read %s@%s: %w", p, meta.Rev, err)
 			}
 			rec, ok := extract(p, body)
 			if !ok {
@@ -55,7 +55,7 @@ func RebuildHistory(ctx context.Context, docs ports.Docs, idx revisionIndex, ext
 			rec.Rev = meta.Rev
 			rec.When = meta.When
 			if err := idx.Upsert(ctx, rec); err != nil {
-				return fmt.Errorf("rebuild history: index %s@%s: %w", p, meta.Rev, err)
+				return fmt.Errorf("rebuildhistory: index %s@%s: %w", p, meta.Rev, err)
 			}
 		}
 	}
