@@ -6,13 +6,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/tunedev/atlas/internal/core/ports"
@@ -50,8 +50,9 @@ func Open(ctx context.Context, root string) (*Store, error) {
 // deliberately, so writing the same content again remains a recorded event
 // with its own message and timestamp rather than a silent no-op. If staging
 // or committing fails, path is restored to whatever it held before this
-// call: the working tree never diverges from the last successful commit,
-// which is what makes Get and List safe to read straight off it.
+// call: the working tree never diverges from the last successful commit.
+// Get and List read from HEAD, not the working tree, so this restore is
+// about leaving the working tree consistent, not about read safety.
 func (s *Store) Put(ctx context.Context, path string, body []byte, message string) (ports.Revision, error) {
 	rel, err := safeRelPath(path)
 	if err != nil {
@@ -106,46 +107,37 @@ func rollback(full string, hadPrior bool, prior []byte, cause error) error {
 	return cause
 }
 
-// Get reads the current body of path from the worktree.
+// Get reads the body of path as committed at HEAD. It is GetAt applied to
+// the current revision.
 func (s *Store) Get(ctx context.Context, path string) ([]byte, error) {
-	rel, err := safeRelPath(path)
-	if err != nil {
-		return nil, err
-	}
-	body, err := os.ReadFile(filepath.Join(s.root, rel))
+	ref, err := s.repo.Head()
 	if err != nil {
 		return nil, fmt.Errorf("gitdocs: read %s: %w", path, err)
 	}
-	return body, nil
+	return s.GetAt(ctx, path, ports.Revision(ref.Hash().String()))
 }
 
-// List returns the slash-separated paths of every file under prefix. prefix
-// is a directory boundary, not a literal string prefix: "a" and "a/" both
-// match "a/one.md" but neither matches "ab/two.md". An empty prefix matches
-// every path.
+// List returns the slash-separated paths of every file committed at HEAD
+// under prefix. prefix is a directory boundary, not a literal string prefix:
+// "a" and "a/" both match "a/one.md" but neither matches "ab/two.md". An
+// empty prefix matches every path. A repository with no commits yet has no
+// HEAD tree to walk and returns no paths.
 func (s *Store) List(ctx context.Context, prefix string) ([]string, error) {
 	boundary := strings.TrimSuffix(prefix, "/")
+	tree, err := s.headTree()
+	if err != nil {
+		return nil, fmt.Errorf("gitdocs: list under %s: %w", prefix, err)
+	}
+	if tree == nil {
+		return nil, nil
+	}
+
 	var paths []string
-	err := filepath.WalkDir(s.root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, relErr := filepath.Rel(s.root, p)
-		if relErr != nil {
-			return relErr
-		}
-		if rel == "." {
-			return nil
-		}
-		if d.IsDir() {
-			if d.Name() == ".git" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		relSlash := filepath.ToSlash(rel)
-		if boundary == "" || strings.HasPrefix(relSlash, boundary+"/") {
-			paths = append(paths, relSlash)
+	iter := tree.Files()
+	defer iter.Close()
+	err = iter.ForEach(func(f *object.File) error {
+		if boundary == "" || strings.HasPrefix(f.Name, boundary+"/") {
+			paths = append(paths, f.Name)
 		}
 		return nil
 	})
@@ -153,6 +145,27 @@ func (s *Store) List(ctx context.Context, prefix string) ([]string, error) {
 		return nil, fmt.Errorf("gitdocs: list under %s: %w", prefix, err)
 	}
 	return paths, nil
+}
+
+// headTree returns the tree HEAD points at, or nil if the repository has no
+// commits yet.
+func (s *Store) headTree() (*object.Tree, error) {
+	ref, err := s.repo.Head()
+	if errors.Is(err, plumbing.ErrReferenceNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("head: %w", err)
+	}
+	commit, err := s.repo.CommitObject(ref.Hash())
+	if err != nil {
+		return nil, fmt.Errorf("head commit: %w", err)
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		return nil, fmt.Errorf("head tree: %w", err)
+	}
+	return tree, nil
 }
 
 // safeRelPath cleans p and rejects it if it is empty, absolute, or escapes

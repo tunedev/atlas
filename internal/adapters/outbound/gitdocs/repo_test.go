@@ -231,6 +231,56 @@ func TestListMatchesOnPathBoundaries(t *testing.T) {
 	}
 }
 
+func TestListOnAnEmptyRepositoryReturnsNothing(t *testing.T) {
+	ctx := context.Background()
+	store, err := gitdocs.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	got, err := store.List(ctx, "")
+	if err != nil {
+		t.Fatalf("list on a repository with no commits: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("list on an empty repository = %v, want none", got)
+	}
+}
+
+func TestGetAndListReadFromHeadNotTheWorktree(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	store, err := gitdocs.Open(ctx, root)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := store.Put(ctx, "notes/one.md", []byte("first"), "add one"); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+
+	// Remove the file from the worktree directly, bypassing Put. Git still
+	// holds the committed blob; only the filesystem copy is gone.
+	if err := os.Remove(filepath.Join(root, "notes", "one.md")); err != nil {
+		t.Fatalf("remove worktree file: %v", err)
+	}
+
+	got, err := store.Get(ctx, "notes/one.md")
+	if err != nil {
+		t.Fatalf("get after removing the worktree file: %v", err)
+	}
+	if string(got) != "first" {
+		t.Fatalf("body = %q, want first", got)
+	}
+
+	paths, err := store.List(ctx, "")
+	if err != nil {
+		t.Fatalf("list after removing the worktree file: %v", err)
+	}
+	if len(paths) != 1 || paths[0] != "notes/one.md" {
+		t.Fatalf("list = %v, want [notes/one.md]", paths)
+	}
+}
+
 func TestListReturnsPathsUnderAPrefix(t *testing.T) {
 	ctx := context.Background()
 	store, err := gitdocs.Open(ctx, t.TempDir())
