@@ -340,6 +340,47 @@ func TestGetAndListReadFromHeadNotTheWorktree(t *testing.T) {
 	}
 }
 
+// TestPutListGetRoundTripUsesSlashPaths puts a nested path, lists it back,
+// and reads every listed path with Get. On Linux and macOS this would pass
+// even if the internal representation mixed OS separators in, since their
+// separator is already "/"; the explicit backslash and slash-canonical-form
+// assertions below are what makes the test discriminate on every platform.
+func TestPutListGetRoundTripUsesSlashPaths(t *testing.T) {
+	ctx := context.Background()
+	store, err := gitdocs.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	const want = "notes/deeply/nested/one.md"
+	if _, err := store.Put(ctx, want, []byte("x"), "add"); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+
+	paths, err := store.List(ctx, "")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(paths) != 1 {
+		t.Fatalf("list = %v, want exactly one path", paths)
+	}
+
+	for _, p := range paths {
+		if strings.Contains(p, `\`) {
+			t.Errorf("listed path %q contains a backslash", p)
+		}
+		if p != filepath.ToSlash(p) {
+			t.Errorf("listed path %q is not in slash-canonical form", p)
+		}
+		if p != want {
+			t.Errorf("listed path = %q, want %q", p, want)
+		}
+		if _, err := store.Get(ctx, p); err != nil {
+			t.Errorf("get %q: %v", p, err)
+		}
+	}
+}
+
 func TestListReturnsPathsUnderAPrefix(t *testing.T) {
 	ctx := context.Background()
 	store, err := gitdocs.Open(ctx, t.TempDir())

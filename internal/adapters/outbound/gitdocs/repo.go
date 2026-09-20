@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -68,7 +69,7 @@ func (s *Store) Put(ctx context.Context, path string, body []byte, message strin
 		return rev, nil
 	}
 
-	full := filepath.Join(s.root, rel)
+	full := filepath.Join(s.root, filepath.FromSlash(rel))
 	prior, priorErr := os.ReadFile(full)
 	hadPrior := priorErr == nil
 
@@ -214,16 +215,24 @@ func (s *Store) headTree() (*object.Tree, error) {
 	return tree, nil
 }
 
-// safeRelPath cleans p and rejects it if it is empty, absolute, or escapes
-// the root once cleaned. It refuses rather than normalises: a cleaned path
-// and a refused path are indistinguishable to a caller that then writes to
-// the wrong place.
+// safeRelPath validates p as a slash-separated git path and returns its
+// cleaned, slash-separated form. Git tree paths are always slash-separated
+// regardless of platform, so validation uses "path", not "path/filepath":
+// filepath's rules follow the host OS and would accept or reject different
+// inputs on Windows than on Linux or macOS. p is rejected if it is empty,
+// starts with "/", contains a backslash, or escapes the root once cleaned.
+// A backslash is rejected outright rather than treated as a separator: on
+// this slash-canonical interface it is a literal character in a filename,
+// and treating it as anything else invites exactly the ambiguity this
+// function exists to remove. It refuses rather than normalises: a cleaned
+// path and a refused path are indistinguishable to a caller that then
+// writes to the wrong place.
 func safeRelPath(p string) (string, error) {
-	if p == "" || filepath.IsAbs(p) {
+	if p == "" || strings.HasPrefix(p, "/") || strings.Contains(p, `\`) {
 		return "", fmt.Errorf("gitdocs: path %q must be relative and non-empty", p)
 	}
-	clean := filepath.Clean(p)
-	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+	clean := path.Clean(p)
+	if clean == ".." || strings.HasPrefix(clean, "../") {
 		return "", fmt.Errorf("gitdocs: path %q escapes the root", p)
 	}
 	return clean, nil
