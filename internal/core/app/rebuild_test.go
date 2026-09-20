@@ -21,14 +21,13 @@ func byPath(records []ports.Record) {
 	sort.Slice(records, func(i, j int) bool { return records[i].Path < records[j].Path })
 }
 
-// extractItem is a use-case-neutral extractor used only to exercise Rebuild:
-// it indexes any path under items/ with Kind "item", reading a "state:
-// <value>" line from the body. Anything else, including a path under
-// items/ with no state line, is not indexed. It also reads optional "rev:
-// <value>" and "when: <RFC3339>" lines, used only by tests that need to
-// prove Record.Rev and Record.When survive a rebuild too; a caller that
-// sets them itself after extract runs (as RebuildHistory does) overwrites
-// whatever these lines produced.
+// extractItem is a use-case-neutral extractor used only to exercise Rebuild
+// and RebuildHistory: it indexes any path under items/ with Kind "item",
+// reading a "state: <value>" line from the body. Anything else, including a
+// path under items/ with no state line, is not indexed. It never sets Rev or
+// When itself: both walks stamp those from Docs after extract runs, so a
+// body carrying its own rev/when text would prove nothing about whether the
+// walk actually stamps them.
 func extractItem(path string, body []byte) (ports.Record, bool) {
 	if !strings.HasPrefix(path, "items/") {
 		return ports.Record{}, false
@@ -37,20 +36,11 @@ func extractItem(path string, body []byte) (ports.Record, bool) {
 	if !ok {
 		return ports.Record{}, false
 	}
-	rec := ports.Record{
+	return ports.Record{
 		Path:   path,
 		Kind:   "item",
 		Fields: map[string]string{"state": state},
-	}
-	if rev, ok := findLine(body, "rev: "); ok {
-		rec.Rev = ports.Revision(rev)
-	}
-	if when, ok := findLine(body, "when: "); ok {
-		if t, err := time.Parse(time.RFC3339, when); err == nil {
-			rec.When = t
-		}
-	}
-	return rec, true
+	}, true
 }
 
 func findLine(body []byte, prefix string) (string, bool) {
@@ -100,15 +90,23 @@ func TestDeletingTheIndexAndRebuildingLosesNothing(t *testing.T) {
 		t.Fatalf("open docs: %v", err)
 	}
 	bodies := map[string][]byte{
-		"items/one.md":   []byte("state: open\nrev: fixture-one\nwhen: 2024-01-01T00:00:00Z\n"),
-		"items/two.md":   []byte("state: closed\nrev: fixture-two\nwhen: 2024-02-02T00:00:00Z\n"),
+		"items/one.md":   []byte("state: open\n"),
+		"items/two.md":   []byte("state: closed\n"),
 		"other/three.md": []byte("state: open\n"),
 	}
+	// Git commit timestamps carry only whole-second precision, so the window
+	// gives each side a second of slack rather than comparing to the
+	// sub-second time.Now() taken here.
+	start := time.Now().Add(-time.Second)
+	wantRev := map[string]ports.Revision{}
 	for _, p := range []string{"items/one.md", "items/two.md", "other/three.md"} {
-		if _, err := docs.Put(ctx, p, bodies[p], "add"); err != nil {
+		rev, err := docs.Put(ctx, p, bodies[p], "add")
+		if err != nil {
 			t.Fatalf("put %s: %v", p, err)
 		}
+		wantRev[p] = rev
 	}
+	end := time.Now().Add(time.Second)
 
 	idx, err := sqlindex.Open(ctx, dbPath)
 	if err != nil {
@@ -123,11 +121,11 @@ func TestDeletingTheIndexAndRebuildingLosesNothing(t *testing.T) {
 	}
 	assertOnlyExpectedItemsIndexed(t, idx, before)
 	for _, r := range before {
-		if r.Rev == "" {
-			t.Errorf("record %+v has empty Rev; the fixture failed to seed one", r)
+		if r.Rev != wantRev[r.Path] {
+			t.Errorf("record %+v has Rev %q, want %q as returned by Put", r, r.Rev, wantRev[r.Path])
 		}
-		if r.When.IsZero() {
-			t.Errorf("record %+v has zero When; the fixture failed to seed one", r)
+		if r.When.Before(start) || r.When.After(end) {
+			t.Errorf("record %+v has When %v outside the put window [%v, %v]; Rebuild did not stamp it from History", r, r.When, start, end)
 		}
 	}
 	if err := idx.Close(); err != nil {
