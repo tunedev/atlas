@@ -56,6 +56,11 @@ func Open(ctx context.Context, path string) (*Index, error) {
 	return &Index{db: db}, nil
 }
 
+// PathKeyed marks Index as holding one row per path, keyed on path alone.
+// internal/core/app uses it to accept this index only where a current-state
+// rebuild walk is correct.
+func (idx *Index) PathKeyed() {}
+
 // Close releases the underlying database handle.
 func (idx *Index) Close() error {
 	if err := idx.db.Close(); err != nil {

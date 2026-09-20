@@ -57,6 +57,11 @@ func Open(ctx context.Context, path string) (*Index, error) {
 	return &Index{db: db}, nil
 }
 
+// RevisionKeyed marks Index as holding one row per (path, rev). internal/core/app
+// uses it to accept this index only where a full-history rebuild walk is
+// correct.
+func (idx *Index) RevisionKeyed() {}
+
 // Close releases the underlying database handle.
 func (idx *Index) Close() error {
 	if err := idx.db.Close(); err != nil {

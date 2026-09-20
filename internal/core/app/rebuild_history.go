@@ -19,7 +19,18 @@ import (
 // returned Rev and When are overwritten from the revision's own DocMeta
 // before Upsert, so extract never needs to know which revision it was
 // handed; it only interprets the body.
-func RebuildHistory(ctx context.Context, docs ports.Docs, idx ports.Index, extract func(path string, body []byte) (ports.Record, bool)) error {
+//
+// revisionIndex is an Index that holds one row per (path, rev). Pointed at a
+// path-keyed index instead, this walk would insert history newest-first into
+// a table keyed on path alone, so the last write wins and the surviving row
+// holds the oldest revision. Declaring the marker here, at the consumer, is
+// what makes that mismatch a compile error instead of a silent wrong answer.
+type revisionIndex interface {
+	ports.Index
+	RevisionKeyed()
+}
+
+func RebuildHistory(ctx context.Context, docs ports.Docs, idx revisionIndex, extract func(path string, body []byte) (ports.Record, bool)) error {
 	if err := idx.Reset(ctx); err != nil {
 		return fmt.Errorf("rebuild history: reset: %w", err)
 	}

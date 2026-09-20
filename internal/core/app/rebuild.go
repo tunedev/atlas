@@ -7,9 +7,19 @@ import (
 	"github.com/tunedev/atlas/internal/core/ports"
 )
 
+// pathIndex is an Index that holds one row per path, keyed on path alone.
+// Rebuild's current-state walk is only correct against this shape: pointed
+// at a revision-keyed index it would silently keep the wrong revision (see
+// RebuildHistory). Declaring the marker here, at the consumer, is what makes
+// the mismatch a compile error instead of a runtime data-loss bug.
+type pathIndex interface {
+	ports.Index
+	PathKeyed()
+}
+
 // Rebuild discards the index and derives it again from the record. An index
 // that cannot be rebuilt is not derived; it is a second system of record.
-func Rebuild(ctx context.Context, docs ports.Docs, idx ports.Index, extract func(path string, body []byte) (ports.Record, bool)) error {
+func Rebuild(ctx context.Context, docs ports.Docs, idx pathIndex, extract func(path string, body []byte) (ports.Record, bool)) error {
 	if err := idx.Reset(ctx); err != nil {
 		return fmt.Errorf("rebuild: reset: %w", err)
 	}
