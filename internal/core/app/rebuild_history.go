@@ -7,6 +7,16 @@ import (
 	"github.com/tunedev/atlas/internal/core/ports"
 )
 
+// revisionIndex is an Index that holds one row per (path, rev). Pointed at a
+// path-keyed index instead, this walk would insert history newest-first into
+// a table keyed on path alone, so the last write wins and the surviving row
+// holds the oldest revision. Declaring the marker here, at the consumer, is
+// what makes that mismatch a compile error instead of a silent wrong answer.
+type revisionIndex interface {
+	ports.Index
+	RevisionKeyed()
+}
+
 // RebuildHistory discards the index and derives it again from every
 // revision of every path in the record, not just the current one. It is the
 // counterpart to Rebuild for a revision-keyed index such as duckindex: where
@@ -19,17 +29,6 @@ import (
 // returned Rev and When are overwritten from the revision's own DocMeta
 // before Upsert, so extract never needs to know which revision it was
 // handed; it only interprets the body.
-//
-// revisionIndex is an Index that holds one row per (path, rev). Pointed at a
-// path-keyed index instead, this walk would insert history newest-first into
-// a table keyed on path alone, so the last write wins and the surviving row
-// holds the oldest revision. Declaring the marker here, at the consumer, is
-// what makes that mismatch a compile error instead of a silent wrong answer.
-type revisionIndex interface {
-	ports.Index
-	RevisionKeyed()
-}
-
 func RebuildHistory(ctx context.Context, docs ports.Docs, idx revisionIndex, extract func(path string, body []byte) (ports.Record, bool)) error {
 	if err := idx.Reset(ctx); err != nil {
 		return fmt.Errorf("rebuildhistory: reset: %w", err)

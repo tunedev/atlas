@@ -47,15 +47,15 @@ func Open(ctx context.Context, root string) (*Store, error) {
 
 // Put writes body to path, committing the change, and returns the resulting
 // revision. A body byte-identical to what HEAD already holds at path is a
-// no-op: Put returns that path's current revision and creates no commit.
-// This is not a policy choice but the only representable behaviour — git has
-// no way to record "this path was re-asserted unchanged"; an empty commit
-// records no path at all, so there is no revision such a write could produce
-// that History could ever enumerate. If staging or committing fails, path is
-// restored to whatever it held before this call: the working tree never
-// diverges from the last successful commit. Get and List read from HEAD, not
-// the working tree, so this restore is about leaving the working tree
-// consistent, not about read safety.
+// no-op: Put returns that path's existing revision without touching the
+// working tree or creating a commit. This is not a policy choice but the
+// only representable behaviour — git has no way to record "this path was
+// re-asserted unchanged"; an empty commit records no path at all, so there
+// is no revision such a write could produce that History could ever
+// enumerate. If staging or committing fails after the working tree write,
+// path is restored to whatever it held before this call. Get and List read
+// from HEAD, not the working tree, so the working tree is a materialisation
+// of the record, not the record itself.
 func (s *Store) Put(ctx context.Context, path string, body []byte, message string) (ports.Revision, error) {
 	rel, err := safeRelPath(path)
 	if err != nil {
@@ -201,15 +201,15 @@ func (s *Store) headTree() (*object.Tree, error) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("head: %w", err)
+		return nil, fmt.Errorf("resolve HEAD: %w", err)
 	}
 	commit, err := s.repo.CommitObject(ref.Hash())
 	if err != nil {
-		return nil, fmt.Errorf("head commit: %w", err)
+		return nil, fmt.Errorf("load HEAD commit: %w", err)
 	}
 	tree, err := commit.Tree()
 	if err != nil {
-		return nil, fmt.Errorf("head tree: %w", err)
+		return nil, fmt.Errorf("load HEAD tree: %w", err)
 	}
 	return tree, nil
 }
