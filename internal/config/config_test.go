@@ -147,6 +147,38 @@ func TestModelMaxBytesEnvVar(t *testing.T) {
 	}
 }
 
+func TestModelAPIKeyDefaultsToEmpty(t *testing.T) {
+	cfg, err := config.Load([]string{"-pack", "p.yaml"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Model.APIKey != "" {
+		t.Error("Model.APIKey has a non-empty default; a local engine needs no key")
+	}
+}
+
+func TestModelAPIKeyEnvVar(t *testing.T) {
+	t.Setenv("ATLAS_MODEL_API_KEY", "from-env-key")
+	cfg, err := config.Load([]string{"-pack", "p.yaml"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Model.APIKey != "from-env-key" {
+		t.Errorf("Model.APIKey = %q, want from-env-key", cfg.Model.APIKey)
+	}
+}
+
+func TestModelAPIKeyFlagOverridesEnv(t *testing.T) {
+	t.Setenv("ATLAS_MODEL_API_KEY", "from-env-key")
+	cfg, err := config.Load([]string{"-pack", "p.yaml", "-model-api-key", "from-flag-key"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Model.APIKey != "from-flag-key" {
+		t.Errorf("Model.APIKey = %q, want from-flag-key; flags are the last layer", cfg.Model.APIKey)
+	}
+}
+
 func TestMalformedModelMaxBytesEnvVarIsRejected(t *testing.T) {
 	t.Setenv("ATLAS_MODEL_MAX_BYTES", "notanumber")
 	if _, err := config.Load([]string{"-pack", "p.yaml"}); err == nil {

@@ -24,9 +24,13 @@ type PackConfig struct {
 	HTTPMaxBytes int64
 }
 
+// ModelConfig configures the one model provider atlas is wired to. APIKey is
+// a secret: it defaults to empty so a local engine needs none, is never
+// logged, and never appears in any effective-config output.
 type ModelConfig struct {
 	BaseURL  string
 	Name     string
+	APIKey   string
 	Timeout  time.Duration
 	MaxBytes int64
 }

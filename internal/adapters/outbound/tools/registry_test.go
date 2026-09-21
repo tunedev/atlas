@@ -8,7 +8,7 @@ import (
 )
 
 func TestRegistryLooksUpByToolName(t *testing.T) {
-	r := tools.NewRegistry(tools.NewHTTP(time.Second, 1<<20), tools.NewModel("http://x", "m", time.Second, 1<<20))
+	r := tools.NewRegistry(tools.NewHTTP(time.Second, 1<<20), tools.NewModel(stubProvider{}))
 
 	if _, ok := r.Lookup("http.request"); !ok {
 		t.Error("http.request not registered")

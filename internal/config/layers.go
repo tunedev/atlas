@@ -121,6 +121,9 @@ func applyEnv(c *Config) error {
 	if v := os.Getenv("ATLAS_MODEL_NAME"); v != "" {
 		c.Model.Name = v
 	}
+	if v := os.Getenv("ATLAS_MODEL_API_KEY"); v != "" {
+		c.Model.APIKey = v
+	}
 	if v := os.Getenv("ATLAS_MODEL_TIMEOUT"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil {
@@ -171,6 +174,7 @@ func applyFlags(c *Config, args []string) error {
 	fs.Int64Var(&c.Pack.HTTPMaxBytes, "http-max-bytes", c.Pack.HTTPMaxBytes, "max response body size for http.request, in bytes")
 	fs.StringVar(&c.Model.BaseURL, "model-base-url", c.Model.BaseURL, "OpenAI-compatible base URL")
 	fs.StringVar(&c.Model.Name, "model-name", c.Model.Name, "model identifier")
+	fs.StringVar(&c.Model.APIKey, "model-api-key", c.Model.APIKey, "API key for a hosted model; empty for a local engine")
 	fs.DurationVar(&c.Model.Timeout, "model-timeout", c.Model.Timeout, "model call timeout")
 	fs.Int64Var(&c.Model.MaxBytes, "model-max-bytes", c.Model.MaxBytes, "max response body size for model.complete, in bytes")
 	fs.BoolVar(&c.OTel.Enabled, "otel", c.OTel.Enabled, "export traces over OTLP")
