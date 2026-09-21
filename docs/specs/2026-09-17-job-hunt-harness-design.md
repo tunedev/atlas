@@ -73,6 +73,9 @@ implementation is nameable, and each row names one.
 | `Agent` | Gemini CLI over ACP | Claude Code via its ACP adapter |
 | `Provider` | vLLM, local | Ollama; a user's own key; a free tier |
 | `Judge` | local, constrained decoding plus logprobs | TypeSafe |
+
+Both local engines satisfy `Judge`'s needs, which is what makes `Provider` a port rather
+than a commitment.
 | `Source` | the postings feed, pulled as a git remote | a local Colly crawler; a rendered fetch |
 | `Docs` | git | a plain directory |
 | `Index` | SQLite | DuckDB, built alongside it |
@@ -230,10 +233,15 @@ worth consuming, and 0-11 are what make one.
 
 ## Inference
 
-vLLM is the local provider. It was going to be deferred until batch scoring hurt; it is
-adopted now because the `Judge` port needs token logprobs and vLLM exposes them where
-Ollama's support is thin. Continuous batching — the reason to want it for scoring two
-hundred postings — arrives as a second benefit rather than the justification.
+vLLM is the local provider, adopted for continuous batching: scoring two hundred postings
+with several typed questions each is a throughput problem, and vLLM is built for it where
+Ollama is built for one interactive call at a time.
+
+An earlier draft of this spec justified adopting it early on the grounds that the `Judge`
+port needs token logprobs and Ollama's support for them was thin. **That was wrong, and
+measuring it disproved it.** Ollama returns `logprob` and `top_logprobs` through its
+OpenAI-compatible endpoint, and returns them while constrained decoding is active. Logprobs
+are therefore not a reason to prefer either engine.
 
 It serves an OpenAI-compatible API, so the `Provider` adapter is one shape pointed at
 different base URLs: vLLM locally, a hosted key remotely, Ollama for anyone who prefers it.
@@ -278,11 +286,23 @@ The constraint is that a month bills nothing.
 
 ## Open questions
 
-- **Calibration.** Adopting vLLM settles how a probability is obtained — logprobs — but
-  not whether it is any good. Nothing yet checks a stated likelihood against an outcome, and
-  until applications have results to compare against, a calibrated-looking number is still
-  an assertion. Increment 3 must at minimum record the number and the eventual outcome in a
-  way that makes the check possible later, or increment 7 inherits confident nonsense.
+- **Calibration, and a trap inside it.** Obtaining a probability is settled — both local
+  engines return logprobs. Reading one correctly is not.
+
+  Measured against a schema-constrained call: the returned logprobs are the model's
+  **pre-constraint** distribution. On a yes/no question the answer-bearing token came back
+  as `yes` at p=0.266 while `Yes` held p=0.672 and `no` held p=0.012. The same answer, split
+  across two surface forms. Reading the chosen token's logprob reports 27% confidence where
+  the model is roughly 94% on yes.
+
+  So `Judge` must identify the answer-bearing token and **sum probability mass across
+  surface forms that mean the same thing**. It must not read the chosen token's logprob, and
+  it must not average across the sequence — the constraint drives early structural tokens to
+  near-zero probability, which says nothing about the answer.
+
+  Separately, nothing yet checks a stated likelihood against an outcome. Until applications
+  have results to compare against, a calibrated-looking number is still an assertion, and
+  the increment that produces one must record it beside a slot for the outcome.
 - **Scheduled workflows on an idle repository.** GitHub disables scheduled workflows on
   repositories after a period of inactivity. Whether commits made by the Action itself
   count as activity determines whether the feed quietly stops. Verify before relying on it,

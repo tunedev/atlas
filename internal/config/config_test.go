@@ -1,6 +1,9 @@
 package config_test
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tunedev/atlas/internal/config"
@@ -192,5 +195,108 @@ func TestMalformedOTelEnabledEnvVarIsRejected(t *testing.T) {
 	t.Setenv("ATLAS_OTEL_ENABLED", "notabool")
 	if _, err := config.Load([]string{"-pack", "p.yaml"}); err == nil {
 		t.Error("Load accepted malformed ATLAS_OTEL_ENABLED; invalid env must fail at boot")
+	}
+}
+
+func TestStoreDefaultsExpandLeadingTilde(t *testing.T) {
+	cfg, err := config.Load([]string{"-pack", "p.yaml"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("UserHomeDir: %v", err)
+	}
+	if strings.HasPrefix(cfg.Store.Root, "~") {
+		t.Errorf("Store.Root = %q; leading ~ was not expanded", cfg.Store.Root)
+	}
+	wantRoot := filepath.Join(home, ".atlas", "workspace")
+	if cfg.Store.Root != wantRoot {
+		t.Errorf("Store.Root = %q, want %q", cfg.Store.Root, wantRoot)
+	}
+	wantIndex := filepath.Join(home, ".atlas", "index.db")
+	if cfg.Store.IndexPath != wantIndex {
+		t.Errorf("Store.IndexPath = %q, want %q", cfg.Store.IndexPath, wantIndex)
+	}
+	wantHistory := filepath.Join(home, ".atlas", "history.duckdb")
+	if cfg.Store.HistoryPath != wantHistory {
+		t.Errorf("Store.HistoryPath = %q, want %q", cfg.Store.HistoryPath, wantHistory)
+	}
+}
+
+func TestStoreRootEnvVar(t *testing.T) {
+	t.Setenv("ATLAS_STORE_ROOT", "/tmp/custom-root")
+	cfg, err := config.Load([]string{"-pack", "p.yaml"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Store.Root != "/tmp/custom-root" {
+		t.Errorf("Store.Root = %q, want /tmp/custom-root", cfg.Store.Root)
+	}
+}
+
+func TestStoreRootFlagOverridesEnv(t *testing.T) {
+	t.Setenv("ATLAS_STORE_ROOT", "/tmp/from-env")
+	cfg, err := config.Load([]string{"-pack", "p.yaml", "-store-root", "/tmp/from-flag"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Store.Root != "/tmp/from-flag" {
+		t.Errorf("Store.Root = %q, want /tmp/from-flag; flags are the last layer", cfg.Store.Root)
+	}
+}
+
+func TestStoreIndexPathEnvVar(t *testing.T) {
+	t.Setenv("ATLAS_STORE_INDEX_PATH", "/tmp/custom-index.db")
+	cfg, err := config.Load([]string{"-pack", "p.yaml"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Store.IndexPath != "/tmp/custom-index.db" {
+		t.Errorf("Store.IndexPath = %q, want /tmp/custom-index.db", cfg.Store.IndexPath)
+	}
+}
+
+func TestStoreHistoryPathEnvVar(t *testing.T) {
+	t.Setenv("ATLAS_STORE_HISTORY_PATH", "/tmp/custom-history.duckdb")
+	cfg, err := config.Load([]string{"-pack", "p.yaml"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Store.HistoryPath != "/tmp/custom-history.duckdb" {
+		t.Errorf("Store.HistoryPath = %q, want /tmp/custom-history.duckdb", cfg.Store.HistoryPath)
+	}
+}
+
+func TestStoreIndexPathTildeExpansion(t *testing.T) {
+	cfg, err := config.Load([]string{"-pack", "p.yaml", "-store-index-path", "~/custom-index.db"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("UserHomeDir: %v", err)
+	}
+	want := filepath.Join(home, "custom-index.db")
+	if cfg.Store.IndexPath != want {
+		t.Errorf("Store.IndexPath = %q, want %q", cfg.Store.IndexPath, want)
+	}
+}
+
+func TestEmptyStoreRootIsRejected(t *testing.T) {
+	if _, err := config.Load([]string{"-pack", "p.yaml", "-store-root", ""}); err == nil {
+		t.Error("Load accepted an empty store root")
+	}
+}
+
+func TestEmptyStoreIndexPathIsRejected(t *testing.T) {
+	if _, err := config.Load([]string{"-pack", "p.yaml", "-store-index-path", ""}); err == nil {
+		t.Error("Load accepted an empty store index path")
+	}
+}
+
+func TestEmptyStoreHistoryPathIsRejected(t *testing.T) {
+	if _, err := config.Load([]string{"-pack", "p.yaml", "-store-history-path", ""}); err == nil {
+		t.Error("Load accepted an empty store history path")
 	}
 }

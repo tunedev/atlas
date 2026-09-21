@@ -4,7 +4,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -19,10 +21,55 @@ func Load(args []string) (Config, error) {
 	if err := applyFlags(&cfg, args); err != nil {
 		return Config{}, err
 	}
+	if err := expandStorePaths(&cfg); err != nil {
+		return Config{}, err
+	}
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// expandStorePaths resolves a leading "~" in each store path against the
+// user's home directory, so the rest of the program never handles a literal
+// "~". It fails loudly rather than falling back to a relative path if the
+// home directory cannot be determined.
+func expandStorePaths(c *Config) error {
+	root, err := expandHome(c.Store.Root)
+	if err != nil {
+		return err
+	}
+	c.Store.Root = root
+
+	indexPath, err := expandHome(c.Store.IndexPath)
+	if err != nil {
+		return err
+	}
+	c.Store.IndexPath = indexPath
+
+	historyPath, err := expandHome(c.Store.HistoryPath)
+	if err != nil {
+		return err
+	}
+	c.Store.HistoryPath = historyPath
+
+	return nil
+}
+
+// expandHome replaces a leading "~" or "~/" in path with the user's home
+// directory. A path with no such prefix is returned unchanged.
+func expandHome(path string) (string, error) {
+	if path != "~" && !strings.HasPrefix(path, "~/") {
+		return path, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("config: resolve home directory: %w", err)
+	}
+	if path == "~" {
+		return home, nil
+	}
+	return filepath.Join(home, strings.TrimPrefix(path, "~/")), nil
 }
 
 func defaults() Config {
@@ -41,6 +88,11 @@ func defaults() Config {
 			Endpoint:      "localhost:4317",
 			ExportTimeout: 10 * time.Second,
 			Enabled:       false,
+		},
+		Store: StoreConfig{
+			Root:        "~/.atlas/workspace",
+			IndexPath:   "~/.atlas/index.db",
+			HistoryPath: "~/.atlas/history.duckdb",
 		},
 	}
 }
@@ -100,6 +152,15 @@ func applyEnv(c *Config) error {
 		}
 		c.OTel.ExportTimeout = d
 	}
+	if v := os.Getenv("ATLAS_STORE_ROOT"); v != "" {
+		c.Store.Root = v
+	}
+	if v := os.Getenv("ATLAS_STORE_INDEX_PATH"); v != "" {
+		c.Store.IndexPath = v
+	}
+	if v := os.Getenv("ATLAS_STORE_HISTORY_PATH"); v != "" {
+		c.Store.HistoryPath = v
+	}
 	return nil
 }
 
@@ -114,6 +175,9 @@ func applyFlags(c *Config, args []string) error {
 	fs.Int64Var(&c.Model.MaxBytes, "model-max-bytes", c.Model.MaxBytes, "max response body size for model.complete, in bytes")
 	fs.BoolVar(&c.OTel.Enabled, "otel", c.OTel.Enabled, "export traces over OTLP")
 	fs.DurationVar(&c.OTel.ExportTimeout, "otel-export-timeout", c.OTel.ExportTimeout, "timeout for OTLP span export")
+	fs.StringVar(&c.Store.Root, "store-root", c.Store.Root, "root directory of the git-backed document store")
+	fs.StringVar(&c.Store.IndexPath, "store-index-path", c.Store.IndexPath, "path to the SQLite index database")
+	fs.StringVar(&c.Store.HistoryPath, "store-history-path", c.Store.HistoryPath, "path to the DuckDB history database")
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("config: parse flags: %w", err)
 	}

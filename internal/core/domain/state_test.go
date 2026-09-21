@@ -72,4 +72,3 @@ func TestAccessorsReturnCopiesSoMutationDoesNotAffectState(t *testing.T) {
 		t.Error("Outputs() has new key, should not")
 	}
 }
-

@@ -1,0 +1,404 @@
+package gitdocs_test
+
+import (
+	"context"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"slices"
+	"sort"
+	"strings"
+	"testing"
+
+	"github.com/go-git/go-git/v5"
+
+	"github.com/tunedev/atlas/internal/adapters/outbound/gitdocs"
+)
+
+// chmodTree sets mode on every entry under root, so a whole .git directory
+// can be made unwritable to force a failure after Put has already written
+// the working-tree file.
+func chmodTree(t *testing.T, root string, mode os.FileMode) {
+	t.Helper()
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		return os.Chmod(p, mode)
+	})
+	if err != nil {
+		t.Fatalf("chmod %s to %o: %v", root, mode, err)
+	}
+}
+
+func TestPutThenGetReturnsTheBody(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	store, err := gitdocs.Open(ctx, root)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	rev, err := store.Put(ctx, "notes/one.md", []byte("first"), "add one")
+	if err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if rev == "" {
+		t.Fatal("put returned an empty revision")
+	}
+
+	got, err := store.Get(ctx, "notes/one.md")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if string(got) != "first" {
+		t.Fatalf("body = %q, want first", got)
+	}
+
+	// Put's contract is that a write becomes a recorded revision, not just a
+	// file on disk. Verify HEAD actually carries a commit with the message,
+	// through a fresh handle on the repository rather than the Store.
+	repo, err := git.PlainOpen(root)
+	if err != nil {
+		t.Fatalf("plain open for verification: %v", err)
+	}
+	head, err := repo.Head()
+	if err != nil {
+		t.Fatalf("head: %v", err)
+	}
+	commit, err := repo.CommitObject(head.Hash())
+	if err != nil {
+		t.Fatalf("commit object: %v", err)
+	}
+	if commit.Message != "add one" {
+		t.Fatalf("HEAD commit message = %q, want %q", commit.Message, "add one")
+	}
+}
+
+func TestOpenInitialisesAnEmptyDirectory(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+
+	if _, err := gitdocs.Open(ctx, root); err != nil {
+		t.Fatalf("first open: %v", err)
+	}
+	if _, err := gitdocs.Open(ctx, root); err != nil {
+		t.Fatalf("second open on an existing repo: %v", err)
+	}
+
+	info, err := os.Stat(filepath.Join(root, ".git"))
+	if err != nil {
+		t.Fatalf("stat .git: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatal(".git exists at root but is not a directory")
+	}
+}
+
+func TestGetAnAbsentPathIsAnError(t *testing.T) {
+	ctx := context.Background()
+	store, err := gitdocs.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := store.Get(ctx, "nothing/here.md"); err == nil {
+		t.Fatal("reading an absent path returned no error")
+	}
+}
+
+func TestAPathCannotEscapeTheRoot(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	store, err := gitdocs.Open(ctx, root)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	// Both relative escapes clean down to the same target once joined onto
+	// root: a file named escape.md next to root, one directory up. An
+	// absolute path is caught before any relative resolution, so it has no
+	// such target to check.
+	escapeTarget := filepath.Join(filepath.Dir(root), "escape.md")
+	cases := []struct {
+		path   string
+		target string
+	}{
+		{"../escape.md", escapeTarget},
+		{"a/../../escape.md", escapeTarget},
+		{"/etc/passwd", ""},
+	}
+
+	for _, c := range cases {
+		if _, err := store.Put(ctx, c.path, []byte("x"), "escape"); err == nil {
+			t.Errorf("path %q was accepted", c.path)
+		}
+		if c.target == "" {
+			continue
+		}
+		if _, statErr := os.Stat(c.target); !os.IsNotExist(statErr) {
+			t.Errorf("path %q escaped the root: found file at %q (stat err = %v)", c.path, c.target, statErr)
+		}
+	}
+}
+
+func TestAFailedPutLeavesTheWorktreeUnchanged(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file permission bits, so chmod cannot force a write failure")
+	}
+	ctx := context.Background()
+	root := t.TempDir()
+	store, err := gitdocs.Open(ctx, root)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := store.Put(ctx, "notes/one.md", []byte("original"), "add one"); err != nil {
+		t.Fatalf("seed put: %v", err)
+	}
+
+	// Force staging or committing to fail after the working-tree write has
+	// already happened: git needs to write a new blob object and update the
+	// index, both of which require write access inside .git.
+	gitDir := filepath.Join(root, ".git")
+	chmodTree(t, gitDir, 0o555)
+	t.Cleanup(func() { chmodTree(t, gitDir, 0o755) })
+
+	if _, err := store.Put(ctx, "notes/one.md", []byte("changed"), "change one"); err == nil {
+		t.Fatal("put on an existing path succeeded despite the commit being forced to fail")
+	}
+	if _, err := store.Put(ctx, "notes/two.md", []byte("new"), "add two"); err == nil {
+		t.Fatal("put on a new path succeeded despite the commit being forced to fail")
+	}
+
+	got, err := store.Get(ctx, "notes/one.md")
+	if err != nil {
+		t.Fatalf("get existing path after failed put: %v", err)
+	}
+	if string(got) != "original" {
+		t.Fatalf("existing path = %q after failed put, want original content restored", got)
+	}
+
+	if _, err := store.Get(ctx, "notes/two.md"); err == nil {
+		t.Fatal("new path should not exist on disk after its commit failed")
+	}
+}
+
+func TestListExcludesTheGitDirectory(t *testing.T) {
+	ctx := context.Background()
+	store, err := gitdocs.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := store.Put(ctx, "notes/one.md", []byte("x"), "add one"); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+
+	got, err := store.List(ctx, "")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, p := range got {
+		if p == ".git" || strings.HasPrefix(p, ".git/") {
+			t.Fatalf("list under an empty prefix returned a path inside .git: %q", p)
+		}
+	}
+}
+
+func TestListMatchesOnPathBoundaries(t *testing.T) {
+	ctx := context.Background()
+	store, err := gitdocs.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	for _, p := range []string{"a/one.md", "ab/two.md"} {
+		if _, err := store.Put(ctx, p, []byte("x"), "add"); err != nil {
+			t.Fatalf("put %s: %v", p, err)
+		}
+	}
+
+	for _, prefix := range []string{"a", "a/"} {
+		got, err := store.List(ctx, prefix)
+		if err != nil {
+			t.Fatalf("list %q: %v", prefix, err)
+		}
+		if len(got) != 1 || got[0] != "a/one.md" {
+			t.Fatalf("list(%q) = %v, want [a/one.md]", prefix, got)
+		}
+	}
+
+	got, err := store.List(ctx, "ab")
+	if err != nil {
+		t.Fatalf("list ab: %v", err)
+	}
+	if len(got) != 1 || got[0] != "ab/two.md" {
+		t.Fatalf("list(ab) = %v, want [ab/two.md]", got)
+	}
+}
+
+func TestIdenticalPutsReturnTheSameRevision(t *testing.T) {
+	ctx := context.Background()
+	store, err := gitdocs.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	first, err := store.Put(ctx, "a.md", []byte("same"), "add")
+	if err != nil {
+		t.Fatalf("put first: %v", err)
+	}
+	second, err := store.Put(ctx, "a.md", []byte("same"), "add again")
+	if err != nil {
+		t.Fatalf("put second: %v", err)
+	}
+	if first != second {
+		t.Fatalf("identical puts returned different revisions: %q, %q", first, second)
+	}
+
+	history, err := store.History(ctx, "a.md")
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("history has %d entries after two identical puts, want 1", len(history))
+	}
+}
+
+func TestAChangedPutReturnsADifferentRevision(t *testing.T) {
+	ctx := context.Background()
+	store, err := gitdocs.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	first, err := store.Put(ctx, "a.md", []byte("one"), "add")
+	if err != nil {
+		t.Fatalf("put first: %v", err)
+	}
+	second, err := store.Put(ctx, "a.md", []byte("two"), "change")
+	if err != nil {
+		t.Fatalf("put second: %v", err)
+	}
+	if first == second {
+		t.Fatalf("changed puts returned the same revision: %q", first)
+	}
+
+	history, err := store.History(ctx, "a.md")
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	if len(history) != 2 {
+		t.Fatalf("history has %d entries after two changed puts, want 2", len(history))
+	}
+}
+
+func TestListOnAnEmptyRepositoryReturnsNothing(t *testing.T) {
+	ctx := context.Background()
+	store, err := gitdocs.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	got, err := store.List(ctx, "")
+	if err != nil {
+		t.Fatalf("list on a repository with no commits: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("list on an empty repository = %v, want none", got)
+	}
+}
+
+func TestGetAndListReadFromHeadNotTheWorktree(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	store, err := gitdocs.Open(ctx, root)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := store.Put(ctx, "notes/one.md", []byte("first"), "add one"); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+
+	// Remove the file from the worktree directly, bypassing Put. Git still
+	// holds the committed blob; only the filesystem copy is gone.
+	if err := os.Remove(filepath.Join(root, "notes", "one.md")); err != nil {
+		t.Fatalf("remove worktree file: %v", err)
+	}
+
+	got, err := store.Get(ctx, "notes/one.md")
+	if err != nil {
+		t.Fatalf("get after removing the worktree file: %v", err)
+	}
+	if string(got) != "first" {
+		t.Fatalf("body = %q, want first", got)
+	}
+
+	paths, err := store.List(ctx, "")
+	if err != nil {
+		t.Fatalf("list after removing the worktree file: %v", err)
+	}
+	if len(paths) != 1 || paths[0] != "notes/one.md" {
+		t.Fatalf("list = %v, want [notes/one.md]", paths)
+	}
+}
+
+// TestPutListGetRoundTripUsesSlashPaths puts a nested path, lists it back,
+// and reads every listed path with Get. On Linux and macOS this would pass
+// even if the internal representation mixed OS separators in, since their
+// separator is already "/"; the explicit backslash and slash-canonical-form
+// assertions below are what makes the test discriminate on every platform.
+func TestPutListGetRoundTripUsesSlashPaths(t *testing.T) {
+	ctx := context.Background()
+	store, err := gitdocs.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	const want = "notes/deeply/nested/one.md"
+	if _, err := store.Put(ctx, want, []byte("x"), "add"); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+
+	paths, err := store.List(ctx, "")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(paths) != 1 {
+		t.Fatalf("list = %v, want exactly one path", paths)
+	}
+
+	for _, p := range paths {
+		if strings.Contains(p, `\`) {
+			t.Errorf("listed path %q contains a backslash", p)
+		}
+		if p != filepath.ToSlash(p) {
+			t.Errorf("listed path %q is not in slash-canonical form", p)
+		}
+		if p != want {
+			t.Errorf("listed path = %q, want %q", p, want)
+		}
+		if _, err := store.Get(ctx, p); err != nil {
+			t.Errorf("get %q: %v", p, err)
+		}
+	}
+}
+
+func TestListReturnsPathsUnderAPrefix(t *testing.T) {
+	ctx := context.Background()
+	store, err := gitdocs.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	for _, p := range []string{"a/one.md", "a/two.md", "b/three.md"} {
+		if _, err := store.Put(ctx, p, []byte("x"), "add"); err != nil {
+			t.Fatalf("put %s: %v", p, err)
+		}
+	}
+	got, err := store.List(ctx, "a/")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	sort.Strings(got)
+	want := []string{"a/one.md", "a/two.md"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("list(a/) = %v, want %v", got, want)
+	}
+}

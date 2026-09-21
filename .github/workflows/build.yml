@@ -1,0 +1,25 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+      # DuckDB requires cgo, so a binary for one OS/arch cannot be produced by
+      # cross-compiling from another; each platform must build and test on
+      # its own runner. windows-latest does not ship a C toolchain by
+      # default, and cgo needs one; this is a known unknown for this matrix,
+      # unverified here, and the windows-latest job may need an explicit C
+      # toolchain setup step added once it has actually been run.
+      - run: go build ./...
+      - run: go test ./... -race
