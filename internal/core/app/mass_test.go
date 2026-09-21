@@ -120,3 +120,19 @@ func TestNoMatchingTokenIsAnError(t *testing.T) {
 		t.Fatal("a completion with no token matching any class returned no error")
 	}
 }
+
+func TestTheChosenTokenIsNotCountedTwice(t *testing.T) {
+	c := ports.Completion{Tokens: []ports.Token{
+		{Text: "yes", LogProb: math.Log(0.3), Alternatives: []ports.Alternative{
+			{Text: "yes", LogProb: math.Log(0.3)},
+			{Text: "no", LogProb: math.Log(0.6)}}},
+	}}
+	got, err := app.MassPerClass(c, yesNo)
+	if err != nil {
+		t.Fatalf("mass: %v", err)
+	}
+	want := 1.0 / 3.0
+	if math.Abs(got["yes"]-want) > 0.01 {
+		t.Errorf("yes = %.4f, want %.4f; the chosen token's own text is already among its alternatives, so counting it again double-counts that surface form", got["yes"], want)
+	}
+}
