@@ -12,8 +12,10 @@ import (
 )
 
 // judgementTimeFormat is RFC 3339 with colons replaced by dashes, since a
-// colon is not portable in a path component.
-const judgementTimeFormat = "2006-01-02T15-04-05Z"
+// colon is not portable in a path component, and millisecond precision, so
+// two judgements of the same subject less than a second apart still land at
+// distinct paths.
+const judgementTimeFormat = "2006-01-02T15-04-05.000Z"
 
 // judgementQuestion is a Question as it appears in a judgement document.
 type judgementQuestion struct {
@@ -79,8 +81,10 @@ func RecordJudgement(ctx context.Context, docs ports.Docs, index ports.Index, su
 }
 
 // judgementPath is where a judgement of subjectID at j.When is written.
-// Keying by subject and timestamp means judging the same subject twice
-// never overwrites the first.
+// Keying by subject and millisecond timestamp means two judgements of the
+// same subject collide only if they carry the same When to the millisecond;
+// the real Judge stamps When from time.Now(), so a caller passing distinct
+// timestamps gets distinct paths.
 func judgementPath(subjectID string, j ports.Judgement) string {
 	return fmt.Sprintf("judgements/%s/%s.json", subjectID, j.When.UTC().Format(judgementTimeFormat))
 }

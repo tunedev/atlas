@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -164,5 +165,58 @@ func TestAJudgementWithNoAnswersIsAnError(t *testing.T) {
 	empty.Answers = nil
 	if _, err := app.RecordJudgement(context.Background(), docs, index, "subject-1", recordQuestions(), empty); err == nil {
 		t.Fatal("an empty judgement was recorded")
+	}
+}
+
+func TestJudgingTheSameSubjectWithinASecondProducesDistinctPaths(t *testing.T) {
+	docs, index := newFakeDocs(), &fakeIndex{}
+	first := aJudgement()
+	second := aJudgement()
+	second.When = first.When.Add(200 * time.Millisecond)
+
+	p1, err := app.RecordJudgement(context.Background(), docs, index, "subject-1", recordQuestions(), first)
+	if err != nil {
+		t.Fatalf("record first: %v", err)
+	}
+	p2, err := app.RecordJudgement(context.Background(), docs, index, "subject-1", recordQuestions(), second)
+	if err != nil {
+		t.Fatalf("record second: %v", err)
+	}
+	if p1 == p2 {
+		t.Fatalf("both judgements landed at %q; a sub-second gap collided", p1)
+	}
+	if _, ok := docs.put[p1]; !ok {
+		t.Errorf("first judgement at %q did not survive", p1)
+	}
+	if _, ok := docs.put[p2]; !ok {
+		t.Errorf("second judgement at %q did not survive", p2)
+	}
+}
+
+type failingIndex struct{ err error }
+
+func (i *failingIndex) Upsert(_ context.Context, _ ports.Record) error { return i.err }
+func (i *failingIndex) Find(_ context.Context, _ ports.Query) ([]ports.Record, error) {
+	return nil, nil
+}
+func (i *failingIndex) Reset(_ context.Context) error { return nil }
+func (i *failingIndex) Close() error                  { return nil }
+
+func TestAFailedUpsertReturnsTheWrittenPathAndAnError(t *testing.T) {
+	docs := newFakeDocs()
+	index := &failingIndex{err: errors.New("index unavailable")}
+
+	path, err := app.RecordJudgement(context.Background(), docs, index, "subject-1", recordQuestions(), aJudgement())
+	if err == nil {
+		t.Fatal("a failed upsert was not reported as an error")
+	}
+	if path == "" {
+		t.Fatal("no path was returned; the document was already written and the caller needs to know where")
+	}
+	if _, ok := docs.put[path]; !ok {
+		t.Errorf("returned path %q does not match a document actually written", path)
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Errorf("error %q does not name the written path %q", err.Error(), path)
 	}
 }
