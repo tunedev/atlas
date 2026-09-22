@@ -15,8 +15,14 @@ import (
 	"github.com/tunedev/atlas/internal/core/ports"
 )
 
-// Config configures a Client. Name is the identifier a Completion.Model
-// mismatch is compared against by callers that route by provider.
+// errorSnippetMaxBytes bounds how much of a non-2xx response body is read
+// into an error message. The snippet is diagnostic, not data, so truncating
+// a body larger than this is acceptable.
+const errorSnippetMaxBytes = 512
+
+// Config configures a Client. Name identifies which engine answered; it is
+// reported through Client.Name and carried into every error message this
+// client produces.
 type Config struct {
 	Name     string
 	BaseURL  string
@@ -81,7 +87,8 @@ func (c *Client) Complete(ctx context.Context, p ports.Prompt) (ports.Completion
 	latency := time.Since(start)
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return ports.Completion{}, fmt.Errorf("openaiprov: %s returned status %d", c.name, resp.StatusCode)
+		snippet, _ := readLimited(resp.Body, errorSnippetMaxBytes)
+		return ports.Completion{}, fmt.Errorf("openaiprov: %s returned status %d: %s", c.name, resp.StatusCode, snippet)
 	}
 
 	body, err := readLimited(resp.Body, c.maxBytes)

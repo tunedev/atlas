@@ -236,6 +236,17 @@ func TestANonSuccessStatusIsAnErrorNamingIt(t *testing.T) {
 	}
 }
 
+func TestANonSuccessStatusErrorCarriesTheResponseBody(t *testing.T) {
+	s := serve(t, http.StatusInternalServerError, `{"error":"boom detail"}`, nil)
+	_, err := client(t, s.URL).Complete(context.Background(), ports.Prompt{User: "q"})
+	if err == nil {
+		t.Fatal("a 500 returned no error")
+	}
+	if !strings.Contains(err.Error(), "boom detail") {
+		t.Errorf("error does not carry the response body: %v", err)
+	}
+}
+
 func TestAnOverLongBodyIsRefusedRatherThanTruncated(t *testing.T) {
 	big := `{"model":"a-model","choices":[{"message":{"content":"` + strings.Repeat("x", 4096) + `"}}]}`
 	s := serve(t, http.StatusOK, big, nil)
