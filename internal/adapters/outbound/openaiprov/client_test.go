@@ -259,6 +259,22 @@ func TestAnOverLongBodyIsRefusedRatherThanTruncated(t *testing.T) {
 	}
 }
 
+func TestAnOverCapErrorBodyIsTruncatedRatherThanDropped(t *testing.T) {
+	marker := "vllm-worker-traceback-marker"
+	big := marker + strings.Repeat("z", 4096)
+	s := serve(t, http.StatusInternalServerError, big, nil)
+	_, err := client(t, s.URL).Complete(context.Background(), ports.Prompt{User: "q"})
+	if err == nil {
+		t.Fatal("a 500 with an over-cap body returned no error")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("error does not name the status: %v", err)
+	}
+	if !strings.Contains(err.Error(), marker) {
+		t.Errorf("error does not carry the start of an over-cap body: %v", err)
+	}
+}
+
 func TestNoChoicesIsAnErrorRatherThanAnEmptyCompletion(t *testing.T) {
 	s := serve(t, http.StatusOK, `{"model":"a-model","choices":[]}`, nil)
 	if _, err := client(t, s.URL).Complete(context.Background(), ports.Prompt{User: "q"}); err == nil {

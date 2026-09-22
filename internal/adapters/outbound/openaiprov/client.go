@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -15,9 +16,9 @@ import (
 	"github.com/tunedev/atlas/internal/core/ports"
 )
 
-// errorSnippetMaxBytes bounds how much of a non-2xx response body is read
-// into an error message. The snippet is diagnostic, not data, so truncating
-// a body larger than this is acceptable.
+// errorSnippetMaxBytes bounds how much of a non-2xx response body is copied
+// into an error message. A body longer than this is truncated to its first
+// errorSnippetMaxBytes bytes; the snippet is diagnostic, not data.
 const errorSnippetMaxBytes = 512
 
 // Config configures a Client. Name identifies which engine answered; it is
@@ -87,7 +88,7 @@ func (c *Client) Complete(ctx context.Context, p ports.Prompt) (ports.Completion
 	latency := time.Since(start)
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		snippet, _ := readLimited(resp.Body, errorSnippetMaxBytes)
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, errorSnippetMaxBytes))
 		return ports.Completion{}, fmt.Errorf("openaiprov: %s returned status %d: %s", c.name, resp.StatusCode, snippet)
 	}
 

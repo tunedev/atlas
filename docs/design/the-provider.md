@@ -95,6 +95,9 @@ any class (there is nothing to normalise honestly).
   rejected request (4xx) from a transient failure, and `Chain` counts every
   failure against a provider's breaker the same way. This lands with the
   chain wiring, not this increment.
+- A non-2xx error message carries only the first 512 bytes
+  (`errorSnippetMaxBytes`) of the response body. A longer error page or
+  traceback is truncated to that prefix rather than surfaced in full.
 - `MassPerClass` reads one position per completion — the last token whose own
   text is a class member. A multi-field typed answer needs the token location
   of each field separately, then a per-token mass read at each one; nothing
