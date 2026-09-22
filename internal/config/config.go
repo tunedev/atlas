@@ -25,8 +25,9 @@ type PackConfig struct {
 }
 
 // ModelConfig configures the one model provider atlas is wired to. APIKey is
-// a secret: it defaults to empty so a local engine needs none, is never
-// logged, and never appears in any effective-config output.
+// a secret: it comes only from ATLAS_MODEL_API_KEY, has no flag, defaults to
+// empty so a local engine needs none, and is never printed in usage, logs,
+// or any effective-config output.
 type ModelConfig struct {
 	BaseURL  string
 	Name     string

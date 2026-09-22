@@ -1,6 +1,8 @@
 package config_test
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -168,14 +170,32 @@ func TestModelAPIKeyEnvVar(t *testing.T) {
 	}
 }
 
-func TestModelAPIKeyFlagOverridesEnv(t *testing.T) {
-	t.Setenv("ATLAS_MODEL_API_KEY", "from-env-key")
-	cfg, err := config.Load([]string{"-pack", "p.yaml", "-model-api-key", "from-flag-key"})
+// TestModelAPIKeyNeverAppearsInUsageOutput proves the key cannot leak through
+// flag usage text: flag prints every flag's default value on usage, so a key
+// registered as a flag default would appear in ps, shell history, and here.
+// The key is env-only and never registered as a flag default.
+func TestModelAPIKeyNeverAppearsInUsageOutput(t *testing.T) {
+	t.Setenv("ATLAS_MODEL_API_KEY", "sk-SECRET-123")
+
+	r, w, err := os.Pipe()
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatalf("Pipe: %v", err)
 	}
-	if cfg.Model.APIKey != "from-flag-key" {
-		t.Errorf("Model.APIKey = %q, want from-flag-key; flags are the last layer", cfg.Model.APIKey)
+	orig := os.Stderr
+	os.Stderr = w
+
+	_, loadErr := config.Load([]string{"-pack", "p.yaml", "-bogus-flag"})
+
+	os.Stderr = orig
+	w.Close()
+	var out bytes.Buffer
+	io.Copy(&out, r)
+
+	if loadErr == nil {
+		t.Fatal("Load succeeded with an unknown flag")
+	}
+	if strings.Contains(out.String(), "sk-SECRET-123") {
+		t.Errorf("usage output leaked the API key: %s", out.String())
 	}
 }
 
