@@ -188,6 +188,7 @@ func TestMalformedQuestionsAreAnErrorNotAnEmptyJudgement(t *testing.T) {
 		{"no questions", ""},
 		{"missing id", "- type: noul\n  ask: Is it readable?"},
 		{"unknown type", "- id: x\n  type: vibes\n  ask: Well?"},
+		{"too few options", "- id: x\n  type: choice\n  options: [only]\n  ask: Well?"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := tools.NewJudge(&stubJudge{}, docs, index).Invoke(context.Background(), map[string]string{
@@ -197,6 +198,23 @@ func TestMalformedQuestionsAreAnErrorNotAnEmptyJudgement(t *testing.T) {
 				t.Fatal("malformed questions produced a judgement")
 			}
 		})
+	}
+}
+
+func TestAQuestionIDOfPathIsRejected(t *testing.T) {
+	docs, index := store(t)
+	out, err := tools.NewJudge(&stubJudge{}, docs, index).Invoke(context.Background(), map[string]string{
+		"subject_id": "subject-1", "subject": "a short book",
+		"questions": "- id: path\n  type: noul\n  ask: Well?",
+	})
+	if err == nil {
+		t.Fatalf("a question id of path was accepted; its answer would be overwritten by the tool's own path key: %+v", out)
+	}
+	if !strings.Contains(err.Error(), "judge.ask: ") {
+		t.Errorf("error lacks the component prefix: %v", err)
+	}
+	if !strings.Contains(err.Error(), "reserved") {
+		t.Errorf("error does not say the id is reserved: %v", err)
 	}
 }
 

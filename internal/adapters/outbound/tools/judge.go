@@ -89,6 +89,9 @@ func (s questionSpec) question() (ports.Question, error) {
 	if s.ID == "" {
 		return ports.Question{}, fmt.Errorf("question missing id")
 	}
+	if s.ID == "path" {
+		return ports.Question{}, fmt.Errorf("question id %q is reserved for the tool's own result key", s.ID)
+	}
 	if len(s.Options) > 0 && len(s.Levels) > 0 {
 		return ports.Question{}, fmt.Errorf("question %q names both options and levels", s.ID)
 	}
@@ -99,7 +102,11 @@ func (s questionSpec) question() (ports.Question, error) {
 	}
 
 	switch ports.Kind(s.Type) {
-	case ports.KindNoul, ports.KindChoice, ports.KindScore:
+	case ports.KindNoul:
+	case ports.KindChoice, ports.KindScore:
+		if len(options) < 2 {
+			return ports.Question{}, fmt.Errorf("question %q needs at least two options", s.ID)
+		}
 	default:
 		return ports.Question{}, fmt.Errorf("question %q has unknown type %q", s.ID, s.Type)
 	}
