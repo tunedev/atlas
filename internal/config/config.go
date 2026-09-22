@@ -16,6 +16,7 @@ type Config struct {
 	Model ModelConfig
 	OTel  OTelConfig
 	Store StoreConfig
+	Judge JudgeConfig
 }
 
 type PackConfig struct {
@@ -40,6 +41,16 @@ type OTelConfig struct {
 	Endpoint      string
 	ExportTimeout time.Duration
 	Enabled       bool
+}
+
+// JudgeConfig pins how the judge samples, so a judged probability does not
+// move between runs. TopLogProbs bounds how many alternatives per token the
+// judge reads mass from; MaxTokens bounds the reply.
+type JudgeConfig struct {
+	Temperature float64
+	Seed        int
+	TopLogProbs int
+	MaxTokens   int
 }
 
 // StoreConfig locates the git-backed record and its two derived indices.
@@ -84,6 +95,15 @@ func (c Config) validate() error {
 	}
 	if c.Store.HistoryPath == "" {
 		return fmt.Errorf("config: store history path is empty")
+	}
+	if c.Judge.TopLogProbs < 2 {
+		return fmt.Errorf("config: judge top logprobs must be at least 2, got %d", c.Judge.TopLogProbs)
+	}
+	if c.Judge.MaxTokens <= 0 {
+		return fmt.Errorf("config: judge max tokens must be positive, got %d", c.Judge.MaxTokens)
+	}
+	if c.Judge.Temperature < 0 {
+		return fmt.Errorf("config: judge temperature must not be negative, got %v", c.Judge.Temperature)
 	}
 	return nil
 }

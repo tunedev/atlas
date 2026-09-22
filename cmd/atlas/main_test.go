@@ -1,14 +1,35 @@
 package main
 
 import (
+	"context"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"testing"
 	"time"
 
+	"github.com/tunedev/atlas/internal/adapters/outbound/gitdocs"
+	"github.com/tunedev/atlas/internal/adapters/outbound/sqlindex"
 	"github.com/tunedev/atlas/internal/config"
+	"github.com/tunedev/atlas/internal/core/ports"
 )
+
+// testStore opens a gitdocs store and a sqlindex index over fresh temp
+// directories, closing the index on cleanup.
+func testStore(t *testing.T) (ports.Docs, ports.Index) {
+	t.Helper()
+	ctx := context.Background()
+	docs, err := gitdocs.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("open docs: %v", err)
+	}
+	index, err := sqlindex.Open(ctx, t.TempDir()+"/index.db")
+	if err != nil {
+		t.Fatalf("open index: %v", err)
+	}
+	t.Cleanup(func() { _ = index.Close() })
+	return docs, index
+}
 
 func TestBuildRegistryRegistersBothShippedTools(t *testing.T) {
 	cfg := config.Config{}
@@ -18,8 +39,11 @@ func TestBuildRegistryRegistersBothShippedTools(t *testing.T) {
 	cfg.Model.Name = "a-model"
 	cfg.Model.Timeout = 5678 * time.Millisecond
 	cfg.Model.MaxBytes = 8765
+	cfg.Judge.TopLogProbs = 5
+	cfg.Judge.MaxTokens = 256
 
-	reg := buildRegistry(cfg)
+	docs, index := testStore(t)
+	reg := buildRegistry(cfg, docs, index)
 
 	if _, ok := reg.Lookup("http.request"); !ok {
 		t.Error("http.request is not registered")
@@ -29,6 +53,16 @@ func TestBuildRegistryRegistersBothShippedTools(t *testing.T) {
 	}
 	if _, ok := reg.Lookup("nonexistent.tool"); ok {
 		t.Error("Lookup reported a tool that was never registered")
+	}
+}
+
+func TestBuildRegistryRegistersTheJudgeTool(t *testing.T) {
+	docs, index := testStore(t)
+	r := buildRegistry(config.Config{}, docs, index)
+	for _, name := range []string{"http.request", "model.complete", "judge.ask"} {
+		if _, ok := r.Lookup(name); !ok {
+			t.Errorf("registry has no %s", name)
+		}
 	}
 }
 

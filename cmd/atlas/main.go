@@ -11,10 +11,13 @@ import (
 	"go.opentelemetry.io/otel"
 
 	"github.com/tunedev/atlas/internal/adapters/inbound/packfile"
+	"github.com/tunedev/atlas/internal/adapters/outbound/gitdocs"
 	"github.com/tunedev/atlas/internal/adapters/outbound/openaiprov"
+	"github.com/tunedev/atlas/internal/adapters/outbound/sqlindex"
 	"github.com/tunedev/atlas/internal/adapters/outbound/tools"
 	"github.com/tunedev/atlas/internal/config"
 	"github.com/tunedev/atlas/internal/core/app"
+	"github.com/tunedev/atlas/internal/core/ports"
 	"github.com/tunedev/atlas/internal/telemetry"
 )
 
@@ -25,7 +28,7 @@ func main() {
 	}
 }
 
-func buildRegistry(cfg config.Config) tools.Registry {
+func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index) tools.Registry {
 	provider := openaiprov.New(openaiprov.Config{
 		Name:     cfg.Model.Name,
 		BaseURL:  cfg.Model.BaseURL,
@@ -34,9 +37,16 @@ func buildRegistry(cfg config.Config) tools.Registry {
 		Timeout:  cfg.Model.Timeout,
 		MaxBytes: cfg.Model.MaxBytes,
 	})
+	judge := app.NewJudge(provider, app.JudgeConfig{
+		Temperature: cfg.Judge.Temperature,
+		Seed:        cfg.Judge.Seed,
+		TopLogProbs: cfg.Judge.TopLogProbs,
+		MaxTokens:   cfg.Judge.MaxTokens,
+	})
 	return tools.NewRegistry(
 		tools.NewHTTP(cfg.Pack.HTTPTimeout, cfg.Pack.HTTPMaxBytes),
 		tools.NewModel(provider),
+		tools.NewJudge(judge, docs, index),
 	)
 }
 
@@ -65,7 +75,18 @@ func run() error {
 		return err
 	}
 
-	registry := buildRegistry(cfg)
+	docs, err := gitdocs.Open(ctx, cfg.Store.Root)
+	if err != nil {
+		return err
+	}
+
+	index, err := sqlindex.Open(ctx, cfg.Store.IndexPath)
+	if err != nil {
+		return err
+	}
+	defer index.Close()
+
+	registry := buildRegistry(cfg, docs, index)
 
 	// telemetry.Init has already installed the tracer provider, so the
 	// tracer obtained here is the real one when tracing is enabled and the
