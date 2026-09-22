@@ -15,9 +15,12 @@ type Alternative struct {
 // Token is one position in a completion. Alternatives is empty unless the
 // caller asked for them.
 //
-// LogProb and Alternatives describe the model's distribution before any schema
-// constrained the output, so the token actually produced is not always the one
-// with the highest probability here.
+// On both of this port's current implementations (Ollama and vLLM), LogProb
+// and Alternatives describe the model's distribution before any schema
+// constrained the output, so the token actually produced is not always the
+// one with the highest probability here. The port itself does not guarantee
+// this; it is how these two engines behave, not a contract every Provider
+// must honor.
 type Token struct {
 	Text         string
 	LogProb      float64

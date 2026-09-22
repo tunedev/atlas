@@ -47,7 +47,7 @@ func (m *Model) Invoke(ctx context.Context, with map[string]string) (any, error)
 		attribute.String("gen_ai.response.model", c.Model),
 		attribute.Int("gen_ai.usage.input_tokens", c.Usage.PromptTokens),
 		attribute.Int("gen_ai.usage.output_tokens", c.Usage.CompletionTokens),
-		attribute.Int64("gen_ai.latency_ms", c.Latency.Milliseconds()),
+		attribute.Int64("atlas.model.latency_ms", c.Latency.Milliseconds()),
 	)
 
 	if with["expect"] != "json" {
