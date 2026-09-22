@@ -8,6 +8,8 @@ type chatRequest struct {
 	LogProbs       bool            `json:"logprobs,omitempty"`
 	TopLogProbs    int             `json:"top_logprobs,omitempty"`
 	ResponseFormat *responseFormat `json:"response_format,omitempty"`
+	Temperature    *float64        `json:"temperature,omitempty"`
+	Seed           *int            `json:"seed,omitempty"`
 }
 
 type chatMessage struct {

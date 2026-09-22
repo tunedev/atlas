@@ -112,9 +112,11 @@ func (c *Client) Complete(ctx context.Context, p ports.Prompt) (ports.Completion
 // JSON schema only when the prompt asks for them.
 func (c *Client) buildRequest(p ports.Prompt) ([]byte, error) {
 	req := chatRequest{
-		Model:     c.model,
-		Messages:  toMessages(p),
-		MaxTokens: p.MaxTokens,
+		Model:       c.model,
+		Messages:    toMessages(p),
+		MaxTokens:   p.MaxTokens,
+		Temperature: p.Temperature,
+		Seed:        p.Seed,
 	}
 
 	if p.TopLogProbs > 0 {

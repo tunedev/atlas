@@ -42,6 +42,11 @@ type Prompt struct {
 	MaxTokens   int
 	Schema      []byte
 	TopLogProbs int
+
+	// Temperature and Seed pin how the engine samples. Both are nil when the
+	// caller has no opinion, and the engine's own default applies.
+	Temperature *float64
+	Seed        *int
 }
 
 // Completion is what a provider answered, and what it cost.
