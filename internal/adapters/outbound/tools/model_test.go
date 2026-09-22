@@ -17,11 +17,16 @@ type stubProvider struct {
 	usage   ports.Usage
 	latency time.Duration
 	err     error
+
+	gotPrompt *ports.Prompt
 }
 
 func (p stubProvider) Name() string { return "stub" }
 
 func (p stubProvider) Complete(ctx context.Context, prompt ports.Prompt) (ports.Completion, error) {
+	if p.gotPrompt != nil {
+		*p.gotPrompt = prompt
+	}
 	if p.err != nil {
 		return ports.Completion{}, p.err
 	}
@@ -87,6 +92,21 @@ func TestModelFailsWithoutAUserMessage(t *testing.T) {
 	if _, err := tools.NewModel(p).Invoke(context.Background(),
 		map[string]string{"system": "s"}); err == nil {
 		t.Error("Invoke succeeded with no user message")
+	}
+}
+
+func TestModelPassesSystemAndUserToTheProvider(t *testing.T) {
+	var got ports.Prompt
+	p := stubProvider{text: "x", model: "m", gotPrompt: &got}
+	if _, err := tools.NewModel(p).Invoke(context.Background(),
+		map[string]string{"system": "be terse", "user": "a question"}); err != nil {
+		t.Fatalf("Invoke: %v", err)
+	}
+	if got.System != "be terse" {
+		t.Errorf("Prompt.System = %q, want %q", got.System, "be terse")
+	}
+	if got.User != "a question" {
+		t.Errorf("Prompt.User = %q, want %q", got.User, "a question")
 	}
 }
 

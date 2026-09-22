@@ -140,6 +140,88 @@ func TestASchemaIsSentWhenSet(t *testing.T) {
 	}
 }
 
+func TestRequestCarriesSystemThenUserMessages(t *testing.T) {
+	var captured http.Request
+	s := serve(t, http.StatusOK, recorded, &captured)
+	_, err := client(t, s.URL).Complete(context.Background(),
+		ports.Prompt{System: "be terse", User: "a question"})
+	if err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	body, _ := io.ReadAll(captured.Body)
+	var sent struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &sent); err != nil {
+		t.Fatalf("unmarshal request: %v", err)
+	}
+	if len(sent.Messages) != 2 {
+		t.Fatalf("messages = %d, want 2: %s", len(sent.Messages), body)
+	}
+	if sent.Messages[0].Role != "system" || sent.Messages[0].Content != "be terse" {
+		t.Errorf("messages[0] = %+v, want system/be terse", sent.Messages[0])
+	}
+	if sent.Messages[1].Role != "user" || sent.Messages[1].Content != "a question" {
+		t.Errorf("messages[1] = %+v, want user/a question", sent.Messages[1])
+	}
+}
+
+func TestAuthorizationHeaderIsSentOnlyWhenAPIKeyIsSet(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		apiKey string
+		want   string
+	}{
+		{"set", "sk-key", "Bearer sk-key"},
+		{"empty", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var captured http.Request
+			s := serve(t, http.StatusOK, recorded, &captured)
+			c := openaiprov.New(openaiprov.Config{
+				Name: "test", BaseURL: s.URL, Model: "a-model", APIKey: tc.apiKey,
+				Timeout: 5 * time.Second, MaxBytes: 1 << 20,
+			})
+			if _, err := c.Complete(context.Background(), ports.Prompt{User: "q"}); err != nil {
+				t.Fatalf("complete: %v", err)
+			}
+			got := captured.Header.Get("Authorization")
+			if got != tc.want {
+				t.Errorf("Authorization = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestA2xxStatusOtherThan200Succeeds(t *testing.T) {
+	s := serve(t, http.StatusCreated, recorded, nil)
+	if _, err := client(t, s.URL).Complete(context.Background(), ports.Prompt{User: "q"}); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+}
+
+func TestABodyExactlyAtMaxBytesSucceeds(t *testing.T) {
+	prefix := `{"model":"a-model","choices":[{"message":{"content":"`
+	suffix := `"}}]}`
+	maxBytes := int64(512)
+	padLen := int(maxBytes) - len(prefix) - len(suffix)
+	body := prefix + strings.Repeat("x", padLen) + suffix
+	if int64(len(body)) != maxBytes {
+		t.Fatalf("test body is %d bytes, want exactly %d", len(body), maxBytes)
+	}
+	s := serve(t, http.StatusOK, body, nil)
+	c := openaiprov.New(openaiprov.Config{
+		Name: "test", BaseURL: s.URL, Model: "a-model",
+		Timeout: 5 * time.Second, MaxBytes: maxBytes,
+	})
+	if _, err := c.Complete(context.Background(), ports.Prompt{User: "q"}); err != nil {
+		t.Fatalf("a body of exactly MaxBytes was rejected: %v", err)
+	}
+}
+
 func TestANonSuccessStatusIsAnErrorNamingIt(t *testing.T) {
 	s := serve(t, http.StatusInternalServerError, `{"error":"boom"}`, nil)
 	_, err := client(t, s.URL).Complete(context.Background(), ports.Prompt{User: "q"})
