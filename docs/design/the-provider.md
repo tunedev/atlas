@@ -91,8 +91,17 @@ any class (there is nothing to normalise honestly).
   provider is configurable in production.
 - `model.complete` never requests `TopLogProbs` or sets `Schema`; only tests
   exercise `MassPerClass` against a live completion.
-- `openaiprov.Client.Complete` discards the response body on a non-2xx
-  status; a caller sees only `"<name> returned status <code>"`, with no
-  detail about why the engine failed.
+- There is no error classification: no `ports` sentinel distinguishes a
+  rejected request (4xx) from a transient failure, and `Chain` counts every
+  failure against a provider's breaker the same way. This lands with the
+  chain wiring, not this increment.
+- `MassPerClass` reads one position per completion — the last token whose own
+  text is a class member. A multi-field typed answer needs the token location
+  of each field separately, then a per-token mass read at each one; nothing
+  here does that yet.
+- `Prompt` carries no sampling controls (temperature, seed). vLLM applied its
+  own `generation_config` (temperature 0.7) by default and produced a
+  different verdict from Ollama on the same input; a calibrated `Judge` will
+  need pinned sampling to compare engines meaningfully.
 - Retry, per-provider load, and a `Judge` port that would consume
   `MassPerClass` are out of scope for this increment.
