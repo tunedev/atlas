@@ -64,19 +64,27 @@ func TestMassPerClassAgainstALiveEngine(t *testing.T) {
 		t.Fatalf("mass: %v", err)
 	}
 	t.Logf("mass per class: %+v", mass)
-	t.Logf("chosen answer token: %s", chosenTokenReport(got))
+	t.Logf("chosen answer token: %s", answerTokenReport(got, yesNoClasses))
 
 	if mass["yes"] <= 0.8 {
 		t.Errorf("yes = %.4f, want above 0.8", mass["yes"])
 	}
 }
 
-// chosenTokenReport describes the last token of the completion and its own
-// probability, for comparison against the mass MassPerClass computed.
-func chosenTokenReport(c ports.Completion) string {
-	if len(c.Tokens) == 0 {
-		return "no per-token data"
+// answerTokenReport describes the answer-bearing token of the completion --
+// the last token whose own text belongs to a class, the same rule
+// app.MassPerClass applies -- and its own probability, for comparison
+// against the mass MassPerClass computed.
+func answerTokenReport(c ports.Completion, classes map[string][]string) string {
+	for i := len(c.Tokens) - 1; i >= 0; i-- {
+		tok := c.Tokens[i]
+		for _, forms := range classes {
+			for _, form := range forms {
+				if form == tok.Text {
+					return fmt.Sprintf("text=%q probability=%.4f", tok.Text, math.Exp(tok.LogProb))
+				}
+			}
+		}
 	}
-	last := c.Tokens[len(c.Tokens)-1]
-	return fmt.Sprintf("text=%q probability=%.4f", last.Text, math.Exp(last.LogProb))
+	return "no token matches any class"
 }
