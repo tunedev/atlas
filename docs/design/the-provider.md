@@ -49,9 +49,9 @@ provider — the client left, no provider failed. If every provider is
 skipped or fails, `Complete` returns a single error naming every provider's
 outcome.
 
-`app.Breaker` opens after `threshold` consecutive failures and allows one
-probe call once `cooldown` has elapsed since it last opened; a failed probe
-re-arms the cooldown rather than leaving the breaker permanently probing.
+`app.Breaker` opens after `threshold` consecutive failures. Once `cooldown`
+has elapsed since it last opened, calls are allowed again for every caller,
+not just one probe; a failure after that immediately re-arms the cooldown.
 
 **`Chain` has no production caller.** `cmd/atlas`'s `buildRegistry` builds one
 `openaiprov.Client` from config and hands it directly to `tools.NewModel`;

@@ -71,8 +71,18 @@ func TestARepeatedlyFailingProviderIsSkipped(t *testing.T) {
 			t.Fatalf("call %d: %v", i, err)
 		}
 	}
-	if failing.calls >= 10 {
-		t.Errorf("failing provider was called %d times in 10; its breaker never opened", failing.calls)
+	if failing.calls != 3 {
+		t.Errorf("failing provider was called %d times, want 3 (its threshold); the breaker should stop calling it after that", failing.calls)
+	}
+}
+
+func TestAChainWithNoProvidersNamesThatRatherThanReturningAnEmptyMessage(t *testing.T) {
+	_, err := app.NewChain(3, time.Minute).Complete(context.Background(), ports.Prompt{User: "q"})
+	if err == nil {
+		t.Fatal("a chain with no providers returned no error")
+	}
+	if err.Error() != "chain: no providers" {
+		t.Errorf("err = %q, want %q", err.Error(), "chain: no providers")
 	}
 }
 
@@ -86,6 +96,9 @@ func TestACancelledContextStopsTheChainRatherThanFallingThrough(t *testing.T) {
 	_, err := app.NewChain(3, time.Minute, a, b).Complete(ctx, ports.Prompt{User: "q"})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if !strings.Contains(err.Error(), "alpha") {
+		t.Errorf("error does not name the provider whose call was cancelled: %v", err)
 	}
 	if b.calls != 0 {
 		t.Errorf("second provider was called %d times after cancellation; a dead client hammers every provider", b.calls)

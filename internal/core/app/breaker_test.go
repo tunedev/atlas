@@ -45,6 +45,19 @@ func TestAnOpenBreakerProbesAfterItsCooldown(t *testing.T) {
 	}
 }
 
+func TestAFailureAfterCooldownReArmsTheBreakerImmediately(t *testing.T) {
+	b := app.NewBreaker(1, 10*time.Millisecond)
+	b.Failure()
+	time.Sleep(15 * time.Millisecond)
+	if !b.Allow() {
+		t.Fatal("breaker did not allow calls again after its cooldown")
+	}
+	b.Failure()
+	if b.Allow() {
+		t.Error("a failure right after cooldown did not re-arm the breaker")
+	}
+}
+
 func TestABreakerIsSafeUnderConcurrentUse(t *testing.T) {
 	b := app.NewBreaker(100, time.Minute)
 	var wg sync.WaitGroup

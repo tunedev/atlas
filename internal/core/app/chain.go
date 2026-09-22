@@ -52,11 +52,14 @@ func (c *Chain) Complete(ctx context.Context, p ports.Prompt) (ports.Completion,
 			return completion, nil
 		}
 		if ctx.Err() != nil {
-			return ports.Completion{}, ctx.Err()
+			return ports.Completion{}, fmt.Errorf("chain: %s: %w", provider.Name(), ctx.Err())
 		}
 
 		breaker.Failure()
 		errs = append(errs, fmt.Sprintf("%s: %v", provider.Name(), err))
+	}
+	if len(errs) == 0 {
+		return ports.Completion{}, fmt.Errorf("chain: no providers")
 	}
 	return ports.Completion{}, fmt.Errorf("chain: %s", strings.Join(errs, "; "))
 }
