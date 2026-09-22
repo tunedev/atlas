@@ -121,6 +121,39 @@ func TestNoMatchingTokenIsAnError(t *testing.T) {
 	}
 }
 
+func TestMassAtTokenReadsTheTokenItIsGiven(t *testing.T) {
+	// The same fixture the package already uses, read at a chosen position
+	// rather than by scanning for the last class-bearing token.
+	c := recordedYesNo()
+	structural := c.Tokens[0] // the brace the schema forced
+	answer := c.Tokens[2]     // the answer-bearing token
+
+	got, err := app.MassAtToken(answer, yesNo)
+	if err != nil {
+		t.Fatalf("mass at token: %v", err)
+	}
+	if got["yes"] < 0.90 {
+		t.Errorf("yes = %.4f at the answer token, want at least 0.90", got["yes"])
+	}
+
+	// Reading the structural token is a different answer entirely, which is why
+	// the caller must choose the position.
+	structuralMass, err := app.MassAtToken(structural, yesNo)
+	if err != nil {
+		t.Fatalf("mass at structural token: %v", err)
+	}
+	if structuralMass["yes"] == got["yes"] {
+		t.Error("the structural token and the answer token gave the same distribution; the position is being ignored")
+	}
+}
+
+func TestMassAtATokenWithNoMatchingAlternativeIsAnError(t *testing.T) {
+	tok := ports.Token{Text: "banana", Alternatives: []ports.Alternative{{Text: "apple", LogProb: -1}}}
+	if _, err := app.MassAtToken(tok, yesNo); err == nil {
+		t.Fatal("a token matching no class returned no error")
+	}
+}
+
 func TestTheChosenTokenIsNotCountedTwice(t *testing.T) {
 	c := ports.Completion{Tokens: []ports.Token{
 		{Text: "yes", LogProb: math.Log(0.3), Alternatives: []ports.Alternative{

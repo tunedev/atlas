@@ -15,19 +15,10 @@ import (
 // text belongs to a class. A schema can force a structural token, such as
 // "{", ahead of the answer; its alternatives may still look like classes
 // because the model intended prose before the schema intervened, but its own
-// text is not a class member, so it is skipped.
+// text is not a class member, so it is skipped. Mass is then read from that
+// token with MassAtToken.
 //
-// At the answer-bearing token, mass for a class is the sum of
-// math.Exp(logprob) over every alternative whose text matches one of the
-// class's surface forms, compared case-sensitively. The token's own
-// probability is included only when its own text is absent from its
-// alternatives -- an OpenAI-compatible top_logprobs array already contains
-// the chosen token, so adding it again would double-count that surface form.
-// The result is normalised so the values sum to one.
-//
-// An empty Tokens slice is an error: per-token data was not requested. A
-// completion where no token's text matches any class is an error too, since
-// a uniform distribution there would be an invented number.
+// An empty Tokens slice is an error: per-token data was not requested.
 func MassPerClass(c ports.Completion, classes map[string][]string) (map[string]float64, error) {
 	if len(c.Tokens) == 0 {
 		return nil, fmt.Errorf("mass: completion carries no per-token data")
@@ -38,7 +29,27 @@ func MassPerClass(c ports.Completion, classes map[string][]string) (map[string]f
 		return nil, fmt.Errorf("mass: no token matches any class")
 	}
 
+	return MassAtToken(tok, classes)
+}
+
+// MassAtToken reads the probability mass tok assigns to each class in
+// classes, a map from class name to the surface forms that count as that
+// class (for example "yes" to {"yes", "Yes", "YES", "true"}).
+//
+// Mass for a class is the sum of math.Exp(logprob) over every one of tok's
+// alternatives whose text matches one of the class's surface forms, compared
+// case-sensitively. Tok's own probability is included only when its own text
+// is absent from its alternatives -- an OpenAI-compatible top_logprobs array
+// already contains the chosen token, so adding it again would double-count
+// that surface form. The result is normalised so the values sum to one.
+//
+// A token where neither its own text nor any alternative matches a class is
+// an error, since a uniform distribution there would be an invented number.
+func MassAtToken(tok ports.Token, classes map[string][]string) (map[string]float64, error) {
 	raw := rawMassPerClass(tok, classes)
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("mass: no token matches any class")
+	}
 	return normalise(raw), nil
 }
 
