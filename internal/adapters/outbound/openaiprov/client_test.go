@@ -282,6 +282,57 @@ func TestNoChoicesIsAnErrorRatherThanAnEmptyCompletion(t *testing.T) {
 	}
 }
 
+func TestSamplingIsSentOnlyWhenSet(t *testing.T) {
+	temp := 0.0
+	seed := 7
+
+	for _, tc := range []struct {
+		name   string
+		prompt ports.Prompt
+		want   bool
+	}{
+		{"unset", ports.Prompt{User: "q"}, false},
+		{"set", ports.Prompt{User: "q", Temperature: &temp, Seed: &seed}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var captured http.Request
+			s := serve(t, http.StatusOK, recorded, &captured)
+			if _, err := client(t, s.URL).Complete(context.Background(), tc.prompt); err != nil {
+				t.Fatalf("complete: %v", err)
+			}
+			body, _ := io.ReadAll(captured.Body)
+			var sent map[string]any
+			if err := json.Unmarshal(body, &sent); err != nil {
+				t.Fatalf("unmarshal request: %v", err)
+			}
+			_, hasTemp := sent["temperature"]
+			_, hasSeed := sent["seed"]
+			if hasTemp != tc.want || hasSeed != tc.want {
+				t.Errorf("temperature present = %v, seed present = %v, want both %v; request was %s",
+					hasTemp, hasSeed, tc.want, body)
+			}
+		})
+	}
+}
+
+func TestATemperatureOfZeroIsSentRatherThanOmitted(t *testing.T) {
+	temp := 0.0
+	var captured http.Request
+	s := serve(t, http.StatusOK, recorded, &captured)
+	if _, err := client(t, s.URL).Complete(context.Background(), ports.Prompt{User: "q", Temperature: &temp}); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	body, _ := io.ReadAll(captured.Body)
+	var sent map[string]any
+	if err := json.Unmarshal(body, &sent); err != nil {
+		t.Fatalf("unmarshal request: %v", err)
+	}
+	v, ok := sent["temperature"]
+	if !ok || v.(float64) != 0 {
+		t.Errorf("temperature = %v present=%v, want 0 present; a zero value must not be dropped: %s", v, ok, body)
+	}
+}
+
 // TestAgainstALiveEngine is skipped unless ATLAS_LIVE_PROVIDER is set, so CI
 // never depends on a running engine. The base URL and model come from
 // ATLAS_LIVE_BASE_URL and ATLAS_LIVE_MODEL, defaulting to a local Ollama.

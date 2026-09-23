@@ -94,6 +94,12 @@ func defaults() Config {
 			IndexPath:   "~/.atlas/index.db",
 			HistoryPath: "~/.atlas/history.duckdb",
 		},
+		Judge: JudgeConfig{
+			Temperature: 0,
+			Seed:        1,
+			TopLogProbs: 5,
+			MaxTokens:   256,
+		},
 	}
 }
 
@@ -164,6 +170,34 @@ func applyEnv(c *Config) error {
 	if v := os.Getenv("ATLAS_STORE_HISTORY_PATH"); v != "" {
 		c.Store.HistoryPath = v
 	}
+	if v := os.Getenv("ATLAS_JUDGE_TEMPERATURE"); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_JUDGE_TEMPERATURE: invalid float %q: %w", v, err)
+		}
+		c.Judge.Temperature = f
+	}
+	if v := os.Getenv("ATLAS_JUDGE_SEED"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_JUDGE_SEED: invalid integer %q: %w", v, err)
+		}
+		c.Judge.Seed = n
+	}
+	if v := os.Getenv("ATLAS_JUDGE_TOP_LOGPROBS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_JUDGE_TOP_LOGPROBS: invalid integer %q: %w", v, err)
+		}
+		c.Judge.TopLogProbs = n
+	}
+	if v := os.Getenv("ATLAS_JUDGE_MAX_TOKENS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_JUDGE_MAX_TOKENS: invalid integer %q: %w", v, err)
+		}
+		c.Judge.MaxTokens = n
+	}
 	return nil
 }
 
@@ -181,6 +215,10 @@ func applyFlags(c *Config, args []string) error {
 	fs.StringVar(&c.Store.Root, "store-root", c.Store.Root, "root directory of the git-backed document store")
 	fs.StringVar(&c.Store.IndexPath, "store-index-path", c.Store.IndexPath, "path to the SQLite index database")
 	fs.StringVar(&c.Store.HistoryPath, "store-history-path", c.Store.HistoryPath, "path to the DuckDB history database")
+	fs.Float64Var(&c.Judge.Temperature, "judge-temperature", c.Judge.Temperature, "sampling temperature for judge calls")
+	fs.IntVar(&c.Judge.Seed, "judge-seed", c.Judge.Seed, "sampling seed for judge calls")
+	fs.IntVar(&c.Judge.TopLogProbs, "judge-top-logprobs", c.Judge.TopLogProbs, "alternatives per token the judge reads mass from")
+	fs.IntVar(&c.Judge.MaxTokens, "judge-max-tokens", c.Judge.MaxTokens, "max reply tokens for judge calls")
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("config: parse flags: %w", err)
 	}

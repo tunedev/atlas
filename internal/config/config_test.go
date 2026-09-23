@@ -352,3 +352,57 @@ func TestEmptyStoreHistoryPathIsRejected(t *testing.T) {
 		t.Error("Load accepted an empty store history path")
 	}
 }
+
+func TestJudgeDefaultsArePinnedForReproducibility(t *testing.T) {
+	cfg, err := config.Load([]string{"-pack", "p.yaml"})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Judge.Temperature != 0 {
+		t.Errorf("Judge.Temperature = %v, want 0; a judged probability must not move between runs", cfg.Judge.Temperature)
+	}
+	if cfg.Judge.TopLogProbs < 2 {
+		t.Errorf("Judge.TopLogProbs = %d, want at least 2; without alternatives there is no mass to sum", cfg.Judge.TopLogProbs)
+	}
+	if cfg.Judge.MaxTokens <= 0 {
+		t.Errorf("Judge.MaxTokens = %d, want a positive default", cfg.Judge.MaxTokens)
+	}
+}
+
+func TestJudgeTopLogProbsEnvVar(t *testing.T) {
+	t.Setenv("ATLAS_JUDGE_TOP_LOGPROBS", "9")
+	cfg, err := config.Load([]string{"-pack", "p.yaml"})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Judge.TopLogProbs != 9 {
+		t.Errorf("Judge.TopLogProbs = %d, want 9", cfg.Judge.TopLogProbs)
+	}
+}
+
+func TestJudgeSeedFlagOverridesEnv(t *testing.T) {
+	t.Setenv("ATLAS_JUDGE_SEED", "3")
+	cfg, err := config.Load([]string{"-pack", "p.yaml", "-judge-seed", "11"})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Judge.Seed != 11 {
+		t.Errorf("Judge.Seed = %d, want 11; flags are the last layer", cfg.Judge.Seed)
+	}
+}
+
+func TestAnInvalidJudgeTopLogProbsIsRejectedAtStartup(t *testing.T) {
+	if _, err := config.Load([]string{"-pack", "p.yaml", "-judge-top-logprobs", "0"}); err == nil {
+		t.Fatal("zero top logprobs was accepted; the judge would have no alternatives to sum")
+	}
+}
+
+func TestATooHighJudgeTemperatureIsRejectedAtStartup(t *testing.T) {
+	_, err := config.Load([]string{"-pack", "p.yaml", "-judge-temperature", "12"})
+	if err == nil {
+		t.Fatal("a judge temperature of 12 was accepted; temperature has an upper bound")
+	}
+	if !strings.Contains(err.Error(), "judge temperature") {
+		t.Errorf("error does not name the setting: %v", err)
+	}
+}

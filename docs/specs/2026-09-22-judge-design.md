@@ -177,7 +177,7 @@ Every test runs with no network, which is story 3.6.
   token with no alternatives.
 - The three kinds are tested for their answer shapes, including a score's expected position
   and a noul's probability coming from summed mass rather than the emitted token.
-- The one-call requirement is asserted by counting round trips against an `httptest` server.
+- The one-call requirement is asserted by counting calls on a stub `ports.Provider`.
 - Constrained decoding (story 3.3) is asserted two ways: offline, that the enum schema is on
   the wire; and against a live engine told to answer outside its options, skipped unless
   `ATLAS_LIVE_PROVIDER` is set, since only a real engine proves the constraint holds.
