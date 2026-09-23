@@ -118,12 +118,12 @@ real tokenizer often produces, is still matched), then
 2. a **non-empty prefix** match against a form counts, provided the trimmed
    text prefixes exactly one option's forms.
 
-`AnswerSchema` (below) rejects, ahead of time, any option set where a whole
-option or form is itself a proper prefix of another's — the shape that would
-let step 1 resolve confidently to the wrong option before step 2 ever saw an
-ambiguity. That leaves prefix ambiguity to arise only from a genuinely
-truncated token, which is a real failure to surface, not a data shape to
-special-case.
+`AnswerSchema` (below) rejects, ahead of time, two option-set shapes that
+would let step 1 resolve confidently to the wrong option before step 2 ever
+saw an ambiguity: two different options sharing an identical surface form,
+and a whole option or form that is itself a proper prefix of another's. That
+leaves prefix ambiguity to arise only from a genuinely truncated token,
+which is a real failure to surface, not a data shape to special-case.
 
 A trimmed text that prefixes two or more different options' forms is an
 error: `judge: <question id>: "<text>" is ambiguous between <a> and <b>
@@ -164,15 +164,30 @@ with it.
 
 ## Known gaps
 
-- A distribution of exactly 1.0 — every alternative at that token resolving
-  to the same one option, no second option accumulating any mass — is
-  unexplained. It is at least as consistent with the engine's top-k window
-  containing only one recognizable option at that position as with a
-  genuinely confident answer, and this increment does not tell the two
-  apart. `Answer.Alternatives` now records, per answer, exactly what the
-  engine returned at that token, so a later look (or epic 11's outcome data)
-  can read the raw alternatives behind any 1.0 instead of trusting the
-  number alone.
+- A distribution of exactly 1.0 is not evidence of a confident answer. An
+  engine's alternatives at the answer token carry its pre-constraint
+  distribution, and at a schema-constrained position those alternatives are
+  often the prose the model would have written before the schema forced
+  compliance — so a question's declared options can be entirely absent from
+  them. When none of a question's options appear among the alternatives, the
+  only mass that lands is the emitted token's own probability, through the
+  own-text fallback, and normalising a single-member map yields exactly 1.0
+  regardless of what that probability was. Measured: the live `focus`
+  question's alternatives were `AI` (0.883), `Building`, `Develop`,
+  `Internal`, `Business`, with none of its five declared options among them.
+  The same reasoning applies in degree to partial coverage: any declared
+  option absent from the alternatives is pinned to zero mass because it did
+  not survive the engine's top-k window, not because the model ruled it out,
+  so a two-of-five distribution looks as resolved as a five-of-five one.
+  Nothing in the code distinguishes these cases today.
+
+  This is parked rather than fixed here: `Answer.Alternatives` and the
+  questions as asked are already stored, so coverage is computable after the
+  fact from what is recorded — unlike sampling and the outcome slot, nothing
+  is lost by deriving it later. Widening `TopLogProbs` reduces how often
+  this happens but cannot remove the structural problem, and needs live
+  measurement first, so it is its own experiment rather than a default
+  changed here.
 - `optionMatch`'s trim strips surrounding whitespace, then one layer of `"`
   quotes, in that order — so `" x "` (space, x, space, inside quotes) keeps
   its inner spaces rather than trimming again after the quotes come off. No
