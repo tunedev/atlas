@@ -11,6 +11,7 @@ import (
 	"go.opentelemetry.io/otel"
 
 	"github.com/tunedev/atlas/internal/adapters/inbound/packfile"
+	"github.com/tunedev/atlas/internal/adapters/outbound/openaiprov"
 	"github.com/tunedev/atlas/internal/adapters/outbound/tools"
 	"github.com/tunedev/atlas/internal/config"
 	"github.com/tunedev/atlas/internal/core/app"
@@ -25,9 +26,17 @@ func main() {
 }
 
 func buildRegistry(cfg config.Config) tools.Registry {
+	provider := openaiprov.New(openaiprov.Config{
+		Name:     cfg.Model.Name,
+		BaseURL:  cfg.Model.BaseURL,
+		Model:    cfg.Model.Name,
+		APIKey:   cfg.Model.APIKey,
+		Timeout:  cfg.Model.Timeout,
+		MaxBytes: cfg.Model.MaxBytes,
+	})
 	return tools.NewRegistry(
 		tools.NewHTTP(cfg.Pack.HTTPTimeout, cfg.Pack.HTTPMaxBytes),
-		tools.NewModel(cfg.Model.BaseURL, cfg.Model.Name, cfg.Model.Timeout, cfg.Model.MaxBytes),
+		tools.NewModel(provider),
 	)
 }
 

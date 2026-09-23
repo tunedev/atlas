@@ -1,6 +1,8 @@
 package config_test
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -144,6 +146,56 @@ func TestModelMaxBytesEnvVar(t *testing.T) {
 	}
 	if cfg.Model.MaxBytes != 54321 {
 		t.Errorf("Model.MaxBytes = %d, want 54321", cfg.Model.MaxBytes)
+	}
+}
+
+func TestModelAPIKeyDefaultsToEmpty(t *testing.T) {
+	cfg, err := config.Load([]string{"-pack", "p.yaml"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Model.APIKey != "" {
+		t.Error("Model.APIKey has a non-empty default; a local engine needs no key")
+	}
+}
+
+func TestModelAPIKeyEnvVar(t *testing.T) {
+	t.Setenv("ATLAS_MODEL_API_KEY", "from-env-key")
+	cfg, err := config.Load([]string{"-pack", "p.yaml"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Model.APIKey != "from-env-key" {
+		t.Errorf("Model.APIKey = %q, want from-env-key", cfg.Model.APIKey)
+	}
+}
+
+// TestModelAPIKeyNeverAppearsInUsageOutput proves the key cannot leak through
+// flag usage text: flag prints every flag's default value on usage, so a key
+// registered as a flag default would appear in ps, shell history, and here.
+// The key is env-only and never registered as a flag default.
+func TestModelAPIKeyNeverAppearsInUsageOutput(t *testing.T) {
+	t.Setenv("ATLAS_MODEL_API_KEY", "sk-SECRET-123")
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Pipe: %v", err)
+	}
+	orig := os.Stderr
+	os.Stderr = w
+
+	_, loadErr := config.Load([]string{"-pack", "p.yaml", "-bogus-flag"})
+
+	os.Stderr = orig
+	w.Close()
+	var out bytes.Buffer
+	io.Copy(&out, r)
+
+	if loadErr == nil {
+		t.Fatal("Load succeeded with an unknown flag")
+	}
+	if strings.Contains(out.String(), "sk-SECRET-123") {
+		t.Errorf("usage output leaked the API key: %s", out.String())
 	}
 }
 

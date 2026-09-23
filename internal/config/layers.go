@@ -121,6 +121,9 @@ func applyEnv(c *Config) error {
 	if v := os.Getenv("ATLAS_MODEL_NAME"); v != "" {
 		c.Model.Name = v
 	}
+	if v := os.Getenv("ATLAS_MODEL_API_KEY"); v != "" {
+		c.Model.APIKey = v
+	}
 	if v := os.Getenv("ATLAS_MODEL_TIMEOUT"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil {
