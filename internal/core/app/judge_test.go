@@ -183,6 +183,55 @@ func TestAnAnswerTokenWithoutAlternativesIsAnErrorNamingTheQuestion(t *testing.T
 	}
 }
 
+// TestAnAnswerCarriesTheAlternativesItWasReadFrom covers F2: the raw
+// alternatives at an answer token travel with the answer, so a distribution
+// built from one alternative can later be told apart from one built from
+// several.
+func TestAnAnswerCarriesTheAlternativesItWasReadFrom(t *testing.T) {
+	p := &recordingProvider{completion: twoAnswers()}
+	got, err := app.NewJudge(p, testJudgeConfig()).Ask(context.Background(), "a short book", judgeQuestions())
+	if err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+	var readable ports.Answer
+	for _, a := range got.Answers {
+		if a.ID == "readable" {
+			readable = a
+		}
+	}
+	if len(readable.Alternatives) != 3 {
+		t.Fatalf("alternatives = %d, want 3 (as returned at the answer token)", len(readable.Alternatives))
+	}
+	texts := map[string]bool{}
+	for _, alt := range readable.Alternatives {
+		texts[alt.Text] = true
+	}
+	for _, want := range []string{"Yes", "yes", "no"} {
+		if !texts[want] {
+			t.Errorf("alternatives = %v, missing %q", readable.Alternatives, want)
+		}
+	}
+}
+
+// TestTheJudgementRecordsItsProviderAndSampling covers F3: a probability
+// read under unknown sampling is not calibrated, so the provider name and
+// the sampling that produced it travel with the judgement.
+func TestTheJudgementRecordsItsProviderAndSampling(t *testing.T) {
+	p := &recordingProvider{completion: twoAnswers()}
+	cfg := testJudgeConfig()
+	got, err := app.NewJudge(p, cfg).Ask(context.Background(), "a short book", judgeQuestions())
+	if err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+	if got.Provider != "recording" {
+		t.Errorf("provider = %q, want recording", got.Provider)
+	}
+	if got.Sampling.Temperature != cfg.Temperature || got.Sampling.Seed != cfg.Seed ||
+		got.Sampling.TopLogProbs != cfg.TopLogProbs || got.Sampling.MaxTokens != cfg.MaxTokens {
+		t.Errorf("sampling = %+v, want %+v", got.Sampling, cfg)
+	}
+}
+
 func TestAProviderFailureIsReturnedNotSwallowed(t *testing.T) {
 	p := &failingProvider{}
 	if _, err := app.NewJudge(p, testJudgeConfig()).Ask(context.Background(), "a short book", judgeQuestions()); err == nil {

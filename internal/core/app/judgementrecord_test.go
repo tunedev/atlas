@@ -43,14 +43,17 @@ func (i *fakeIndex) Close() error                  { return nil }
 
 func aJudgement() ports.Judgement {
 	return ports.Judgement{
-		Subject: "a short book",
-		Model:   "a-model",
-		When:    time.Date(2026, 9, 22, 11, 4, 2, 0, time.UTC),
+		Subject:  "a short book",
+		Model:    "a-model",
+		Provider: "a-provider",
+		Sampling: ports.Sampling{Temperature: 0, Seed: 7, TopLogProbs: 5, MaxTokens: 128},
+		When:     time.Date(2026, 9, 22, 11, 4, 2, 0, time.UTC),
 		Answers: []ports.Answer{{
 			ID:           "readable",
 			Kind:         ports.KindNoul,
 			Chosen:       "yes",
 			Distribution: map[string]float64{"yes": 0.94, "no": 0.06},
+			Alternatives: []ports.Alternative{{Text: "Yes", LogProb: -0.4}, {Text: "no", LogProb: -3.1}},
 		}},
 	}
 }
@@ -90,6 +93,62 @@ func TestTheDocumentCarriesTheQuestionTheAnswerAndAnEmptyOutcome(t *testing.T) {
 	}
 	if _, present := doc["answers"]; !present {
 		t.Error("the document does not record the answers")
+	}
+}
+
+// TestTheDocumentCarriesProviderSamplingAndAlternatives covers F2 and F3:
+// the document records what produced the probability (provider, sampling)
+// and what it was read from (the raw alternatives), none of which can be
+// added retroactively to a judgement already made.
+func TestTheDocumentCarriesProviderSamplingAndAlternatives(t *testing.T) {
+	docs, index := newFakeDocs(), &fakeIndex{}
+
+	path, err := app.RecordJudgement(context.Background(), docs, index, "subject-1", recordQuestions(), aJudgement())
+	if err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(docs.put[path], &doc); err != nil {
+		t.Fatalf("document is not valid json: %v", err)
+	}
+
+	if doc["provider"] != "a-provider" {
+		t.Errorf("provider = %v, want a-provider", doc["provider"])
+	}
+	sampling, ok := doc["sampling"].(map[string]any)
+	if !ok {
+		t.Fatalf("no sampling recorded: %+v", doc)
+	}
+	if sampling["seed"] != float64(7) || sampling["top_logprobs"] != float64(5) || sampling["max_tokens"] != float64(128) {
+		t.Errorf("sampling = %+v, want seed=7 top_logprobs=5 max_tokens=128", sampling)
+	}
+
+	answers, ok := doc["answers"].([]any)
+	if !ok || len(answers) != 1 {
+		t.Fatalf("answers = %+v, want one answer", doc["answers"])
+	}
+	answer := answers[0].(map[string]any)
+	alts, ok := answer["alternatives"].([]any)
+	if !ok || len(alts) != 2 {
+		t.Fatalf("alternatives = %+v, want the two alternatives read from the answer token", answer["alternatives"])
+	}
+	first := alts[0].(map[string]any)
+	if first["text"] != "Yes" {
+		t.Errorf("first alternative = %+v, want text Yes", first)
+	}
+}
+
+// TestTheIndexRowCarriesTheProvider covers F3's index-row half.
+func TestTheIndexRowCarriesTheProvider(t *testing.T) {
+	docs, index := newFakeDocs(), &fakeIndex{}
+	if _, err := app.RecordJudgement(context.Background(), docs, index, "subject-1", recordQuestions(), aJudgement()); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	if len(index.rows) != 1 {
+		t.Fatalf("index rows = %d, want 1", len(index.rows))
+	}
+	if got := index.rows[0].Fields["provider"]; got != "a-provider" {
+		t.Errorf("provider field = %q, want a-provider", got)
 	}
 }
 
@@ -149,6 +208,64 @@ func TestTheIndexRowMakesAPendingJudgementFindable(t *testing.T) {
 	}
 	if row.Rev == "" {
 		t.Error("the index row does not carry the revision the document was written at")
+	}
+}
+
+// TestAZeroExpectedScoreIsStillPresentInTheDocument covers the minor at
+// judgementrecord.go:34: omitempty on Expected used to drop the key when
+// all mass sat on the first level (Expected == 0), which is a real answer,
+// not a missing field.
+func TestAZeroExpectedScoreIsStillPresentInTheDocument(t *testing.T) {
+	docs, index := newFakeDocs(), &fakeIndex{}
+	j := aJudgement()
+	j.Answers = []ports.Answer{{
+		ID: "length", Kind: ports.KindScore, Chosen: "short",
+		Distribution: map[string]float64{"short": 1, "medium": 0, "long": 0},
+		Expected:     0,
+	}}
+
+	path, err := app.RecordJudgement(context.Background(), docs, index, "subject-1", recordQuestions(), j)
+	if err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(docs.put[path], &doc); err != nil {
+		t.Fatalf("document is not valid json: %v", err)
+	}
+	answer := doc["answers"].([]any)[0].(map[string]any)
+	if _, present := answer["expected"]; !present {
+		t.Error("expected key is missing for a zero score; omitempty dropped a real answer")
+	}
+}
+
+// TestTheDocumentWhenHasMillisecondPrecision covers the minor at
+// judgementrecord.go:114 vs :18: the document's "when" used second
+// precision while the path used milliseconds, so two judgements 200ms
+// apart were unorderable from the document alone.
+func TestTheDocumentWhenHasMillisecondPrecision(t *testing.T) {
+	docs, index := newFakeDocs(), &fakeIndex{}
+	first := aJudgement()
+	second := aJudgement()
+	second.When = first.When.Add(200 * time.Millisecond)
+
+	p1, err := app.RecordJudgement(context.Background(), docs, index, "subject-1", recordQuestions(), first)
+	if err != nil {
+		t.Fatalf("record first: %v", err)
+	}
+	p2, err := app.RecordJudgement(context.Background(), docs, index, "subject-1", recordQuestions(), second)
+	if err != nil {
+		t.Fatalf("record second: %v", err)
+	}
+
+	var doc1, doc2 map[string]any
+	if err := json.Unmarshal(docs.put[p1], &doc1); err != nil {
+		t.Fatalf("document 1 is not valid json: %v", err)
+	}
+	if err := json.Unmarshal(docs.put[p2], &doc2); err != nil {
+		t.Fatalf("document 2 is not valid json: %v", err)
+	}
+	if doc1["when"] == doc2["when"] {
+		t.Errorf("when = %v for both documents, 200ms apart; the document cannot order them", doc1["when"])
 	}
 }
 

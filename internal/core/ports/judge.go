@@ -31,21 +31,39 @@ type Question struct {
 
 // Answer is what a model answered and how much probability mass each option
 // held. Distribution sums to one. Expected is set for a score alone: the
-// levels' positions weighted by their mass.
+// levels' positions weighted by their mass. Alternatives is the raw
+// alternatives the engine returned at the answer token, before any option
+// matching or normalising, so a distribution built from one alternative can
+// be told apart from one built from several.
 type Answer struct {
 	ID           string
 	Kind         Kind
 	Chosen       string
 	Distribution map[string]float64
 	Expected     float64
+	Alternatives []Alternative
 }
 
-// Judgement is every answer about one subject, and which model produced them.
+// Sampling is how the engine was told to sample when it produced a
+// Judgement. A probability read under unknown sampling is not a calibrated
+// number, so it travels with the judgement rather than living only in
+// config: config can change before the document is read again.
+type Sampling struct {
+	Temperature float64
+	Seed        int
+	TopLogProbs int
+	MaxTokens   int
+}
+
+// Judgement is every answer about one subject, which model produced them,
+// through which provider, and under what sampling.
 type Judgement struct {
-	Subject string
-	Model   string
-	When    time.Time
-	Answers []Answer
+	Subject  string
+	Model    string
+	Provider string
+	Sampling Sampling
+	When     time.Time
+	Answers  []Answer
 }
 
 // Judge answers typed questions about a subject. Every question is answered in
@@ -57,7 +75,15 @@ type Judge interface {
 // NoulOptions is the option list a noul is asked with.
 func NoulOptions() []string { return []string{"yes", "no"} }
 
-// NoulForms is the surface forms that count as each noul option.
+// NoulForms is the surface forms that count as each noul option. It
+// includes "true"/"false" alongside "yes"/"no" even though AnswerSchema
+// constrains the emitted field to an enum of "yes" and "no" alone, so a
+// constrained engine can never choose "true" or "false" as its answer:
+// Alternatives at a token carry the model's pre-constraint distribution
+// (docs/specs/2026-09-22-judge-design.md), and a model reasoning about a
+// yes/no question can still surface "true"/"false" among the alternatives
+// it did not choose. Keeping the forms lets that mass count toward the
+// right option instead of going unmatched.
 func NoulForms() map[string][]string {
 	return map[string][]string{
 		"yes": {"yes", "Yes", "YES", "true"},

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/tunedev/atlas/internal/core/ports"
 )
@@ -17,6 +16,11 @@ import (
 // distinct paths.
 const judgementTimeFormat = "2006-01-02T15-04-05.000Z"
 
+// judgementDocTimeFormat is RFC 3339 at the same millisecond precision as
+// judgementTimeFormat, so the document's "when" and the path it lives at
+// order two judgements of the same subject identically.
+const judgementDocTimeFormat = "2006-01-02T15:04:05.000Z"
+
 // judgementQuestion is a Question as it appears in a judgement document.
 type judgementQuestion struct {
 	ID      string   `json:"id"`
@@ -25,22 +29,44 @@ type judgementQuestion struct {
 	Options []string `json:"options,omitempty"`
 }
 
+// judgementAlternative is one alternative the engine returned at an answer
+// token, as ports.Alternative appears in a judgement document.
+type judgementAlternative struct {
+	Text    string  `json:"text"`
+	LogProb float64 `json:"log_prob"`
+}
+
 // judgementAnswer is an Answer as it appears in a judgement document.
+// Expected carries no omitempty: a score of exactly 0 (all mass on the
+// first level) is a real answer, not an absent one.
 type judgementAnswer struct {
-	ID           string             `json:"id"`
-	Kind         string             `json:"kind"`
-	Chosen       string             `json:"chosen"`
-	Distribution map[string]float64 `json:"distribution"`
-	Expected     float64            `json:"expected,omitempty"`
+	ID           string                 `json:"id"`
+	Kind         string                 `json:"kind"`
+	Chosen       string                 `json:"chosen"`
+	Distribution map[string]float64     `json:"distribution"`
+	Expected     float64                `json:"expected"`
+	Alternatives []judgementAlternative `json:"alternatives"`
+}
+
+// judgementSampling is ports.Sampling as it appears in a judgement document.
+type judgementSampling struct {
+	Temperature float64 `json:"temperature"`
+	Seed        int     `json:"seed"`
+	TopLogProbs int     `json:"top_logprobs"`
+	MaxTokens   int     `json:"max_tokens"`
 }
 
 // judgementDoc is a judgement as it is written to the record. Outcome is
 // carried as `any` and never omitted, so the key reads null until a later
-// increment fills it in.
+// increment fills it in. Provider and Sampling record what produced the
+// probability: they cannot be added retroactively to a judgement already
+// made.
 type judgementDoc struct {
 	SubjectID string              `json:"subject_id"`
 	Subject   string              `json:"subject"`
 	Model     string              `json:"model"`
+	Provider  string              `json:"provider"`
+	Sampling  judgementSampling   `json:"sampling"`
 	When      string              `json:"when"`
 	Questions []judgementQuestion `json:"questions"`
 	Answers   []judgementAnswer   `json:"answers"`
@@ -104,6 +130,7 @@ func judgementDocFor(subjectID string, qs []ports.Question, j ports.Judgement) j
 			Chosen:       a.Chosen,
 			Distribution: a.Distribution,
 			Expected:     a.Expected,
+			Alternatives: judgementAlternatives(a.Alternatives),
 		}
 	}
 
@@ -111,11 +138,28 @@ func judgementDocFor(subjectID string, qs []ports.Question, j ports.Judgement) j
 		SubjectID: subjectID,
 		Subject:   j.Subject,
 		Model:     j.Model,
-		When:      j.When.UTC().Format(time.RFC3339),
+		Provider:  j.Provider,
+		Sampling: judgementSampling{
+			Temperature: j.Sampling.Temperature,
+			Seed:        j.Sampling.Seed,
+			TopLogProbs: j.Sampling.TopLogProbs,
+			MaxTokens:   j.Sampling.MaxTokens,
+		},
+		When:      j.When.UTC().Format(judgementDocTimeFormat),
 		Questions: questions,
 		Answers:   answers,
 		Outcome:   nil,
 	}
+}
+
+// judgementAlternatives converts alts to how they appear in a judgement
+// document.
+func judgementAlternatives(alts []ports.Alternative) []judgementAlternative {
+	out := make([]judgementAlternative, len(alts))
+	for i, a := range alts {
+		out[i] = judgementAlternative{Text: a.Text, LogProb: a.LogProb}
+	}
+	return out
 }
 
 // judgementRow is the index row for a judgement written at path and rev.
@@ -129,6 +173,7 @@ func judgementRow(path string, rev ports.Revision, subjectID string, qs []ports.
 		Fields: map[string]string{
 			"subject_id": subjectID,
 			"model":      j.Model,
+			"provider":   j.Provider,
 			"questions":  questionIDs(qs),
 			"outcome":    "pending",
 		},

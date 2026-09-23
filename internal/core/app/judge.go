@@ -60,7 +60,19 @@ func (j *Judge) Ask(ctx context.Context, subject string, qs []ports.Question) (p
 		return ports.Judgement{}, err
 	}
 
-	return ports.Judgement{Subject: subject, Model: completion.Model, When: time.Now().UTC(), Answers: answers}, nil
+	return ports.Judgement{
+		Subject:  subject,
+		Model:    completion.Model,
+		Provider: j.provider.Name(),
+		Sampling: ports.Sampling{
+			Temperature: j.cfg.Temperature,
+			Seed:        j.cfg.Seed,
+			TopLogProbs: j.cfg.TopLogProbs,
+			MaxTokens:   j.cfg.MaxTokens,
+		},
+		When:    time.Now().UTC(),
+		Answers: answers,
+	}, nil
 }
 
 // promptFor builds the request for qs about subject: the schema constrains
@@ -141,6 +153,7 @@ func answerFor(q ports.Question, tok ports.Token) (ports.Answer, error) {
 		Kind:         q.Kind,
 		Chosen:       chosenOption(options, mass),
 		Distribution: mass,
+		Alternatives: tok.Alternatives,
 	}
 	if q.Kind == ports.KindScore {
 		answer.Expected = expectedPosition(options, mass)
