@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -130,9 +131,9 @@ func answerFor(q ports.Question, tok ports.Token) (ports.Answer, error) {
 	}
 
 	options := OptionsFor(q)
-	mass, err := MassAtToken(tok, classesFor(q, options))
+	mass, err := massForToken(q.ID, tok, classesFor(q, options))
 	if err != nil {
-		return ports.Answer{}, fmt.Errorf("judge: %s: %w", q.ID, err)
+		return ports.Answer{}, err
 	}
 
 	answer := ports.Answer{
@@ -166,6 +167,99 @@ func classesFor(q ports.Question, options []string) map[string][]string {
 		}
 	}
 	return classes
+}
+
+// massForToken reads the probability mass tok assigns to each option in
+// classes, matching an alternative's text by optionMatch rather than by
+// whole-string equality: a real engine tokenises a multi-word or
+// multi-syllable option, so the answer token's own text is often only that
+// option's first token, and only its own class distinguishes it from the
+// others.
+//
+// Tok's own probability is folded in only when its own text is absent from
+// its alternatives, the same double-count guard MassAtToken applies -- an
+// OpenAI-compatible top_logprobs array already contains the chosen token.
+// The result is normalised so the values sum to one.
+func massForToken(qid string, tok ports.Token, classes map[string][]string) (map[string]float64, error) {
+	raw := make(map[string]float64)
+	ownTextSeen := false
+	for _, alt := range tok.Alternatives {
+		option, err := optionMatch(qid, alt.Text, classes)
+		if err != nil {
+			return nil, err
+		}
+		if option != "" {
+			raw[option] += math.Exp(alt.LogProb)
+		}
+		if alt.Text == tok.Text {
+			ownTextSeen = true
+		}
+	}
+	if !ownTextSeen {
+		option, err := optionMatch(qid, tok.Text, classes)
+		if err != nil {
+			return nil, err
+		}
+		if option != "" {
+			raw[option] += math.Exp(tok.LogProb)
+		}
+	}
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("judge: %s: no token matches any option", qid)
+	}
+	return normalise(raw), nil
+}
+
+// optionMatch resolves text to the option in classes it identifies. Text is
+// trimmed of surrounding whitespace and quotes first. An exact match against
+// one of an option's forms wins outright; otherwise a non-empty prefix of a
+// form counts, provided it prefixes only one option's forms. It returns ""
+// when trimmed matches no option, and an error when trimmed is a
+// non-distinguishing prefix shared by two or more different options.
+func optionMatch(qid, text string, classes map[string][]string) (string, error) {
+	trimmed := strings.Trim(strings.TrimSpace(text), `"`)
+	if trimmed == "" {
+		return "", nil
+	}
+	if option := exactOptionMatch(trimmed, classes); option != "" {
+		return option, nil
+	}
+	return prefixOptionMatch(qid, trimmed, classes)
+}
+
+// exactOptionMatch returns the option whose forms contain trimmed exactly,
+// or "" if none does.
+func exactOptionMatch(trimmed string, classes map[string][]string) string {
+	for option, forms := range classes {
+		for _, form := range forms {
+			if form == trimmed {
+				return option
+			}
+		}
+	}
+	return ""
+}
+
+// prefixOptionMatch returns the option that trimmed is a non-empty prefix
+// of exactly one of, or an error naming qid and trimmed when it prefixes two
+// or more different options.
+func prefixOptionMatch(qid, trimmed string, classes map[string][]string) (string, error) {
+	matched := ""
+	for option, forms := range classes {
+		if matched == option {
+			continue
+		}
+		for _, form := range forms {
+			if strings.HasPrefix(form, trimmed) {
+				if matched != "" {
+					return "", fmt.Errorf("judge: %s: %q is ambiguous between %s and %s", qid, trimmed, matched, option)
+				}
+				matched = option
+				break
+			}
+		}
+	}
+	return matched, nil
 }
 
 // chosenOption returns the option in options holding the most mass.

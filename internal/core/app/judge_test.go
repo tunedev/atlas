@@ -189,3 +189,103 @@ func TestAProviderFailureIsReturnedNotSwallowed(t *testing.T) {
 		t.Fatal("a failing provider produced a judgement")
 	}
 }
+
+// splitOptionAnswer answers a single "focus" choice question whose chosen
+// option, "backend", is tokenised as "back" then "end" -- the answer token's
+// own text is only the option's first token, so matching it against whole
+// option strings fails even though the option is unambiguous.
+func splitOptionAnswer() ports.Completion {
+	tok := func(text string, alts ...ports.Alternative) ports.Token {
+		return ports.Token{Text: text, LogProb: math.Log(0.5), Alternatives: alts}
+	}
+	plain := func(text string) ports.Token { return ports.Token{Text: text, LogProb: math.Log(0.9)} }
+
+	c := ports.Completion{Model: "a-model"}
+	add := func(t ports.Token) { c.Text += t.Text; c.Tokens = append(c.Tokens, t) }
+
+	add(plain(`{"`))
+	add(plain(`focus`))
+	add(plain(`":`))
+	add(plain(` "`))
+	add(tok(`back`,
+		ports.Alternative{Text: "back", LogProb: math.Log(0.5)},
+		ports.Alternative{Text: "front", LogProb: math.Log(0.3)},
+		ports.Alternative{Text: "data", LogProb: math.Log(0.2)}))
+	add(plain(`end`))
+	add(plain(`"}`))
+	return c
+}
+
+func focusQuestion() ports.Question {
+	return ports.Question{
+		ID:      "focus",
+		Kind:    ports.KindChoice,
+		Ask:     "What is the main focus?",
+		Options: []string{"backend", "frontend", "platform", "data", "other"},
+	}
+}
+
+func TestAnAnswerResolvesByTheFirstTokenOfAMultiTokenOption(t *testing.T) {
+	p := &recordingProvider{completion: splitOptionAnswer()}
+
+	got, err := app.NewJudge(p, testJudgeConfig()).Ask(context.Background(), "a short book", []ports.Question{focusQuestion()})
+	if err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+	if len(got.Answers) != 1 {
+		t.Fatalf("answers = %d, want 1", len(got.Answers))
+	}
+	focus := got.Answers[0]
+	if focus.Chosen != "backend" {
+		t.Errorf("chosen = %q, want backend; \"back\" is a prefix of only one option", focus.Chosen)
+	}
+	if focus.Distribution["backend"] < 0.4 {
+		t.Errorf("backend mass = %.4f, want at least 0.4", focus.Distribution["backend"])
+	}
+}
+
+// ambiguousPrefixAnswer answers a "shape" choice question whose answer token
+// text, "pla", is a first-token prefix of two different options: platform
+// and plain. Neither can be preferred, so the read must fail rather than
+// guess.
+func ambiguousPrefixAnswer() ports.Completion {
+	plain := func(text string) ports.Token { return ports.Token{Text: text, LogProb: math.Log(0.9)} }
+	c := ports.Completion{Model: "a-model"}
+	add := func(t ports.Token) { c.Text += t.Text; c.Tokens = append(c.Tokens, t) }
+
+	add(plain(`{"`))
+	add(plain(`shape`))
+	add(plain(`":`))
+	add(plain(` "`))
+	add(ports.Token{Text: "pla", LogProb: math.Log(0.9), Alternatives: []ports.Alternative{
+		{Text: "pla", LogProb: math.Log(0.9)},
+		{Text: "other", LogProb: math.Log(0.1)},
+	}})
+	add(plain(`in`))
+	add(plain(`"}`))
+	return c
+}
+
+func shapeQuestion() ports.Question {
+	return ports.Question{
+		ID:      "shape",
+		Kind:    ports.KindChoice,
+		Ask:     "What shape is it?",
+		Options: []string{"platform", "plain", "other"},
+	}
+}
+
+func TestATokenPrefixingTwoDifferentOptionsIsAnAmbiguityError(t *testing.T) {
+	p := &recordingProvider{completion: ambiguousPrefixAnswer()}
+
+	_, err := app.NewJudge(p, testJudgeConfig()).Ask(context.Background(), "a short book", []ports.Question{shapeQuestion()})
+	if err == nil {
+		t.Fatal("an alternative prefixing two different options produced a judgement instead of an error")
+	}
+	if !strings.Contains(err.Error(), "shape") {
+		t.Errorf("error does not name the question: %v", err)
+	}
+	if !strings.Contains(err.Error(), "pla") {
+		t.Errorf("error does not name the ambiguous text: %v", err)
+	}
+}
