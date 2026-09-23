@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -142,7 +143,12 @@ func answerFor(q ports.Question, tok ports.Token) (ports.Answer, error) {
 	}
 
 	options := OptionsFor(q)
-	mass, err := massForToken(q.ID, tok, classesFor(q, options))
+	classes := classesFor(q, options)
+	mass, err := massForToken(q.ID, tok, classes)
+	if err != nil {
+		return ports.Answer{}, err
+	}
+	represented, err := representedOptions(q.ID, tok, classes)
 	if err != nil {
 		return ports.Answer{}, err
 	}
@@ -153,11 +159,52 @@ func answerFor(q ports.Question, tok ports.Token) (ports.Answer, error) {
 		Chosen:       chosenOption(options, mass),
 		Distribution: mass,
 		Alternatives: tok.Alternatives,
+		Confidence:   confidence(mass, len(options)),
+		Coverage:     ports.Coverage{Represented: represented, Declared: len(options)},
 	}
 	if q.Kind == ports.KindScore {
 		answer.Expected = expectedPosition(options, mass)
 	}
 	return answer, nil
+}
+
+// representedOptions counts how many distinct options in classes are named
+// by at least one of tok's alternatives, matched with optionMatch. The
+// own-text fallback (rawMassPerClass in mass.go) is deliberately excluded:
+// it fires only when the engine's alternatives named none of the answer
+// token's own text, so counting it here would hide the exact case this
+// field exists to reveal.
+func representedOptions(qid string, tok ports.Token, classes map[string][]string) (int, error) {
+	seen := make(map[string]bool)
+	for _, alt := range tok.Alternatives {
+		class, err := optionMatch(alt.Text, classes)
+		if err != nil {
+			return 0, fmt.Errorf("judge: %s: %w", qid, err)
+		}
+		if class != "" {
+			seen[class] = true
+		}
+	}
+	return len(seen), nil
+}
+
+// confidence is 1 minus dist's Shannon entropy, normalised by the maximum
+// entropy k declared options admit (log k): 0 for mass spread evenly across
+// all of them, 1 for mass concentrated on one. A declared option absent from
+// dist contributes nothing, the same as a measured probability of zero.
+// Undefined below two declared options, where it reads 0.
+func confidence(dist map[string]float64, k int) float64 {
+	if k < 2 {
+		return 0
+	}
+	var entropy float64
+	for _, p := range dist {
+		if p <= 0 {
+			continue
+		}
+		entropy -= p * math.Log(p)
+	}
+	return 1 - entropy/math.Log(float64(k))
 }
 
 // classesFor maps each of options to its surface forms: q.Forms's entry for

@@ -425,3 +425,236 @@ func TestAnAmbiguousEmittedTokenIsDistinguishedFromAnAmbiguousAlternative(t *tes
 		t.Errorf("error does not carry the emitted token's probability: %v", err)
 	}
 }
+
+// tossQuestion is a two-option choice, the smallest declared option set the
+// confidence formula is defined for.
+func tossQuestion() ports.Question {
+	return ports.Question{ID: "toss", Kind: ports.KindChoice, Ask: "a or b?", Options: []string{"a", "b"}}
+}
+
+// evenAcrossDeclaredAnswer answers "toss" with mass split evenly between its
+// two declared options, the maximum-entropy case for two options.
+func evenAcrossDeclaredAnswer() ports.Completion {
+	tok := func(text string, alts ...ports.Alternative) ports.Token {
+		return ports.Token{Text: text, LogProb: math.Log(0.5), Alternatives: alts}
+	}
+	plain := func(text string) ports.Token { return ports.Token{Text: text, LogProb: math.Log(0.9)} }
+	c := ports.Completion{Model: "a-model"}
+	add := func(t ports.Token) { c.Text += t.Text; c.Tokens = append(c.Tokens, t) }
+
+	add(plain(`{"`))
+	add(plain(`toss`))
+	add(plain(`":`))
+	add(plain(` "`))
+	add(tok(`a`,
+		ports.Alternative{Text: "a", LogProb: math.Log(0.5)},
+		ports.Alternative{Text: "b", LogProb: math.Log(0.5)}))
+	add(plain(`"}`))
+	return c
+}
+
+func TestConfidenceIsZeroForAnEvenDistributionAcrossDeclaredOptions(t *testing.T) {
+	p := &recordingProvider{completion: evenAcrossDeclaredAnswer()}
+	got, err := app.NewJudge(p, testJudgeConfig()).Ask(context.Background(), "a short book", []ports.Question{tossQuestion()})
+	if err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+	toss := got.Answers[0]
+	if math.Abs(toss.Confidence) > 0.001 {
+		t.Errorf("confidence = %.4f, want 0 for an even split across both declared options", toss.Confidence)
+	}
+}
+
+// threeWayQuestion is a three-option choice used to tell a genuinely
+// measured 1.0 (mass concentrated on one option because that option is the
+// only one the alternatives named) apart from a manufactured one.
+func threeWayQuestion() ports.Question {
+	return ports.Question{ID: "pick", Kind: ports.KindChoice, Ask: "x, y or z?", Options: []string{"x", "y", "z"}}
+}
+
+// oneAlternativeAnswer answers "pick" where the only alternative naming a
+// declared option is "x" itself; "q" is noise that matches nothing. The mass
+// on x comes from an alternative, not the own-text fallback.
+func oneAlternativeAnswer() ports.Completion {
+	tok := func(text string, alts ...ports.Alternative) ports.Token {
+		return ports.Token{Text: text, LogProb: math.Log(0.9), Alternatives: alts}
+	}
+	plain := func(text string) ports.Token { return ports.Token{Text: text, LogProb: math.Log(0.9)} }
+	c := ports.Completion{Model: "a-model"}
+	add := func(t ports.Token) { c.Text += t.Text; c.Tokens = append(c.Tokens, t) }
+
+	add(plain(`{"`))
+	add(plain(`pick`))
+	add(plain(`":`))
+	add(plain(` "`))
+	add(tok(`x`,
+		ports.Alternative{Text: "x", LogProb: math.Log(0.9)},
+		ports.Alternative{Text: "q", LogProb: math.Log(0.1)}))
+	add(plain(`"}`))
+	return c
+}
+
+func TestConfidenceIsOneWhenAllMatchedMassSitsOnOneOption(t *testing.T) {
+	p := &recordingProvider{completion: oneAlternativeAnswer()}
+	got, err := app.NewJudge(p, testJudgeConfig()).Ask(context.Background(), "a short book", []ports.Question{threeWayQuestion()})
+	if err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+	pick := got.Answers[0]
+	if math.Abs(pick.Confidence-1) > 0.001 {
+		t.Errorf("confidence = %.4f, want 1 when all matched mass sits on one option", pick.Confidence)
+	}
+	if pick.Coverage.Represented != 1 {
+		t.Errorf("represented = %d, want 1; \"x\" is the only alternative naming a declared option", pick.Coverage.Represented)
+	}
+	if pick.Coverage.Declared != 3 {
+		t.Errorf("declared = %d, want 3", pick.Coverage.Declared)
+	}
+}
+
+// noOptionInAlternativesQuestion mirrors the live "focus" question that
+// motivated this change: five declared options, none of which the engine's
+// alternatives named.
+func noOptionInAlternativesQuestion() ports.Question {
+	return ports.Question{
+		ID:      "focus",
+		Kind:    ports.KindChoice,
+		Ask:     "What is the main focus?",
+		Options: []string{"backend", "frontend", "platform", "data", "other"},
+	}
+}
+
+// noOptionInAlternativesAnswer answers "focus" with "other", a real declared
+// option, but every alternative at that token is prose the model would have
+// written before the schema forced compliance -- none of them is "other" or
+// any other declared option. The own-text fallback is the only reason
+// "other" enters the distribution at all.
+func noOptionInAlternativesAnswer() ports.Completion {
+	tok := func(text string, alts ...ports.Alternative) ports.Token {
+		return ports.Token{Text: text, LogProb: math.Log(0.883), Alternatives: alts}
+	}
+	plain := func(text string) ports.Token { return ports.Token{Text: text, LogProb: math.Log(0.9)} }
+	c := ports.Completion{Model: "a-model"}
+	add := func(t ports.Token) { c.Text += t.Text; c.Tokens = append(c.Tokens, t) }
+
+	add(plain(`{"`))
+	add(plain(`focus`))
+	add(plain(`":`))
+	add(plain(` "`))
+	add(tok(`other`,
+		ports.Alternative{Text: "AI", LogProb: math.Log(0.883)},
+		ports.Alternative{Text: "Building", LogProb: math.Log(0.05)},
+		ports.Alternative{Text: "Develop", LogProb: math.Log(0.03)},
+		ports.Alternative{Text: "Internal", LogProb: math.Log(0.02)},
+		ports.Alternative{Text: "Business", LogProb: math.Log(0.017)}))
+	add(plain(`"}`))
+	return c
+}
+
+// TestRepresentedIsZeroWhenNoAlternativeNamesADeclaredOption is the finding
+// this change exists to surface: the own-text fallback still yields Chosen
+// "other" and a Distribution of exactly {other: 1}, and by the entropy
+// formula alone that reads as maximum Confidence -- but Represented is 0,
+// because none of the alternatives said anything about any declared option.
+// A confident-looking answer and a zero-coverage one are the same answer.
+func TestRepresentedIsZeroWhenNoAlternativeNamesADeclaredOption(t *testing.T) {
+	p := &recordingProvider{completion: noOptionInAlternativesAnswer()}
+	got, err := app.NewJudge(p, testJudgeConfig()).Ask(context.Background(), "a short book", []ports.Question{noOptionInAlternativesQuestion()})
+	if err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+	focus := got.Answers[0]
+	if focus.Chosen != "other" {
+		t.Fatalf("chosen = %q, want other", focus.Chosen)
+	}
+	if math.Abs(focus.Distribution["other"]-1) > 0.001 {
+		t.Errorf("distribution[other] = %.4f, want 1 (the own-text fallback is a single-member map)", focus.Distribution["other"])
+	}
+	if math.Abs(focus.Confidence-1) > 0.001 {
+		t.Errorf("confidence = %.4f, want 1; the entropy formula alone cannot tell this apart from a measured 1.0", focus.Confidence)
+	}
+	if focus.Coverage.Represented != 0 {
+		t.Errorf("represented = %d, want 0; none of the alternatives named a declared option", focus.Coverage.Represented)
+	}
+	if focus.Coverage.Declared != 5 {
+		t.Errorf("declared = %d, want 5", focus.Coverage.Declared)
+	}
+}
+
+// partialCoverageAnswer answers "focus" where the alternatives name exactly
+// two of its five declared options (backend, frontend), plus noise that
+// matches neither.
+func partialCoverageAnswer() ports.Completion {
+	tok := func(text string, alts ...ports.Alternative) ports.Token {
+		return ports.Token{Text: text, LogProb: math.Log(0.5), Alternatives: alts}
+	}
+	plain := func(text string) ports.Token { return ports.Token{Text: text, LogProb: math.Log(0.9)} }
+	c := ports.Completion{Model: "a-model"}
+	add := func(t ports.Token) { c.Text += t.Text; c.Tokens = append(c.Tokens, t) }
+
+	add(plain(`{"`))
+	add(plain(`focus`))
+	add(plain(`":`))
+	add(plain(` "`))
+	add(tok(`backend`,
+		ports.Alternative{Text: "backend", LogProb: math.Log(0.5)},
+		ports.Alternative{Text: "frontend", LogProb: math.Log(0.3)},
+		ports.Alternative{Text: "AI", LogProb: math.Log(0.1)},
+		ports.Alternative{Text: "Building", LogProb: math.Log(0.1)}))
+	add(plain(`"}`))
+	return c
+}
+
+func TestCoverageReportsPartialRepresentation(t *testing.T) {
+	p := &recordingProvider{completion: partialCoverageAnswer()}
+	got, err := app.NewJudge(p, testJudgeConfig()).Ask(context.Background(), "a short book", []ports.Question{noOptionInAlternativesQuestion()})
+	if err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+	focus := got.Answers[0]
+	if focus.Coverage.Represented != 2 {
+		t.Errorf("represented = %d, want 2 (backend, frontend)", focus.Coverage.Represented)
+	}
+	if focus.Coverage.Declared != 5 {
+		t.Errorf("declared = %d, want 5", focus.Coverage.Declared)
+	}
+}
+
+// fullCoverageAnswer answers "focus" where the alternatives name all five of
+// its declared options.
+func fullCoverageAnswer() ports.Completion {
+	tok := func(text string, alts ...ports.Alternative) ports.Token {
+		return ports.Token{Text: text, LogProb: math.Log(0.3), Alternatives: alts}
+	}
+	plain := func(text string) ports.Token { return ports.Token{Text: text, LogProb: math.Log(0.9)} }
+	c := ports.Completion{Model: "a-model"}
+	add := func(t ports.Token) { c.Text += t.Text; c.Tokens = append(c.Tokens, t) }
+
+	add(plain(`{"`))
+	add(plain(`focus`))
+	add(plain(`":`))
+	add(plain(` "`))
+	add(tok(`backend`,
+		ports.Alternative{Text: "backend", LogProb: math.Log(0.3)},
+		ports.Alternative{Text: "frontend", LogProb: math.Log(0.25)},
+		ports.Alternative{Text: "platform", LogProb: math.Log(0.2)},
+		ports.Alternative{Text: "data", LogProb: math.Log(0.15)},
+		ports.Alternative{Text: "other", LogProb: math.Log(0.1)}))
+	add(plain(`"}`))
+	return c
+}
+
+func TestCoverageReportsFullRepresentation(t *testing.T) {
+	p := &recordingProvider{completion: fullCoverageAnswer()}
+	got, err := app.NewJudge(p, testJudgeConfig()).Ask(context.Background(), "a short book", []ports.Question{noOptionInAlternativesQuestion()})
+	if err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+	focus := got.Answers[0]
+	if focus.Coverage.Represented != 5 {
+		t.Errorf("represented = %d, want 5", focus.Coverage.Represented)
+	}
+	if focus.Coverage.Declared != 5 {
+		t.Errorf("declared = %d, want 5", focus.Coverage.Declared)
+	}
+}
