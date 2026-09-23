@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -183,44 +182,21 @@ func classesFor(q ports.Question, options []string) map[string][]string {
 }
 
 // massForToken reads the probability mass tok assigns to each option in
-// classes, matching an alternative's text by optionMatch rather than by
-// whole-string equality: a real engine tokenises a multi-word or
-// multi-syllable option, so the answer token's own text is often only that
-// option's first token, and only its own class distinguishes it from the
-// others.
+// classes via MassAtToken, matching text with optionMatch rather than
+// MassAtToken's default exact equality: a real engine tokenises a
+// multi-word or multi-syllable option, so the answer token's own text is
+// often only that option's first token, and only its own class
+// distinguishes it from the others.
 //
-// Tok's own probability is folded in only when its own text is absent from
-// its alternatives, the same double-count guard MassAtToken applies -- an
-// OpenAI-compatible top_logprobs array already contains the chosen token.
-// The result is normalised so the values sum to one.
+// The error MassAtToken returns is wrapped once with the component prefix
+// and the question id, whether it came from finding no match at all or
+// from optionMatch reporting an ambiguous one.
 func massForToken(qid string, tok ports.Token, classes map[string][]string) (map[string]float64, error) {
-	raw := make(map[string]float64)
-	ownTextSeen := false
-	for _, alt := range tok.Alternatives {
-		option, err := optionMatch(qid, alt.Text, classes)
-		if err != nil {
-			return nil, err
-		}
-		if option != "" {
-			raw[option] += math.Exp(alt.LogProb)
-		}
-		if alt.Text == tok.Text {
-			ownTextSeen = true
-		}
+	mass, err := MassAtToken(tok, classes, optionMatch)
+	if err != nil {
+		return nil, fmt.Errorf("judge: %s: %w", qid, err)
 	}
-	if !ownTextSeen {
-		option, err := optionMatch(qid, tok.Text, classes)
-		if err != nil {
-			return nil, err
-		}
-		if option != "" {
-			raw[option] += math.Exp(tok.LogProb)
-		}
-	}
-	if len(raw) == 0 {
-		return nil, fmt.Errorf("judge: %s: no token matches any option", qid)
-	}
-	return normalise(raw), nil
+	return mass, nil
 }
 
 // optionMatch resolves text to the option in classes it identifies. Text is
@@ -229,7 +205,7 @@ func massForToken(qid string, tok ports.Token, classes map[string][]string) (map
 // form counts, provided it prefixes only one option's forms. It returns ""
 // when trimmed matches no option, and an error when trimmed is a
 // non-distinguishing prefix shared by two or more different options.
-func optionMatch(qid, text string, classes map[string][]string) (string, error) {
+func optionMatch(text string, classes map[string][]string) (string, error) {
 	trimmed := strings.Trim(strings.TrimSpace(text), `"`)
 	if trimmed == "" {
 		return "", nil
@@ -237,7 +213,7 @@ func optionMatch(qid, text string, classes map[string][]string) (string, error) 
 	if option := exactOptionMatch(trimmed, classes); option != "" {
 		return option, nil
 	}
-	return prefixOptionMatch(qid, trimmed, classes)
+	return prefixOptionMatch(trimmed, classes)
 }
 
 // exactOptionMatch returns the option whose forms contain trimmed exactly,
@@ -254,15 +230,15 @@ func exactOptionMatch(trimmed string, classes map[string][]string) string {
 }
 
 // prefixOptionMatch returns the option that trimmed is a non-empty prefix
-// of exactly one of, or an error naming qid and trimmed when it prefixes two
-// or more different options.
-func prefixOptionMatch(qid, trimmed string, classes map[string][]string) (string, error) {
+// of exactly one of, or an error naming trimmed and both options when it
+// prefixes two or more different options.
+func prefixOptionMatch(trimmed string, classes map[string][]string) (string, error) {
 	matched := ""
 	for option, forms := range classes {
 		for _, form := range forms {
 			if strings.HasPrefix(form, trimmed) {
 				if matched != "" {
-					return "", fmt.Errorf("judge: %s: %q is ambiguous between %s and %s", qid, trimmed, matched, option)
+					return "", fmt.Errorf("%q is ambiguous between %s and %s", trimmed, matched, option)
 				}
 				matched = option
 				break

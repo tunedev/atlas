@@ -32,21 +32,49 @@ func MassPerClass(c ports.Completion, classes map[string][]string) (map[string]f
 	return MassAtToken(tok, classes)
 }
 
+// matcher resolves text to the class or option in classes it identifies, or
+// "" when none does. It may report an error when text cannot be resolved
+// unambiguously.
+type matcher func(text string, classes map[string][]string) (string, error)
+
+// exactMatch is the matcher MassAtToken uses by default: it matches text
+// against a class's surface forms by equality alone, and never errors.
+func exactMatch(text string, classes map[string][]string) (string, error) {
+	return classOf(text, classes), nil
+}
+
 // MassAtToken reads the probability mass tok assigns to each class in
 // classes, a map from class name to the surface forms that count as that
 // class (for example "yes" to {"yes", "Yes", "YES", "true"}).
 //
 // Mass for a class is the sum of math.Exp(logprob) over every one of tok's
-// alternatives whose text matches one of the class's surface forms, compared
-// case-sensitively. Tok's own probability is included only when its own text
-// is absent from its alternatives -- an OpenAI-compatible top_logprobs array
-// already contains the chosen token, so adding it again would double-count
-// that surface form. The result is normalised so the values sum to one.
+// alternatives whose text match resolves to that class, plus tok's own
+// probability when its own text is absent from its alternatives -- an
+// OpenAI-compatible top_logprobs array already contains the chosen token, so
+// adding it again would double-count that surface form. The result is
+// normalised so the values sum to one.
+//
+// match, when given, decides what text identifies which class; omitting it
+// (or passing nil) matches by exact equality, which is what every caller
+// used before match existed. app.Judge passes a matcher of its own: exact,
+// then an unambiguous prefix, so a multi-token option's first token can
+// still be told apart from another's.
 //
 // A token where neither its own text nor any alternative matches a class is
 // an error, since a uniform distribution there would be an invented number.
-func MassAtToken(tok ports.Token, classes map[string][]string) (map[string]float64, error) {
-	raw := rawMassPerClass(tok, classes)
+// match returning its own error (an ambiguous match, for instance) is
+// reported too, naming which text -- an alternative or the emitted token --
+// and its probability.
+func MassAtToken(tok ports.Token, classes map[string][]string, match ...matcher) (map[string]float64, error) {
+	m := matcher(exactMatch)
+	if len(match) > 0 && match[0] != nil {
+		m = match[0]
+	}
+
+	raw, err := rawMassPerClass(tok, classes, m)
+	if err != nil {
+		return nil, err
+	}
 	if len(raw) == 0 {
 		return nil, fmt.Errorf("mass: no token matches any class")
 	}
@@ -64,8 +92,8 @@ func lastClassBearingToken(tokens []ports.Token, classes map[string][]string) (p
 	return ports.Token{}, false
 }
 
-// classOf returns the class whose surface forms contain text, or "" if none
-// does.
+// classOf returns the class whose surface forms contain text exactly, or ""
+// if none does.
 func classOf(text string, classes map[string][]string) string {
 	for class, forms := range classes {
 		for _, form := range forms {
@@ -78,13 +106,17 @@ func classOf(text string, classes map[string][]string) string {
 }
 
 // rawMassPerClass sums math.Exp(logprob) per class over tok's alternatives,
-// adding tok's own probability only when its own text is not already among
-// them.
-func rawMassPerClass(tok ports.Token, classes map[string][]string) map[string]float64 {
+// resolving each alternative's text (and, when unseen among them, tok's own
+// text) to a class with match. A class of "" is not summed.
+func rawMassPerClass(tok ports.Token, classes map[string][]string, match matcher) (map[string]float64, error) {
 	mass := make(map[string]float64)
 	ownTextSeen := false
 	for _, alt := range tok.Alternatives {
-		if class := classOf(alt.Text, classes); class != "" {
+		class, err := match(alt.Text, classes)
+		if err != nil {
+			return nil, fmt.Errorf("%w (alternative %q, p=%.4f)", err, alt.Text, math.Exp(alt.LogProb))
+		}
+		if class != "" {
 			mass[class] += math.Exp(alt.LogProb)
 		}
 		if alt.Text == tok.Text {
@@ -92,11 +124,15 @@ func rawMassPerClass(tok ports.Token, classes map[string][]string) map[string]fl
 		}
 	}
 	if !ownTextSeen {
-		if class := classOf(tok.Text, classes); class != "" {
+		class, err := match(tok.Text, classes)
+		if err != nil {
+			return nil, fmt.Errorf("%w (emitted token %q, p=%.4f)", err, tok.Text, math.Exp(tok.LogProb))
+		}
+		if class != "" {
 			mass[class] += math.Exp(tok.LogProb)
 		}
 	}
-	return mass
+	return mass, nil
 }
 
 // normalise scales mass so its values sum to one.
