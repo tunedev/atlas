@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/tunedev/atlas/internal/core/app"
@@ -92,5 +93,68 @@ func TestADuplicateQuestionIDIsAnError(t *testing.T) {
 func TestAnUnknownKindIsAnError(t *testing.T) {
 	if _, err := app.AnswerSchema([]ports.Question{{ID: "x", Kind: "vibes", Ask: "?"}}); err == nil {
 		t.Fatal("an unknown kind produced a schema")
+	}
+}
+
+// TestAPrefixRelatedOptionSetIsRejected covers F1: "data" is a proper prefix
+// of "database", so an emitted token of exactly "data" would exact-match
+// before ambiguity against "database" could ever be seen. Rejecting the
+// option set at the schema means the judge path never has to guess.
+func TestAPrefixRelatedOptionSetIsRejected(t *testing.T) {
+	qs := []ports.Question{{
+		ID: "focus", Kind: ports.KindChoice, Ask: "?",
+		Options: []string{"data", "database", "other"},
+	}}
+	_, err := app.AnswerSchema(qs)
+	if err == nil {
+		t.Fatal("an option set where one option is a prefix of another produced a schema")
+	}
+	if !strings.Contains(err.Error(), "data") || !strings.Contains(err.Error(), "database") {
+		t.Errorf("error does not name both colliding strings: %v", err)
+	}
+	if !strings.Contains(err.Error(), "judge: ") {
+		t.Errorf("error lacks the component prefix: %v", err)
+	}
+}
+
+// TestTwoOptionsSharingAFormIsRejected covers F1's second shape: two
+// different options naming the identical form. Which option a matching
+// answer resolves to would depend on Go's nondeterministic map iteration.
+func TestTwoOptionsSharingAFormIsRejected(t *testing.T) {
+	qs := []ports.Question{{
+		ID: "focus", Kind: ports.KindChoice, Ask: "?",
+		Options: []string{"backend", "frontend"},
+		Forms:   map[string][]string{"backend": {"be", "server"}, "frontend": {"fe", "server"}},
+	}}
+	_, err := app.AnswerSchema(qs)
+	if err == nil {
+		t.Fatal("two options sharing an identical form produced a schema")
+	}
+	if !strings.Contains(err.Error(), "server") {
+		t.Errorf("error does not name the shared form: %v", err)
+	}
+}
+
+// TestShippedPackOptionSetsPassValidation proves the new guard does not
+// reject the option sets a shipped pack and the live judge test actually
+// ask with.
+func TestShippedPackOptionSetsPassValidation(t *testing.T) {
+	qs := []ports.Question{
+		{ID: "seniority", Kind: ports.KindScore, Ask: "?", Options: []string{"junior", "mid", "senior", "staff"}},
+		{ID: "focus", Kind: ports.KindChoice, Ask: "?", Options: []string{"backend", "frontend", "platform", "data", "other"}},
+		{ID: "warmth", Kind: ports.KindScore, Ask: "?", Options: []string{"cold", "cool", "warm", "hot"}},
+		{ID: "sky", Kind: ports.KindChoice, Ask: "?", Options: []string{"blue", "grey", "gold", "pink"}},
+	}
+	if _, err := app.AnswerSchema(qs); err != nil {
+		t.Fatalf("a shipped pack's own option set was rejected: %v", err)
+	}
+}
+
+// TestNoulDefaultsPassValidation proves the guard does not reject a noul's
+// own default forms (yes/Yes/YES/true against no/No/NO/false).
+func TestNoulDefaultsPassValidation(t *testing.T) {
+	qs := []ports.Question{{ID: "clear", Kind: ports.KindNoul, Ask: "?"}}
+	if _, err := app.AnswerSchema(qs); err != nil {
+		t.Fatalf("the noul defaults were rejected: %v", err)
 	}
 }

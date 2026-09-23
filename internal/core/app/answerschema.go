@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/tunedev/atlas/internal/core/ports"
 )
@@ -84,10 +85,77 @@ func propertyFor(q ports.Question) (map[string]any, error) {
 	if len(options) < 2 {
 		return nil, fmt.Errorf("judge: question %q has fewer than two options", q.ID)
 	}
+	if err := validateOptionSet(q, options); err != nil {
+		return nil, err
+	}
 
 	enum := make([]any, len(options))
 	for i, o := range options {
 		enum[i] = o
 	}
 	return map[string]any{"type": "string", "enum": enum}, nil
+}
+
+// optionString is one string that identifies option in q: the option's own
+// name, or one of its surface forms.
+type optionString struct {
+	option, text string
+}
+
+// validateOptionSet rejects a question whose effective options and forms
+// (classesFor(q, options): q.Forms, plus the noul defaults where they
+// apply) cannot be told apart by a prefix-matching reader: two different
+// options sharing an identical string, or one option's string being a
+// proper prefix of another option's string. Both would let an exact or
+// prefix match at read time silently resolve to the wrong option.
+func validateOptionSet(q ports.Question, options []string) error {
+	strs := optionStrings(classesFor(q, options))
+
+	if err := rejectSharedForm(q, strs); err != nil {
+		return err
+	}
+	return rejectPrefixCollision(q, strs)
+}
+
+// optionStrings flattens classes into one optionString per (option, form)
+// pair.
+func optionStrings(classes map[string][]string) []optionString {
+	var out []optionString
+	for option, forms := range classes {
+		for _, form := range forms {
+			out = append(out, optionString{option: option, text: form})
+		}
+	}
+	return out
+}
+
+// rejectSharedForm errors when two different options in strs carry the
+// identical text, naming the question and the shared form.
+func rejectSharedForm(q ports.Question, strs []optionString) error {
+	seen := make(map[string]string, len(strs))
+	for _, s := range strs {
+		owner, ok := seen[s.text]
+		if ok && owner != s.option {
+			return fmt.Errorf("judge: question %q: options %q and %q share the form %q", q.ID, owner, s.option, s.text)
+		}
+		seen[s.text] = s.option
+	}
+	return nil
+}
+
+// rejectPrefixCollision errors when one option's string in strs is a
+// proper, non-empty prefix of a different option's string, naming the
+// question and both colliding strings.
+func rejectPrefixCollision(q ports.Question, strs []optionString) error {
+	for _, a := range strs {
+		for _, b := range strs {
+			if a.option == b.option || a.text == b.text {
+				continue
+			}
+			if strings.HasPrefix(b.text, a.text) {
+				return fmt.Errorf("judge: question %q: %q is a prefix of %q", q.ID, a.text, b.text)
+			}
+		}
+	}
+	return nil
 }
