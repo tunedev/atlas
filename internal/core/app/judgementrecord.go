@@ -46,6 +46,14 @@ type judgementAnswer struct {
 	Distribution map[string]float64     `json:"distribution"`
 	Expected     float64                `json:"expected"`
 	Alternatives []judgementAlternative `json:"alternatives"`
+	Confidence   float64                `json:"confidence"`
+	Coverage     judgementCoverage      `json:"coverage"`
+}
+
+// judgementCoverage is ports.Coverage as it appears in a judgement document.
+type judgementCoverage struct {
+	Represented int `json:"represented"`
+	Declared    int `json:"declared"`
 }
 
 // judgementSampling is ports.Sampling as it appears in a judgement document.
@@ -131,6 +139,8 @@ func judgementDocFor(subjectID string, qs []ports.Question, j ports.Judgement) j
 			Distribution: a.Distribution,
 			Expected:     a.Expected,
 			Alternatives: judgementAlternatives(a.Alternatives),
+			Confidence:   a.Confidence,
+			Coverage:     judgementCoverage{Represented: a.Coverage.Represented, Declared: a.Coverage.Declared},
 		}
 	}
 

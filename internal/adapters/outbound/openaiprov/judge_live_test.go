@@ -93,11 +93,13 @@ func TestJudgeAgainstALiveEngine(t *testing.T) {
 			continue
 		}
 		if q.Kind == ports.KindScore {
-			t.Logf("live: %s chosen=%q mass=%.4f expected=%.4f distribution=%v",
-				q.ID, a.Chosen, a.Distribution[a.Chosen], a.Expected, a.Distribution)
+			t.Logf("live: %s chosen=%q mass=%.4f expected=%.4f distribution=%v confidence=%.4f coverage=%d/%d",
+				q.ID, a.Chosen, a.Distribution[a.Chosen], a.Expected, a.Distribution,
+				a.Confidence, a.Coverage.Represented, a.Coverage.Declared)
 		} else {
-			t.Logf("live: %s chosen=%q mass=%.4f distribution=%v",
-				q.ID, a.Chosen, a.Distribution[a.Chosen], a.Distribution)
+			t.Logf("live: %s chosen=%q mass=%.4f distribution=%v confidence=%.4f coverage=%d/%d",
+				q.ID, a.Chosen, a.Distribution[a.Chosen], a.Distribution,
+				a.Confidence, a.Coverage.Represented, a.Coverage.Declared)
 		}
 	}
 

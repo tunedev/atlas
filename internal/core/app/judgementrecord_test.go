@@ -211,6 +211,37 @@ func TestTheIndexRowMakesAPendingJudgementFindable(t *testing.T) {
 	}
 }
 
+// TestTheDocumentCarriesConfidenceAndCoverage covers the record half of
+// giving a distribution's confidence and coverage a place to live: both
+// numbers travel with the answer they describe, the same as Distribution
+// and Alternatives.
+func TestTheDocumentCarriesConfidenceAndCoverage(t *testing.T) {
+	docs, index := newFakeDocs(), &fakeIndex{}
+	j := aJudgement()
+	j.Answers[0].Confidence = 1
+	j.Answers[0].Coverage = ports.Coverage{Represented: 0, Declared: 5}
+
+	path, err := app.RecordJudgement(context.Background(), docs, index, "subject-1", recordQuestions(), j)
+	if err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(docs.put[path], &doc); err != nil {
+		t.Fatalf("document is not valid json: %v", err)
+	}
+	answer := doc["answers"].([]any)[0].(map[string]any)
+	if answer["confidence"] != float64(1) {
+		t.Errorf("confidence = %v, want 1", answer["confidence"])
+	}
+	coverage, ok := answer["coverage"].(map[string]any)
+	if !ok {
+		t.Fatalf("no coverage recorded: %+v", answer)
+	}
+	if coverage["represented"] != float64(0) || coverage["declared"] != float64(5) {
+		t.Errorf("coverage = %+v, want represented=0 declared=5", coverage)
+	}
+}
+
 // TestAZeroExpectedScoreIsStillPresentInTheDocument covers the minor at
 // judgementrecord.go:34: omitempty on Expected used to drop the key when
 // all mass sat on the first level (Expected == 0), which is a real answer,

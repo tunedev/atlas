@@ -168,6 +168,63 @@ func TestTheJudgementIsOnDiskWithAnEmptyOutcome(t *testing.T) {
 	}
 }
 
+// coverageStubJudge answers with explicit confidence and coverage, kept
+// separate from stubJudge so its zero-valued defaults stay untouched.
+type coverageStubJudge struct{}
+
+func (coverageStubJudge) Ask(_ context.Context, subject string, qs []ports.Question) (ports.Judgement, error) {
+	answers := make([]ports.Answer, 0, len(qs))
+	for _, q := range qs {
+		answers = append(answers, ports.Answer{
+			ID: q.ID, Kind: q.Kind, Chosen: "yes",
+			Distribution: map[string]float64{"yes": 0.94, "no": 0.06},
+			Confidence:   0.62,
+			Coverage:     ports.Coverage{Represented: 2, Declared: 5},
+		})
+	}
+	return ports.Judgement{Subject: subject, Model: "a-model", When: time.Now().UTC(), Answers: answers}, nil
+}
+
+func TestTheResultAndTheDocumentCarryConfidenceAndCoverage(t *testing.T) {
+	docs, index := store(t)
+	out, err := tools.NewJudge(coverageStubJudge{}, docs, index).Invoke(context.Background(), map[string]string{
+		"subject_id": "subject-1", "subject": "a short book", "questions": questionsYAML,
+	})
+	if err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	m := out.(map[string]any)
+	readable := m["readable"].(map[string]any)
+	if readable["confidence"] != 0.62 {
+		t.Errorf("result confidence = %v, want 0.62", readable["confidence"])
+	}
+	coverage, ok := readable["coverage"].(map[string]any)
+	if !ok {
+		t.Fatalf("no coverage in the tool result: %+v", readable)
+	}
+	if coverage["represented"] != 2 || coverage["declared"] != 5 {
+		t.Errorf("result coverage = %+v, want represented=2 declared=5", coverage)
+	}
+
+	path := m["path"].(string)
+	body, err := docs.Get(context.Background(), path)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("document is not valid json: %v", err)
+	}
+	answer := doc["answers"].([]any)[0].(map[string]any)
+	if answer["confidence"] != 0.62 {
+		t.Errorf("document confidence = %v, want 0.62", answer["confidence"])
+	}
+	docCoverage := answer["coverage"].(map[string]any)
+	if docCoverage["represented"] != float64(2) || docCoverage["declared"] != float64(5) {
+		t.Errorf("document coverage = %+v, want represented=2 declared=5", docCoverage)
+	}
+}
+
 func TestAMissingSubjectIDIsAnError(t *testing.T) {
 	docs, index := store(t)
 	_, err := tools.NewJudge(&stubJudge{}, docs, index).Invoke(context.Background(), map[string]string{

@@ -129,6 +129,11 @@ func judgeResult(j ports.Judgement, path string) map[string]any {
 			"chosen":       a.Chosen,
 			"p":            a.Distribution[a.Chosen],
 			"distribution": a.Distribution,
+			"confidence":   a.Confidence,
+			"coverage": map[string]any{
+				"represented": a.Coverage.Represented,
+				"declared":    a.Coverage.Declared,
+			},
 		}
 		if a.Kind == ports.KindScore {
 			entry["expected"] = a.Expected
