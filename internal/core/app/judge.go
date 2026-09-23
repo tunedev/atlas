@@ -246,9 +246,6 @@ func exactOptionMatch(trimmed string, classes map[string][]string) string {
 func prefixOptionMatch(qid, trimmed string, classes map[string][]string) (string, error) {
 	matched := ""
 	for option, forms := range classes {
-		if matched == option {
-			continue
-		}
 		for _, form := range forms {
 			if strings.HasPrefix(form, trimmed) {
 				if matched != "" {

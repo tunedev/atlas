@@ -15,11 +15,13 @@ type Provider interface {
 ```
 
 `Prompt` carries a system and user message, a max token count, an optional
-JSON Schema the answer must satisfy, and `TopLogProbs`, which asks for that
-many alternatives per output token. `Completion` carries the answer text, the
-model name that produced it, per-token data when requested, token usage, and
-latency. Nothing vendor-shaped crosses this boundary: no HTTP type, no
-OpenAI-specific field name.
+JSON Schema the answer must satisfy, `TopLogProbs`, which asks for that many
+alternatives per output token, and `Temperature`/`Seed`, both nil pointers
+that pin the engine's sampling when set and leave its own default alone when
+not. `Completion` carries the answer text, the model name that produced it,
+per-token data when requested, token usage, and latency. Nothing
+vendor-shaped crosses this boundary: no HTTP type, no OpenAI-specific field
+name.
 
 `openaiprov.Client` is the one adapter, over any OpenAI-compatible chat
 completions endpoint. Ollama, vLLM, and a hosted key all speak that protocol,
@@ -98,13 +100,15 @@ any class (there is nothing to normalise honestly).
 - A non-2xx error message carries only the first 512 bytes
   (`errorSnippetMaxBytes`) of the response body. A longer error page or
   traceback is truncated to that prefix rather than surfaced in full.
-- `MassPerClass` reads one position per completion — the last token whose own
-  text is a class member. A multi-field typed answer needs the token location
-  of each field separately, then a per-token mass read at each one; nothing
-  here does that yet.
-- `Prompt` carries no sampling controls (temperature, seed). vLLM applied its
-  own `generation_config` (temperature 0.7) by default and produced a
-  different verdict from Ollama on the same input; a calibrated `Judge` will
-  need pinned sampling to compare engines meaningfully.
-- Retry, per-provider load, and a `Judge` port that would consume
-  `MassPerClass` are out of scope for this increment.
+- `MassPerClass` itself is unchanged since increment 2: it still reads one
+  position per completion, the last token whose own text is a class member.
+  A multi-field typed answer (several questions in one JSON completion) does
+  not extend `MassPerClass` to more positions; `app.AnswerTokens` locates
+  each field's own token by walking the completion's JSON structure
+  directly, and `app.Judge` reads mass at each of those separately. See
+  `docs/design/the-judge.md`.
+- Retry and per-provider load are still out of scope. A `Judge` port now
+  exists and consumes this file's per-token machinery (see
+  `docs/design/the-judge.md`), but it is built over one `openaiprov.Client`
+  directly in `cmd/atlas`, not over `Chain` — the chain wiring gap above
+  applies to `Judge` too.
