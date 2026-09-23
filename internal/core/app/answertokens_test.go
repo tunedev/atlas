@@ -74,6 +74,22 @@ func TestAMissingFieldIsAnErrorNamingIt(t *testing.T) {
 	}
 }
 
+// TestAQuoteGluedToTheValueIsStillTheAnswerToken covers F6: every other
+// fixture here splits the opening quote off the value as its own token, but
+// a real tokeniser often glues it to the value instead (`"yes` in one
+// token, rather than `"` then `yes`).
+func TestAQuoteGluedToTheValueIsStillTheAnswerToken(t *testing.T) {
+	c := toks(`{"`, `readable`, `":`, `"yes`, `"}`)
+
+	got, err := app.AnswerTokens(c, []string{"readable"})
+	if err != nil {
+		t.Fatalf("answer tokens: %v", err)
+	}
+	if got["readable"].Text != `"yes` {
+		t.Errorf("answer token = %q, want the quote-glued %q", got["readable"].Text, `"yes`)
+	}
+}
+
 func TestAnswerTokensOnACompletionWithNoTokensIsAnError(t *testing.T) {
 	c := ports.Completion{Text: `{"readable": "yes"}`}
 	if _, err := app.AnswerTokens(c, []string{"readable"}); err == nil {

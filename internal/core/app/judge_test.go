@@ -232,6 +232,47 @@ func TestTheJudgementRecordsItsProviderAndSampling(t *testing.T) {
 	}
 }
 
+// quoteGluedAnswer answers "readable" where the opening quote is glued to
+// both the answer token and its alternatives (`"yes`, `"Yes`, `"no`), rather
+// than arriving as a separate punctuation-only token -- the shape F6 flags
+// as untested: every other fixture in this package splits the quote off.
+func quoteGluedAnswer() ports.Completion {
+	tok := func(text string, alts ...ports.Alternative) ports.Token {
+		return ports.Token{Text: text, LogProb: math.Log(0.2), Alternatives: alts}
+	}
+	plain := func(text string) ports.Token { return ports.Token{Text: text, LogProb: math.Log(0.9)} }
+
+	c := ports.Completion{Model: "a-model"}
+	add := func(t ports.Token) { c.Text += t.Text; c.Tokens = append(c.Tokens, t) }
+
+	add(plain(`{"`))
+	add(plain(`readable`))
+	add(plain(`":`))
+	add(tok(`"yes`,
+		ports.Alternative{Text: `"Yes`, LogProb: math.Log(0.70)},
+		ports.Alternative{Text: `"yes`, LogProb: math.Log(0.25)},
+		ports.Alternative{Text: `"no`, LogProb: math.Log(0.05)}))
+	add(plain(`"}`))
+	return c
+}
+
+func TestAQuoteGluedAnswerTokenStillResolves(t *testing.T) {
+	p := &recordingProvider{completion: quoteGluedAnswer()}
+
+	got, err := app.NewJudge(p, testJudgeConfig()).Ask(context.Background(), "a short book",
+		[]ports.Question{{ID: "readable", Kind: ports.KindNoul, Ask: "Is it readable?"}})
+	if err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+	readable := got.Answers[0]
+	if readable.Chosen != "yes" {
+		t.Errorf("chosen = %q, want yes; a quote glued to the value must still be trimmed before matching", readable.Chosen)
+	}
+	if readable.Distribution["yes"] < 0.90 {
+		t.Errorf("yes = %.4f, want at least 0.90", readable.Distribution["yes"])
+	}
+}
+
 func TestAProviderFailureIsReturnedNotSwallowed(t *testing.T) {
 	p := &failingProvider{}
 	if _, err := app.NewJudge(p, testJudgeConfig()).Ask(context.Background(), "a short book", judgeQuestions()); err == nil {
@@ -336,5 +377,51 @@ func TestATokenPrefixingTwoDifferentOptionsIsAnAmbiguityError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "pla") {
 		t.Errorf("error does not name the ambiguous text: %v", err)
+	}
+	// F5: the error must be diagnosable rather than merely present -- it
+	// says whether the ambiguous text was an alternative or the emitted
+	// token, and carries its probability.
+	if !strings.Contains(err.Error(), "alternative") {
+		t.Errorf("error does not say the ambiguous text was an alternative: %v", err)
+	}
+	if !strings.Contains(err.Error(), "p=0.9") {
+		t.Errorf("error does not carry the ambiguous text's probability: %v", err)
+	}
+}
+
+// ambiguousOwnTextAnswer answers "shape" with an emitted token, "pla", that
+// is itself a first-token prefix of two options -- and neither of its own
+// alternatives repeats that text, so the ambiguity is found in the fallback
+// read of the emitted token, not in the alternatives loop.
+func ambiguousOwnTextAnswer() ports.Completion {
+	plain := func(text string) ports.Token { return ports.Token{Text: text, LogProb: math.Log(0.9)} }
+	c := ports.Completion{Model: "a-model"}
+	add := func(t ports.Token) { c.Text += t.Text; c.Tokens = append(c.Tokens, t) }
+
+	add(plain(`{"`))
+	add(plain(`shape`))
+	add(plain(`":`))
+	add(plain(` "`))
+	add(ports.Token{Text: "pla", LogProb: math.Log(0.85), Alternatives: []ports.Alternative{
+		{Text: "xyz", LogProb: math.Log(0.85)},
+		{Text: "abc", LogProb: math.Log(0.15)},
+	}})
+	add(plain(`in`))
+	add(plain(`"}`))
+	return c
+}
+
+func TestAnAmbiguousEmittedTokenIsDistinguishedFromAnAmbiguousAlternative(t *testing.T) {
+	p := &recordingProvider{completion: ambiguousOwnTextAnswer()}
+
+	_, err := app.NewJudge(p, testJudgeConfig()).Ask(context.Background(), "a short book", []ports.Question{shapeQuestion()})
+	if err == nil {
+		t.Fatal("an emitted token prefixing two different options produced a judgement instead of an error")
+	}
+	if !strings.Contains(err.Error(), "emitted token") {
+		t.Errorf("error does not say the ambiguous text was the emitted token: %v", err)
+	}
+	if !strings.Contains(err.Error(), "p=0.85") {
+		t.Errorf("error does not carry the emitted token's probability: %v", err)
 	}
 }
