@@ -84,7 +84,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	defer index.Close()
+	defer func() { _ = index.Close() }()
 
 	registry := buildRegistry(cfg, docs, index)
 

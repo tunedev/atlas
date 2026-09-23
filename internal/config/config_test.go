@@ -396,3 +396,13 @@ func TestAnInvalidJudgeTopLogProbsIsRejectedAtStartup(t *testing.T) {
 		t.Fatal("zero top logprobs was accepted; the judge would have no alternatives to sum")
 	}
 }
+
+func TestATooHighJudgeTemperatureIsRejectedAtStartup(t *testing.T) {
+	_, err := config.Load([]string{"-pack", "p.yaml", "-judge-temperature", "12"})
+	if err == nil {
+		t.Fatal("a judge temperature of 12 was accepted; temperature has an upper bound")
+	}
+	if !strings.Contains(err.Error(), "judge temperature") {
+		t.Errorf("error does not name the setting: %v", err)
+	}
+}

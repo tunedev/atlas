@@ -105,5 +105,8 @@ func (c Config) validate() error {
 	if c.Judge.Temperature < 0 {
 		return fmt.Errorf("config: judge temperature must not be negative, got %v", c.Judge.Temperature)
 	}
+	if c.Judge.Temperature > 2 {
+		return fmt.Errorf("config: judge temperature must not exceed 2, got %v", c.Judge.Temperature)
+	}
 	return nil
 }

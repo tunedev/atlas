@@ -20,14 +20,24 @@ type Answer struct {
 	Kind         Kind
 	Chosen       string
 	Distribution map[string]float64
-	Expected     float64 // set for a score alone
+	Expected     float64      // set for a score alone
+	Alternatives []Alternative // raw, as read at the answer token
+}
+
+type Sampling struct {
+	Temperature float64
+	Seed        int
+	TopLogProbs int
+	MaxTokens   int
 }
 
 type Judgement struct {
-	Subject string
-	Model   string
-	When    time.Time
-	Answers []Answer
+	Subject  string
+	Model    string
+	Provider string
+	Sampling Sampling
+	When     time.Time
+	Answers  []Answer
 }
 
 type Judge interface {
@@ -45,7 +55,10 @@ and "yes" count as one answer without a pack having to say so.
 cfg)` over any `ports.Provider`. `app.JudgeConfig` pins `Temperature`, `Seed`,
 `TopLogProbs`, and `MaxTokens` — fixed sampling so the same subject answers
 the same way across runs, which is what makes a mass reading comparable at
-all.
+all. Every `Judgement` records which provider answered (`Provider`, the
+provider's own `Name()`) and the `Sampling` that produced it, and every
+`Answer` records the raw `Alternatives` its mass was read from — none of
+this can be added retroactively to a judgement already made.
 
 ## One call, one schema, every answer at once
 
@@ -90,24 +103,41 @@ diverge between options.
 The answer-token rule selects a value's *first* token, but a real tokenizer
 does not always split one option into one token: `backend` can tokenise as
 `back` + `end`. Reading that first token's mass by matching alternatives
-against a class's *whole* surface string, as `MassAtToken`/`MassPerClass`
-correctly do for their own single-token contract, misses every multi-token
-option outright — `"back"` never equals `"backend"`.
+against a class's *whole* surface string, as `MassAtToken`/`MassPerClass`'s
+default exact match correctly does for a single-token contract, misses every
+multi-token option outright — `"back"` never equals `"backend"`.
 
-`app.massForToken` reads mass for the answer token using `optionMatch`
-instead: trim the alternative's text of surrounding whitespace and one layer
-of `"` quotes, then
+`app.massForToken` reads mass for the answer token with the same
+`MassAtToken` `MassPerClass` uses, but passes it `optionMatch` in place of
+the default exact match: trim the alternative's text of surrounding
+whitespace and one layer of `"` quotes (so a quote glued to the value, as a
+real tokenizer often produces, is still matched), then
 
 1. an **exact** match against any of an option's surface forms wins
    outright, or else
 2. a **non-empty prefix** match against a form counts, provided the trimmed
    text prefixes exactly one option's forms.
 
+`AnswerSchema` (below) rejects, ahead of time, any option set where a whole
+option or form is itself a proper prefix of another's — the shape that would
+let step 1 resolve confidently to the wrong option before step 2 ever saw an
+ambiguity. That leaves prefix ambiguity to arise only from a genuinely
+truncated token, which is a real failure to surface, not a data shape to
+special-case.
+
 A trimmed text that prefixes two or more different options' forms is an
-error — `judge: <question id>: "<text>" is ambiguous between <a> and <b>` —
-not a guess. The same double-count guard `MassAtToken` uses applies here:
-the answer token's own probability is folded in only when its own text is
-not already among its alternatives.
+error: `judge: <question id>: "<text>" is ambiguous between <a> and <b>
+(alternative "<text>", p=<probability>)`, or `(emitted token "<text>",
+p=<probability>)` when the ambiguity was found in the fallback read of the
+token's own text rather than in one of its alternatives. Dropping an
+ambiguous alternative silently was rejected: on a low-probability
+alternative that would distort the distribution without saying so, and the
+whole call is one round trip, so discarding one question's answer to save
+the others is not available either — the error must instead be diagnosable
+enough to act on, hence naming the source and the probability. The same
+double-count guard `MassAtToken` applies for every caller: the answer
+token's own probability is folded in only when its own text is not already
+among its alternatives.
 
 ## The judgement record
 
@@ -115,12 +145,14 @@ not already among its alternatives.
 `Judgement` under `judgements/<subjectID>/<millisecond-timestamp>.json` (git,
 via `ports.Docs`) and indexes it as one row keyed by that path (via
 `ports.Index`), same pattern as every other document `docs/design/the-record.md`
-describes. The document holds the subject text, the model name, every
-question asked, every answer with its distribution, and an `outcome` field
-carried as `any` and marshalled as JSON `null` — present, not omitted, so the
-key reads `null` until a later increment (checking a probability against a
-real outcome, epic 11) fills it in. The index row mirrors this with a flat
-string field, `"outcome": "pending"`, since the row cannot hold a nested
+describes. The document holds the subject text, the model name, the
+provider name, the sampling that produced the call, every question asked,
+every answer with its distribution and the raw alternatives it was read
+from, and an `outcome` field carried as `any` and marshalled as JSON `null`
+— present, not omitted, so the key reads `null` until a later increment
+(checking a probability against a real outcome, epic 11) fills it in. The
+index row mirrors the subject, model and provider as flat string fields,
+plus `"outcome": "pending"`, since the row cannot hold a nested
 distribution.
 
 `tools.Judge` (`judge.ask`) is the one caller: it parses a pack's YAML
@@ -132,6 +164,15 @@ with it.
 
 ## Known gaps
 
+- A distribution of exactly 1.0 — every alternative at that token resolving
+  to the same one option, no second option accumulating any mass — is
+  unexplained. It is at least as consistent with the engine's top-k window
+  containing only one recognizable option at that position as with a
+  genuinely confident answer, and this increment does not tell the two
+  apart. `Answer.Alternatives` now records, per answer, exactly what the
+  engine returned at that token, so a later look (or epic 11's outcome data)
+  can read the raw alternatives behind any 1.0 instead of trusting the
+  number alone.
 - `optionMatch`'s trim strips surrounding whitespace, then one layer of `"`
   quotes, in that order — so `" x "` (space, x, space, inside quotes) keeps
   its inner spaces rather than trimming again after the quotes come off. No

@@ -93,10 +93,16 @@ any class (there is nothing to normalise honestly).
   provider is configurable in production.
 - `model.complete` never requests `TopLogProbs` or sets `Schema`; only tests
   exercise `MassPerClass` against a live completion.
-- There is no error classification: no `ports` sentinel distinguishes a
-  rejected request (4xx) from a transient failure, and `Chain` counts every
-  failure against a provider's breaker the same way. This lands with the
-  chain wiring, not this increment.
+- There is no error classification for a transport failure: no `ports`
+  sentinel distinguishes a rejected request (4xx) from a transient one, and
+  `Chain` counts every failure against a provider's breaker the same way.
+  A second, separate family exists for the judge path: its permanent
+  errors (ambiguous, did not answer, no answer token, no alternatives) name
+  a defect in the completion or the question set, not a transport problem,
+  and none of them is retryable — retrying the same prompt against the same
+  pinned sampling reproduces the same error. Neither family is classified
+  against a `ports` sentinel yet; this lands with the chain wiring, not this
+  increment.
 - A non-2xx error message carries only the first 512 bytes
   (`errorSnippetMaxBytes`) of the response body. A longer error page or
   traceback is truncated to that prefix rather than surfaced in full.
