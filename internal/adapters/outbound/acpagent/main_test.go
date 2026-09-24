@@ -19,6 +19,9 @@ import (
 //	die       answers initialize, exits on the next request without replying
 //	orphan    answers initialize, starts a grandchild that inherits stdout
 //	          and stderr and ignores stdin EOF, then itself ignores stdin EOF
+//	escaped   answers initialize, starts a grandchild in its own session
+//	          (detached from this process's group) that inherits stderr and
+//	          ignores stdin EOF, then itself ignores stdin EOF
 func TestMain(m *testing.M) {
 	if mode := os.Getenv("ACPAGENT_STUB"); mode != "" {
 		runStub(mode)
@@ -40,13 +43,16 @@ func runStub(mode string) {
 			if mode == "orphan" {
 				spawnOrphanChild()
 			}
+			if mode == "escaped" {
+				spawnEscapedChild()
+			}
 			continue
 		}
 		if mode == "die" {
 			os.Exit(3)
 		}
 	}
-	if mode == "stubborn" || mode == "orphan" {
+	if mode == "stubborn" || mode == "orphan" || mode == "escaped" {
 		time.Sleep(time.Hour)
 	}
 }

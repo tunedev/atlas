@@ -10,13 +10,17 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/tunedev/atlas/internal/core/ports"
 )
 
 // Config says which agent to run and how to bound it. The agent is any
 // command that speaks ACP on its stdio. MCP, when set, is the one server
-// through which the agent reaches Atlas's tools.
+// through which the agent reaches Atlas's tools. WaitDelay bounds how long
+// cmd.Wait, called after a kill, waits for the agent's stdio copy
+// goroutines to finish: a descendant that escaped the agent's process
+// group and kept a pipe open cannot hold Wait past this delay.
 type Config struct {
 	Command         string
 	Args            []string
@@ -25,6 +29,7 @@ type Config struct {
 	MaxMessageBytes int
 	SummaryBytes    int
 	MCP             *MCPServer
+	WaitDelay       time.Duration
 }
 
 // MCPServer is an HTTP MCP server the agent is told to connect to.
@@ -62,6 +67,7 @@ func New(ctx context.Context, cfg Config, perm ports.Permission) (*Client, error
 	cmd := exec.Command(cfg.Command, cfg.Args...)
 	cmd.Env = cfg.Env
 	cmd.Stderr = &prefixWriter{w: cfg.Stderr, prefix: filepath.Base(cfg.Command) + ": "}
+	cmd.WaitDelay = cfg.WaitDelay
 	isolate(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -119,9 +125,10 @@ func (c *Client) ProtocolVersion() int { return c.version }
 // Close closes the agent's stdin, which ACP agents treat as shutdown, and
 // waits for it to exit. If ctx ends first, the agent's whole process group
 // is killed and its stdout closed directly, which ends the read loop even
-// when a descendant process inherited the pipe and kept it open. Close is
-// idempotent: only the first call's ctx is used, and every call returns
-// that call's result.
+// when a descendant inherited stdout and kept it open; cfg.WaitDelay then
+// bounds reap's cmd.Wait against a descendant that escaped the process
+// group and kept stderr open. Close is idempotent: only the first call's
+// ctx is used, and every call returns that call's result.
 func (c *Client) Close(ctx context.Context) error {
 	c.closeOnce.Do(func() {
 		close(c.closing)
@@ -134,11 +141,12 @@ func (c *Client) shutdown(ctx context.Context) error {
 	_ = c.stdin.Close()
 
 	stopped := make(chan error, 1)
-	// Owned by shutdown; stops once the read loop, request handlers and the
-	// process have all finished. On ctx expiry, kill below guarantees this:
-	// it kills the whole process group and closes stdout directly, so the
-	// read loop ends even if a descendant escaped the group and kept the
-	// pipe open.
+	// Owned by shutdown; stops once the read loop, request handlers and
+	// reap have all finished. On ctx expiry, kill ends the process group
+	// and closes stdout, which stops the read loop and request handlers;
+	// reap's cmd.Wait is then bounded by cfg.WaitDelay, not by kill, since
+	// a descendant that escaped the process group can still hold stderr
+	// open past the kill.
 	go func() {
 		c.conn.wait()
 		stopped <- c.reap()
@@ -162,10 +170,11 @@ func (c *Client) reap() error {
 	return nil
 }
 
-// kill ends the agent's whole process group and closes its stdout. Closing
-// stdout here, before cmd.Wait, is deliberate: it is what unblocks the read
-// loop if a descendant process inherited the pipe and the group kill did
-// not reach it.
+// kill ends the agent's whole process group and closes its stdout directly,
+// before cmd.Wait, which is what unblocks the read loop if a descendant
+// inherited stdout and the group kill did not reach it. It does not bound
+// cmd.Wait itself: that is cfg.WaitDelay's job, against a descendant that
+// escaped the process group and kept stderr open.
 func (c *Client) kill() {
 	if c.cmd != nil {
 		killTree(c.cmd)

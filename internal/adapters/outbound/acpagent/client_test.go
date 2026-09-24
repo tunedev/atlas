@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -103,6 +104,52 @@ func TestCloseKillsTheAgentsDescendants(t *testing.T) {
 	if time.Since(start) > 3*time.Second {
 		t.Errorf("Close took %s; a descendant kept the pipe open", time.Since(start))
 	}
+}
+
+func TestCloseIsBoundedWhenADescendantEscapesTheGroup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process sessions are a unix mechanism")
+	}
+	var stderr bytes.Buffer
+	c, err := New(context.Background(), stubConfig("escaped", &stderr), allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err = c.Close(ctx)
+	t.Cleanup(func() { killEscapedChild(t, stderr.String()) })
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("Close err = %v; want it to report the deadline", err)
+	}
+	if time.Since(start) > 3*time.Second {
+		t.Errorf("Close took %s; WaitDelay did not bound cmd.Wait", time.Since(start))
+	}
+}
+
+// killEscapedChild parses the escaped grandchild's pid out of the agent's
+// stderr, where the stub printed it, and kills it. The process-group kill
+// cannot reach a process that escaped the group by construction, so the
+// test cleans it up itself.
+func killEscapedChild(t *testing.T, stderrOutput string) {
+	t.Helper()
+	const marker = "escaped-child-pid "
+	i := strings.Index(stderrOutput, marker)
+	if i < 0 {
+		t.Errorf("stderr %q: no escaped child pid recorded", stderrOutput)
+		return
+	}
+	var pid int
+	if _, err := fmt.Sscanf(stderrOutput[i+len(marker):], "%d", &pid); err != nil {
+		t.Errorf("parse escaped child pid: %v", err)
+		return
+	}
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return
+	}
+	_ = p.Kill()
 }
 
 func TestNewFailsLoudlyForAMissingCommand(t *testing.T) {

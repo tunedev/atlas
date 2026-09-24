@@ -74,7 +74,8 @@ func (f *fakeAgent) handshake(caps map[string]any) {
 func (f *fakeAgent) hangUp() { _ = f.out.Close() }
 
 func testConfig() Config {
-	return Config{Command: "fake", Stderr: io.Discard, MaxMessageBytes: 1 << 20, SummaryBytes: 200}
+	return Config{Command: "fake", Stderr: io.Discard, MaxMessageBytes: 1 << 20, SummaryBytes: 200,
+		WaitDelay: 500 * time.Millisecond}
 }
 
 // startTestClient returns an initialized client talking to a fake agent.
