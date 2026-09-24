@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"go.opentelemetry.io/otel"
 
@@ -132,7 +134,11 @@ func permissionRules(rules []config.PermissionRule) []app.PermissionRule {
 }
 
 func run() error {
-	ctx := context.Background()
+	// A signal cancels ctx instead of killing the process, so the deferred
+	// stops below run; the agent's own process group gets no signal from
+	// the terminal and is ended by its stop.
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
 
 	cfg, err := config.Load(os.Args[1:])
 	if err != nil {
