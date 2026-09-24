@@ -12,10 +12,16 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+
+	"github.com/tunedev/atlas/internal/core/app"
 )
 
 // errExited is what every waiting call gets once the agent's stdout closes.
 var errExited = errors.New("acpagent: agent process exited")
+
+// errLineExcerptBytes bounds how much of a malformed line's raw text is
+// embedded in the resulting error.
+const errLineExcerptBytes = 200
 
 type message struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -157,7 +163,7 @@ func (c *conn) dispatchAll(r io.Reader, maxBytes int) error {
 	for s.Scan() {
 		var m message
 		if err := json.Unmarshal(s.Bytes(), &m); err != nil {
-			return fmt.Errorf("acpagent: agent wrote a line that is not JSON-RPC: %q", s.Text())
+			return fmt.Errorf("acpagent: agent wrote a line that is not JSON-RPC: %q", app.BoundSummary(s.Text(), errLineExcerptBytes))
 		}
 		c.dispatch(m)
 	}

@@ -130,7 +130,10 @@ func TestCancelledCallReturnsAndItsLateResponseIsDropped(t *testing.T) {
 		t.Fatalf("err = %v; want deadline exceeded", err)
 	}
 
-	// The late response must not block the read loop: a later call still works.
+	// A duplicate late response must not block the read loop either: the
+	// first fills the pending channel's one-slot buffer, so if the entry is
+	// never cleaned up the second would block the read loop forever.
+	p.write(`{"jsonrpc":"2.0","id":` + id + `,"result":{}}`)
 	p.write(`{"jsonrpc":"2.0","id":` + id + `,"result":{}}`)
 	go func() { errc <- c.call(context.Background(), "next", nil, nil) }()
 	p.write(`{"jsonrpc":"2.0","id":` + idOf(t, p.line(t)) + `,"result":{}}`)
@@ -161,6 +164,21 @@ func TestMalformedLineFailsWaitingCalls(t *testing.T) {
 	p.write(`Loading model...`)
 	if err := <-errc; err == nil || !strings.Contains(err.Error(), "Loading model") {
 		t.Errorf("err = %v; want one naming the line", err)
+	}
+}
+
+func TestMalformedLineErrorIsBounded(t *testing.T) {
+	c, p := newPair(t, 1<<20, &recorder{})
+	errc := make(chan error, 1)
+	go func() { errc <- c.call(context.Background(), "x", nil, nil) }()
+	p.line(t)
+	p.write(strings.Repeat("a", 10000))
+	err := <-errc
+	if err == nil {
+		t.Fatal("err = nil; want an error for the malformed line")
+	}
+	if len(err.Error()) >= 400 {
+		t.Errorf("error is %d bytes long; want it bounded well under the line's 10000 bytes", len(err.Error()))
 	}
 }
 
