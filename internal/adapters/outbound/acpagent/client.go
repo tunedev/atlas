@@ -2,7 +2,6 @@ package acpagent
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -199,10 +198,6 @@ func (c *Client) mcpServers() []mcpServer {
 		headers[i] = httpHeader{Name: n, Value: c.cfg.MCP.Headers[n]}
 	}
 	return []mcpServer{{Type: "http", Name: c.cfg.MCP.Name, URL: c.cfg.MCP.URL, Headers: headers}}
-}
-
-func (c *Client) onRequest(method string, _ json.RawMessage) (any, *rpcError) {
-	return nil, &rpcError{Code: -32601, Message: "method not found: " + method}
 }
 
 // prefixWriter writes each line of the agent's stderr with prefix in front.
