@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -11,17 +12,18 @@ import (
 // The harness knows nothing about any use case. A pack supplies every word
 // specific to what it does; the Go tree supplies none of them.
 //
-// This is the difference between a harness and an application with a config
-// file, and it is the one property of this increment worth enforcing
-// mechanically, because it erodes one convenience at a time.
+// Deliberately includes every pack's vocabulary: a harness that is generic for one use case and not another is
+// not generic.
 func TestGoTreeIsFreeOfUseCaseVocabulary(t *testing.T) {
-	// Words that would only appear in Go if pack logic had leaked into it.
-	// Deliberately includes the second pack's vocabulary too: a harness that
-	// is generic for one use case and not the other is not generic.
 	forbidden := []string{
 		"posting", "greenhouse", "cover letter", "coverletter",
 		"job-hunt", "jobhunt", "recruiter", "hackernews", "hacker news",
+		"salary", "dealbreaker", "deal-breaker", "deal_breaker", "employer",
+		"on-call", "on_call", "curriculum vitae", "résumé",
 	}
+	// Words short enough to occur inside unrelated identifiers are matched
+	// only as whole words.
+	forbiddenWords := regexp.MustCompile(`\bcv\b`)
 
 	root := filepath.Join("..", "..")
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -52,6 +54,9 @@ func TestGoTreeIsFreeOfUseCaseVocabulary(t *testing.T) {
 			if strings.Contains(lower, word) {
 				t.Errorf("%s contains use-case vocabulary %q; that belongs in a pack", path, word)
 			}
+		}
+		if w := forbiddenWords.FindString(lower); w != "" {
+			t.Errorf("%s contains use-case vocabulary %q; that belongs in a pack", path, w)
 		}
 		return nil
 	})
