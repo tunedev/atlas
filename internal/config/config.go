@@ -114,12 +114,15 @@ func (a AgentConfig) validate() error {
 	if !filepath.IsAbs(a.WorkDir) {
 		return fmt.Errorf("config: agent workdir must be absolute, got %q", a.WorkDir)
 	}
-	for name, d := range map[string]time.Duration{
-		"start timeout": a.StartTimeout, "turn timeout": a.TurnTimeout,
-		"close timeout": a.CloseTimeout, "mcp header timeout": a.MCPHeaderTimeout,
+	for _, t := range []struct {
+		name string
+		d    time.Duration
+	}{
+		{"start timeout", a.StartTimeout}, {"turn timeout", a.TurnTimeout},
+		{"close timeout", a.CloseTimeout}, {"mcp header timeout", a.MCPHeaderTimeout},
 	} {
-		if d <= 0 {
-			return fmt.Errorf("config: agent %s must be positive, got %s", name, d)
+		if t.d <= 0 {
+			return fmt.Errorf("config: agent %s must be positive, got %s", t.name, t.d)
 		}
 	}
 	if a.MaxMessageBytes <= 0 || a.MaxToolResultBytes <= 0 {
