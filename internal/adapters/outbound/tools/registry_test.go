@@ -20,3 +20,14 @@ func TestRegistryLooksUpByToolName(t *testing.T) {
 		t.Error("Lookup found a tool that was never registered")
 	}
 }
+
+func TestWithAddsWithoutChangingTheOriginal(t *testing.T) {
+	base := tools.NewRegistry(tools.NewHTTP(time.Second, 1))
+	extended := base.With(tools.NewModel(nil))
+	if _, ok := extended.Lookup("model.complete"); !ok {
+		t.Error("With did not add the tool")
+	}
+	if _, ok := base.Lookup("model.complete"); ok {
+		t.Error("With changed the registry it was called on")
+	}
+}

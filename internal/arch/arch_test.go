@@ -40,6 +40,7 @@ func TestCoreImportsNoAdapters(t *testing.T) {
 	}
 	forbiddenPrefix := []string{
 		"github.com/tunedev/atlas/internal/adapters",
+		"github.com/modelcontextprotocol",
 		"go.opentelemetry.io/otel/exporters",
 		"go.opentelemetry.io/otel/propagation",
 		"gopkg.in/yaml.v3",
