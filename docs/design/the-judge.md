@@ -172,6 +172,16 @@ question `path` and collide with it.
 
 ## Known gaps
 
+- Two options that merely share a leading character can fail a call. The
+  option-set validation rejects an option that is a proper prefix of another,
+  but an engine may emit any prefix of a value as its first token, including a
+  single character. When that prefix matches two options, the read cannot tell
+  them apart and the whole call errors, taking every other answer in it with
+  it. Measured: `senior` and `staff` in one option set, against an alternative
+  `s`. Validation does not catch this, because neither option is a prefix of
+  the other; a pack author avoids it by giving a question's options distinct
+  initial characters.
+
 - A distribution of exactly 1.0 used to be indistinguishable from a
   manufactured one. It no longer is: every `Answer` now carries `Confidence`
   and `Coverage`, computed in `app.answerFor` from the same mass and
