@@ -3,6 +3,7 @@ package termprompt_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"sync"
@@ -133,6 +134,9 @@ func TestALateAnswerDoesNotAnswerTheNextPrompt(t *testing.T) {
 	}
 
 	_, _ = io.WriteString(answer, "y\n")
+	// An empty write returns only once the reader asks for more input, so
+	// the late y has been read before the next prompt starts.
+	_, _ = answer.Write(nil)
 
 	var got2 ports.PermissionDecision
 	var wg sync.WaitGroup
@@ -148,5 +152,87 @@ func TestALateAnswerDoesNotAnswerTheNextPrompt(t *testing.T) {
 
 	if got2 != ports.PermissionDeny {
 		t.Errorf("second Decide = %q; want deny (the y from first was discarded)", got2)
+	}
+}
+
+func TestAWaitingDecideHonoursItsContext(t *testing.T) {
+	in, answer := io.Pipe()
+	out := &syncBuffer{}
+	p := termprompt.New(in, out)
+
+	first := make(chan ports.PermissionDecision, 1)
+	go func() {
+		d, _ := p.Decide(context.Background(), ports.PermissionRequest{ToolName: "first.tool", Kind: "read", Summary: "First"})
+		first <- d
+	}()
+	waitForPrompt(t, out, 1)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	type result struct {
+		d   ports.PermissionDecision
+		err error
+	}
+	second := make(chan result, 1)
+	go func() {
+		d, err := p.Decide(ctx, ports.PermissionRequest{ToolName: "second.tool", Kind: "read", Summary: "Second"})
+		second <- result{d, err}
+	}()
+	select {
+	case r := <-second:
+		if r.d != ports.PermissionDeny || !errors.Is(r.err, context.DeadlineExceeded) {
+			t.Errorf("second Decide = %q, %v; want deny with the deadline error", r.d, r.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second Decide ignored its context while the first prompt waited")
+	}
+	if strings.Contains(out.String(), "second.tool") {
+		t.Errorf("the second request was shown while the first was waiting:\n%s", out.String())
+	}
+
+	_, _ = io.WriteString(answer, "y\n")
+	if d := <-first; d != ports.PermissionAllow {
+		t.Errorf("first Decide = %q; want allow", d)
+	}
+}
+
+func TestThePromptAfterATimeoutShowsWithoutInput(t *testing.T) {
+	in, answer := io.Pipe()
+	out := &syncBuffer{}
+	p := termprompt.New(in, out)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if d, err := p.Decide(ctx, req); d != ports.PermissionDeny || err == nil {
+		t.Errorf("first Decide = %q, %v; want deny with error", d, err)
+	}
+
+	got := make(chan ports.PermissionDecision, 1)
+	go func() {
+		d, _ := p.Decide(context.Background(), ports.PermissionRequest{ToolName: "next.tool", Kind: "read", Summary: "Next"})
+		got <- d
+	}()
+	if name := waitForPrompt(t, out, 2); name != "next.tool" {
+		t.Fatalf("second prompt shows %q; want next.tool", name)
+	}
+	_, _ = io.WriteString(answer, "y\n")
+	if d := <-got; d != ports.PermissionAllow {
+		t.Errorf("second Decide = %q; want allow from the line typed after it showed", d)
+	}
+}
+
+func TestADeadContextShowsNoPrompt(t *testing.T) {
+	in, _ := io.Pipe()
+	out := &syncBuffer{}
+	p := termprompt.New(in, out)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for range 50 {
+		if d, err := p.Decide(ctx, req); d != ports.PermissionDeny || err == nil {
+			t.Fatalf("Decide = %q, %v; want deny with the context's error", d, err)
+		}
+	}
+	if out.String() != "" {
+		t.Errorf("a request with a dead context was shown:\n%s", out.String())
 	}
 }

@@ -8,54 +8,55 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"sync"
 
 	"github.com/tunedev/atlas/internal/core/ports"
 )
 
 // Prompt shows one request at a time on out and reads the answer from in.
 // Only y or yes allows; any other answer, end of input, or a cancelled
-// context denies.
+// context denies. A line typed while no prompt is showing answers nothing.
 type Prompt struct {
-	out  io.Writer
-	asks chan chan string
-	mu   sync.Mutex
+	out   io.Writer
+	lines <-chan string
+	slot  chan struct{}
 }
 
-// New starts the reader goroutine that owns in. It stops when in reaches
-// end of input.
+// New starts the reader goroutine that owns in. It reads lines until end of
+// input or a read error and then closes the line channel. Lines no Decide
+// has taken wait in the reader, at most two at a time, and the next Decide
+// discards them before it prints its prompt.
 func New(in io.Reader, out io.Writer) *Prompt {
-	p := &Prompt{out: out, asks: make(chan chan string)}
-	go p.read(in) // owns in, stops at EOF
-	return p
+	lines := make(chan string, 1)
+	// Owned by the Prompt; stops at end of input or a read error, and
+	// otherwise lives as long as in does.
+	go read(in, lines)
+	return &Prompt{out: out, lines: lines, slot: make(chan struct{}, 1)}
 }
 
-func (p *Prompt) read(in io.Reader) {
+func read(in io.Reader, lines chan<- string) {
 	s := bufio.NewScanner(in)
-	for reply := range p.asks {
-		if !s.Scan() {
-			close(reply)
-			continue
-		}
-		reply <- s.Text()
+	for s.Scan() {
+		lines <- s.Text()
 	}
+	close(lines)
 }
 
 func (p *Prompt) Decide(ctx context.Context, req ports.PermissionRequest) (ports.PermissionDecision, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	reply := make(chan string, 1)
 	select {
-	case p.asks <- reply:
+	case p.slot <- struct{}{}:
 	case <-ctx.Done():
-		fmt.Fprintln(p.out)
 		return ports.PermissionDeny, fmt.Errorf("termprompt: %w", ctx.Err())
 	}
+	defer func() { <-p.slot }()
+	if err := ctx.Err(); err != nil {
+		return ports.PermissionDeny, fmt.Errorf("termprompt: %w", err)
+	}
 
-	fmt.Fprintf(p.out, "atlas: the agent wants to run %s (%s)\n  %s\nallow? [y/N] ", req.ToolName, req.Kind, req.Summary)
+	p.discardStale()
+	fmt.Fprintf(p.out, "atlas: the agent wants to run %s (%s)\n  %s\nallow? [y/N] ",
+		req.ToolName, req.Kind, req.Summary)
 	select {
-	case line, ok := <-reply:
+	case line, ok := <-p.lines:
 		if ok && isYes(line) {
 			return ports.PermissionAllow, nil
 		}
@@ -63,6 +64,22 @@ func (p *Prompt) Decide(ctx context.Context, req ports.PermissionRequest) (ports
 	case <-ctx.Done():
 		fmt.Fprintln(p.out)
 		return ports.PermissionDeny, fmt.Errorf("termprompt: %w", ctx.Err())
+	}
+}
+
+// discardStale drops the lines already read while no prompt was showing.
+// It leaves a closed channel closed, so the next receive still sees end of
+// input.
+func (p *Prompt) discardStale() {
+	for {
+		select {
+		case _, ok := <-p.lines:
+			if !ok {
+				return
+			}
+		default:
+			return
+		}
 	}
 }
 

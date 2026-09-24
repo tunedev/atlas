@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/tunedev/atlas/internal/adapters/outbound/termprompt"
 	"github.com/tunedev/atlas/internal/core/ports"
 )
 
@@ -170,9 +172,9 @@ func waitUntilAsked(t *testing.T, perm *recordingPermission) {
 	t.Errorf("permission engine was never asked")
 }
 
-// TestCloseReleasesAPendingPermission pins that a human prompt the agent is
-// still waiting on cannot stall shutdown: Close must cancel it, not wait for
-// it, so a pending permission never turns into a hung Close.
+// TestCloseReleasesAPendingPermission pins that Close cancels the context of
+// a permission engine the agent is still waiting on, and returns without
+// waiting for its answer.
 func TestCloseReleasesAPendingPermission(t *testing.T) {
 	perm := &recordingPermission{decision: ports.PermissionAllow, block: make(chan struct{})}
 	c, fa := startTestClient(t, testConfig(), map[string]any{}, perm)
@@ -213,4 +215,90 @@ func TestCloseReleasesAPendingPermission(t *testing.T) {
 	if !perm.cancelled {
 		t.Error("the permission engine's context was never cancelled by Close")
 	}
+}
+
+// signalWriter signals each write, dropping the signal when one is pending.
+type signalWriter chan struct{}
+
+func (w signalWriter) Write(p []byte) (int, error) {
+	select {
+	case w <- struct{}{}:
+	default:
+	}
+	return len(p), nil
+}
+
+// askedPrompt counts the requests that reached the prompt it wraps.
+type askedPrompt struct {
+	p     *termprompt.Prompt
+	mu    sync.Mutex
+	asked int
+}
+
+func (a *askedPrompt) Decide(ctx context.Context, req ports.PermissionRequest) (ports.PermissionDecision, error) {
+	a.mu.Lock()
+	a.asked++
+	a.mu.Unlock()
+	return a.p.Decide(ctx, req)
+}
+
+// TestCloseReleasesAPermissionQueuedBehindAnotherPrompt pins that Close is
+// not held up by the terminal prompt when another request already occupies
+// it and the human never answers: the queued permission is released by the
+// turn's context.
+func TestCloseReleasesAPermissionQueuedBehindAnotherPrompt(t *testing.T) {
+	in, _ := io.Pipe() // never answers
+	shown := make(signalWriter, 1)
+	prompt := termprompt.New(in, shown)
+	perm := &askedPrompt{p: prompt}
+	c, fa := startTestClient(t, testConfig(), map[string]any{}, perm)
+
+	holderCtx, releaseHolder := context.WithCancel(context.Background())
+	t.Cleanup(releaseHolder)
+	// Owned by the test; stops when releaseHolder runs.
+	go func() { _, _ = prompt.Decide(holderCtx, ports.PermissionRequest{ToolName: "notes.read", Kind: "read"}) }()
+	<-shown
+
+	agentGone := make(chan struct{})
+	go func() {
+		defer close(agentGone)
+		fa.reply(fa.expect("session/new"), map[string]any{"sessionId": "s1"})
+		fa.expect("session/prompt")
+		fa.update("s1", map[string]any{"sessionUpdate": "tool_call", "toolCallId": "t1", "title": "Run tests", "kind": "execute"})
+		fa.write(map[string]any{"jsonrpc": "2.0", "id": 100, "method": "session/request_permission",
+			"params": map[string]any{"sessionId": "s1", "toolCall": map[string]any{"toolCallId": "t1"}, "options": fourOptions}})
+		fa.in.Scan()
+		fa.hangUp()
+	}()
+	go c.Do(context.Background(), ports.AgentTask{Prompt: "p", WorkDir: t.TempDir()}, "", func(ports.AgentEvent) {})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		perm.mu.Lock()
+		n := perm.asked
+		perm.mu.Unlock()
+		if n > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the prompt was never asked")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	closed := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		closed <- c.Close(ctx)
+	}()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close waited on a permission queued behind another prompt")
+	}
+	<-agentGone
 }
