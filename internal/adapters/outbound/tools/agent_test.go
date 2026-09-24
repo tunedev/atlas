@@ -3,6 +3,7 @@ package tools_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/tunedev/atlas/internal/adapters/outbound/gitdocs"
 	"github.com/tunedev/atlas/internal/adapters/outbound/tools"
+	"github.com/tunedev/atlas/internal/core/app"
 	"github.com/tunedev/atlas/internal/core/ports"
 )
 
@@ -18,6 +20,7 @@ type scriptedAgent struct {
 	gotSession string
 	deadline   bool
 	events     []ports.AgentEvent
+	err        error
 }
 
 func (s *scriptedAgent) Do(ctx context.Context, task ports.AgentTask, sessionID string, onEvent func(ports.AgentEvent)) (ports.AgentResult, string, error) {
@@ -38,7 +41,30 @@ func (s *scriptedAgent) Do(ctx context.Context, task ports.AgentTask, sessionID 
 	if sid == "" {
 		sid = "sess-new"
 	}
+	if s.err != nil {
+		return ports.AgentResult{}, sid, s.err
+	}
 	return ports.AgentResult{Text: "done", StopReason: "end_turn", Unverified: []string{"Write out.txt"}}, sid, nil
+}
+
+// ctxDocs refuses a Put whose context has ended, as a store that honours
+// its ctx would.
+type ctxDocs struct{ ports.Docs }
+
+func (d ctxDocs) Put(ctx context.Context, path string, body []byte, message string) (ports.Revision, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return d.Docs.Put(ctx, path, body, message)
+}
+
+// outOfTimeAgent starts session sess-late and runs until its turn's
+// deadline.
+type outOfTimeAgent struct{}
+
+func (outOfTimeAgent) Do(ctx context.Context, _ ports.AgentTask, _ string, _ func(ports.AgentEvent)) (ports.AgentResult, string, error) {
+	<-ctx.Done()
+	return ports.AgentResult{}, "sess-late", ctx.Err()
 }
 
 func newAgentTool(t *testing.T, a ports.Agent, command string) (*tools.Agent, ports.Docs, *bytes.Buffer) {
@@ -120,5 +146,55 @@ func TestAgentDoEscapesControlTextInProgress(t *testing.T) {
 	want := `agent tool_call: Read\x1b[2K\rharmless\nagent plan: fake` + "\n"
 	if progress.String() != want {
 		t.Errorf("progress %q; want %q", progress.String(), want)
+	}
+}
+
+func TestAgentDoRecordsTheSessionOfAFailedTurn(t *testing.T) {
+	agent := &scriptedAgent{err: errors.New("agent crashed mid-turn")}
+	tool, _, _ := newAgentTool(t, agent, "agent-bin")
+	_, err := tool.Invoke(context.Background(), map[string]string{"prompt": "a", "subject_id": "notes-1"})
+	if err == nil || !strings.Contains(err.Error(), "agent crashed mid-turn") || !strings.HasPrefix(err.Error(), "agent.do: ") {
+		t.Fatalf("err = %v; want the agent's error, prefixed", err)
+	}
+
+	agent.err = nil
+	if _, err := tool.Invoke(context.Background(), map[string]string{"prompt": "b", "subject_id": "notes-1", "resume": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	if agent.gotSession != "sess-new" {
+		t.Errorf("resumed with session %q; want the failed turn's sess-new", agent.gotSession)
+	}
+}
+
+func TestAgentDoRecordsTheSessionOfATurnThatRanOutOfTime(t *testing.T) {
+	docs, err := gitdocs.Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := tools.NewAgent(outOfTimeAgent{}, ctxDocs{docs}, &bytes.Buffer{}, tools.AgentSettings{
+		Command: "agent-bin", ProtocolVersion: 1, WorkDir: "/work", Timeout: 10 * time.Millisecond,
+	})
+	if _, err := tool.Invoke(context.Background(), map[string]string{"prompt": "a", "subject_id": "notes-1"}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v; want the turn's deadline", err)
+	}
+	s, err := app.LoadAgentSession(context.Background(), docs, "notes-1")
+	if err != nil || s.SessionID != "sess-late" {
+		t.Errorf("recorded session %q, %v; want sess-late", s.SessionID, err)
+	}
+}
+
+func TestAgentDoReportsBothWhenAFailedTurnCannotBeRecorded(t *testing.T) {
+	docs, err := gitdocs.Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := tools.NewAgent(&scriptedAgent{err: errors.New("agent crashed mid-turn")}, ctxDocs{docs}, &bytes.Buffer{}, tools.AgentSettings{
+		Command: "agent-bin", ProtocolVersion: 1, WorkDir: "/work", Timeout: time.Minute,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = tool.Invoke(ctx, map[string]string{"prompt": "a", "subject_id": "notes-1"})
+	if err == nil || !strings.Contains(err.Error(), "agent crashed mid-turn") || !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v; want both the turn's error and the recording's", err)
 	}
 }

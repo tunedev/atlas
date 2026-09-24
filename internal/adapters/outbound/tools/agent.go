@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -65,11 +66,11 @@ func (t *Agent) Invoke(ctx context.Context, with map[string]string) (any, error)
 		session = prev
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, t.s.Timeout)
+	turnCtx, cancel := context.WithTimeout(ctx, t.s.Timeout)
 	defer cancel()
-	res, sessionID, err := t.agent.Do(ctx, ports.AgentTask{Prompt: with["prompt"], WorkDir: workDir}, session.SessionID, t.report)
+	res, sessionID, err := t.agent.Do(turnCtx, ports.AgentTask{Prompt: with["prompt"], WorkDir: workDir}, session.SessionID, t.report)
 	if err != nil {
-		return nil, fmt.Errorf("agent.do: %w", err)
+		return nil, t.recordFailedTurn(ctx, subjectID, session, sessionID, err)
 	}
 
 	session.SessionID = sessionID
@@ -84,6 +85,22 @@ func (t *Agent) Invoke(ctx context.Context, with map[string]string) (any, error)
 		"unverified":  res.Unverified,
 		"path":        path,
 	}, nil
+}
+
+// recordFailedTurn keeps the pointer to a session the failed turn ran in,
+// so the work can be resumed, and returns doErr joined with any failure to
+// record it. ctx is the caller's, not the turn's, so a turn that ran out of
+// time still leaves a pointer.
+func (t *Agent) recordFailedTurn(ctx context.Context, subjectID string, session app.AgentSession, sessionID string, doErr error) error {
+	doErr = fmt.Errorf("agent.do: %w", doErr)
+	if sessionID == "" {
+		return doErr
+	}
+	session.SessionID = sessionID
+	if _, err := app.RecordAgentSession(ctx, t.docs, subjectID, session); err != nil {
+		return errors.Join(doErr, fmt.Errorf("agent.do: record session %s: %w", sessionID, err))
+	}
+	return doErr
 }
 
 // report prints tool calls and plans as they happen, with control text
