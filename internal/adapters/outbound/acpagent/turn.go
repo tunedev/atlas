@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/tunedev/atlas/internal/core/ports"
@@ -56,8 +57,20 @@ func (c *Client) Do(ctx context.Context, task ports.AgentTask, sessionID string,
 	return ports.AgentResult{Text: text.String(), StopReason: res.StopReason, Unverified: unverified}, t.sessionID, nil
 }
 
-// open starts a new session. Task 6 extends it to load an existing one.
+// open starts a new session, or loads t.sessionID. A load replays the whole
+// conversation before it returns. The replay is consumed, not re-emitted,
+// and open returns the replayed tool calls still pending or in progress.
 func (c *Client) open(ctx context.Context, t *turn, workDir string) ([]string, error) {
+	if t.sessionID != "" {
+		err := c.await(ctx, t, "session/load", loadSessionParams{
+			SessionID: t.sessionID, CWD: workDir, MCPServers: c.mcpServers(),
+		}, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		return c.unverified(t), nil
+	}
+
 	var res newSessionResult
 	if err := c.await(ctx, t, "session/new", newSessionParams{CWD: workDir, MCPServers: c.mcpServers()}, &res, nil); err != nil {
 		return nil, err
@@ -69,6 +82,22 @@ func (c *Client) open(ctx context.Context, t *turn, workDir string) ([]string, e
 	t.sessionID = res.SessionID
 	c.mu.Unlock()
 	return nil, nil
+}
+
+// unverified is the sorted titles of t's tool calls whose last status was
+// pending or in progress. An absent status is pending.
+func (c *Client) unverified(t *turn) []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []string
+	for _, call := range t.calls {
+		switch call.Status {
+		case "", "pending", "in_progress":
+			out = append(out, call.Title)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (c *Client) sessionOf(t *turn) string {
