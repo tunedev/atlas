@@ -1,6 +1,7 @@
 package app_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -188,5 +189,45 @@ func TestRenderFailsOnMalformedTemplate(t *testing.T) {
 func TestSelectReturnsErrorNotPanicOnScalar(t *testing.T) {
 	if _, err := app.Select("a string value", "foo"); err == nil {
 		t.Error("Select succeeded on scalar with non-empty path")
+	}
+}
+
+func TestRenderJSONSerialisesAStepOutputForAnotherStepsStringField(t *testing.T) {
+	s := domain.NewState(nil)
+	s.Put("extract", map[string]any{"fields": map[string]any{
+		"name":  "Kestrel & <Merlin>",
+		"count": float64(3),
+		"gone":  nil,
+		"tags":  []any{"coast"},
+	}})
+
+	got, err := app.Render("{{ json .steps.extract.fields }}", s)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	var back map[string]any
+	if err := json.Unmarshal([]byte(got), &back); err != nil {
+		t.Fatalf("rendered text is not json: %v\n%s", err, got)
+	}
+	if back["name"] != "Kestrel & <Merlin>" {
+		t.Errorf("name = %v", back["name"])
+	}
+	if !strings.Contains(got, `"count": 3`) {
+		t.Errorf("a whole number did not render as one:\n%s", got)
+	}
+	if strings.Contains(got, "&amp;") || strings.Contains(got, "&lt;") || strings.Contains(got, "&gt;") {
+		t.Errorf("json is HTML-escaped; a hand-edited file would be unreadable:\n%s", got)
+	}
+	if _, present := back["gone"]; present {
+		t.Errorf("a null-valued key survived sanitising: %v", back)
+	}
+	if !strings.Contains(got, "\n  \"") {
+		t.Errorf("json is not indented for a human to edit:\n%s", got)
+	}
+}
+
+func TestRenderJSONOfAMissingStepStillFails(t *testing.T) {
+	if _, err := app.Render("{{ json .steps.absent }}", domain.NewState(nil)); err == nil {
+		t.Error("json of a step that never ran rendered instead of failing")
 	}
 }
