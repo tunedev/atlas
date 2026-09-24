@@ -5,6 +5,8 @@ package config
 
 import (
 	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -16,6 +18,7 @@ type Config struct {
 	Model ModelConfig
 	OTel  OTelConfig
 	Store StoreConfig
+	Feed  FeedConfig
 	Judge JudgeConfig
 }
 
@@ -60,6 +63,19 @@ type StoreConfig struct {
 	Root        string
 	IndexPath   string
 	HistoryPath string
+}
+
+// FeedConfig locates the public feed atlas pulls as a Source and says how
+// old it may be before it is reported stale. Ref is a full ref name under
+// refs/heads/ or refs/tags/. CachePath is expanded from a leading "~" and
+// may not overlap Store.Root, so pulling public data can never touch the
+// private record.
+type FeedConfig struct {
+	RemoteURL   string
+	Ref         string
+	CachePath   string
+	PullTimeout time.Duration
+	StaleAfter  time.Duration
 }
 
 func (c Config) validate() error {
@@ -108,5 +124,35 @@ func (c Config) validate() error {
 	if c.Judge.Temperature > 2 {
 		return fmt.Errorf("config: judge temperature must not exceed 2, got %v", c.Judge.Temperature)
 	}
+	if c.Feed.RemoteURL == "" {
+		return fmt.Errorf("config: feed remote URL is empty")
+	}
+	if !strings.HasPrefix(c.Feed.Ref, "refs/heads/") && !strings.HasPrefix(c.Feed.Ref, "refs/tags/") {
+		return fmt.Errorf("config: feed ref must be a full ref name under refs/heads/ or refs/tags/, got %q", c.Feed.Ref)
+	}
+	if c.Feed.CachePath == "" {
+		return fmt.Errorf("config: feed cache path is empty")
+	}
+	if overlaps(c.Feed.CachePath, c.Store.Root) {
+		return fmt.Errorf("config: feed cache path %s overlaps store root %s; the public feed must never share a directory with the private record", c.Feed.CachePath, c.Store.Root)
+	}
+	if c.Feed.PullTimeout <= 0 {
+		return fmt.Errorf("config: feed pull timeout must be positive, got %s", c.Feed.PullTimeout)
+	}
+	if c.Feed.StaleAfter <= 0 {
+		return fmt.Errorf("config: feed stale-after must be positive, got %s", c.Feed.StaleAfter)
+	}
 	return nil
+}
+
+// overlaps reports whether either path is the other or lies beneath it.
+func overlaps(a, b string) bool {
+	absA, _ := filepath.Abs(a)
+	absB, _ := filepath.Abs(b)
+	return within(absA, absB) || within(absB, absA)
+}
+
+func within(child, parent string) bool {
+	rel, err := filepath.Rel(parent, child)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
