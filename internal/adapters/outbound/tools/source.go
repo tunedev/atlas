@@ -34,7 +34,7 @@ func NewSourcePull(source ports.Source, staleAfter time.Duration, log *slog.Logg
 func (t *SourcePull) Name() string { return "source.pull" }
 
 func (t *SourcePull) Invoke(ctx context.Context, with map[string]string) (any, error) {
-	keep, err := filter(with["prefix"], with["match"])
+	underPrefix, keep, err := filter(with["prefix"], with["match"])
 	if err != nil {
 		return nil, fmt.Errorf("source.pull: %w", err)
 	}
@@ -49,11 +49,14 @@ func (t *SourcePull) Invoke(ctx context.Context, with map[string]string) (any, e
 
 	kept := []any{}
 	for _, it := range items {
+		if !underPrefix(it.ID) {
+			continue
+		}
 		var doc any
 		if err := json.Unmarshal(it.Body, &doc); err != nil {
 			return nil, fmt.Errorf("source.pull: decode %s: %w", it.ID, err)
 		}
-		if keep(it.ID, doc) {
+		if keep(doc) {
 			kept = append(kept, doc)
 		}
 	}
@@ -77,22 +80,26 @@ func (t *SourcePull) Invoke(ctx context.Context, with map[string]string) (any, e
 	}, nil
 }
 
-// filter builds the predicate for prefix and match. prefix is a directory
-// boundary, as Docs.List treats one: "a" keeps "a/one" but not "ab/two".
-func filter(prefix, match string) (func(id string, doc any) bool, error) {
+// filter builds the two predicates that narrow a pull: underPrefix, which
+// tests an item's id alone so an item outside the prefix is never decoded,
+// and keep, which tests match against the decoded document. prefix is a
+// directory boundary, as Docs.List treats one: "a" keeps "a/one" but not
+// "ab/two".
+func filter(prefix, match string) (underPrefix func(id string) bool, keep func(doc any) bool, err error) {
 	boundary := strings.TrimSuffix(prefix, "/")
 	field, value, hasPair := strings.Cut(match, "=")
 	if match != "" && (!hasPair || field == "") {
-		return nil, fmt.Errorf("match %q must be field=value", match)
+		return nil, nil, fmt.Errorf("match %q must be field=value", match)
 	}
-	return func(id string, doc any) bool {
-		if boundary != "" && !strings.HasPrefix(id, boundary+"/") {
-			return false
-		}
+	underPrefix = func(id string) bool {
+		return boundary == "" || strings.HasPrefix(id, boundary+"/")
+	}
+	keep = func(doc any) bool {
 		if match == "" {
 			return true
 		}
 		fields, ok := doc.(map[string]any)
 		return ok && fields[field] == value
-	}, nil
+	}
+	return underPrefix, keep, nil
 }

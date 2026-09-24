@@ -74,6 +74,21 @@ func TestSourcePullNarrowsByPrefixAndMatch(t *testing.T) {
 	}
 }
 
+func TestSourcePullNeverDecodesAnItemOutsideThePrefix(t *testing.T) {
+	src := fakeSource{
+		refreshed: time.Now(),
+		items: []ports.Item{
+			{ID: "shelf/a/one", Body: []byte(`{"title":"Dune","state":"open"}`)},
+			{ID: "elsewhere/broken", Body: []byte(`not json`)},
+		},
+	}
+	out, _ := pull(t, src, map[string]string{"prefix": "shelf"})
+	items := out["items"].([]any)
+	if len(items) != 1 || items[0].(map[string]any)["title"] != "Dune" {
+		t.Errorf("items = %v; an undecodable item outside the prefix must not fail the pull", items)
+	}
+}
+
 func TestSourcePullWarnsWhenStaleAndStillReturns(t *testing.T) {
 	out, logs := pull(t, shelf(30*time.Hour), map[string]string{})
 	if out["_meta"].(map[string]any)["stale"] != true || len(out["items"].([]any)) != 3 {
