@@ -33,7 +33,9 @@ func Ground(extracted json.RawMessage, source string) ([]string, error) {
 // Annotate sets "status" to "grounded" or "needs_review" beside every quote
 // in extracted, replacing any status already there, and returns the tree and
 // how many need review. Nothing is dropped: a flagged value is kept for a
-// person to correct.
+// person to correct. An object that carries a "status" but no "quote" has
+// nothing to ground, so it is also forced to "needs_review" and counted,
+// rather than left holding a hand-set value.
 func Annotate(extracted json.RawMessage, source string) (any, int, error) {
 	var tree any
 	if err := json.Unmarshal(extracted, &tree); err != nil {
@@ -41,7 +43,7 @@ func Annotate(extracted json.RawMessage, source string) (any, int, error) {
 	}
 	haystack := normaliseText(source)
 	flagged := 0
-	eachQuoted(tree, "", func(obj map[string]any, _ string) {
+	eachAnnotated(tree, "", func(obj map[string]any, _ string) {
 		if grounded(obj[quoteKey], haystack) {
 			obj["status"] = "grounded"
 			return
@@ -66,6 +68,26 @@ func eachQuoted(v any, pointer string, fn func(map[string]any, string)) {
 	case []any:
 		for i, e := range val {
 			eachQuoted(e, pointer+"/"+strconv.Itoa(i), fn)
+		}
+	}
+}
+
+// eachAnnotated calls fn for every object in v that has a quote key or a
+// status key, with the object's JSON Pointer.
+func eachAnnotated(v any, pointer string, fn func(map[string]any, string)) {
+	switch val := v.(type) {
+	case map[string]any:
+		_, hasQuote := val[quoteKey]
+		_, hasStatus := val["status"]
+		if hasQuote || hasStatus {
+			fn(val, pointer)
+		}
+		for k, e := range val {
+			eachAnnotated(e, pointer+"/"+escapePointer(k), fn)
+		}
+	case []any:
+		for i, e := range val {
+			eachAnnotated(e, pointer+"/"+strconv.Itoa(i), fn)
 		}
 	}
 }

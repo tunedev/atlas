@@ -90,3 +90,22 @@ func TestAnnotateMarksEveryQuoteBearingObjectAndCountsTheFlags(t *testing.T) {
 		t.Errorf("a flagged item was altered or dropped: %v", items[1])
 	}
 }
+
+func TestAnnotateFlagsAStatusWithNoQuoteBesideIt(t *testing.T) {
+	extracted := json.RawMessage(`{"sightings": [{"species": "puffin", "status": "grounded"}], "log": {"weather": "clear"}}`)
+	tree, n, err := app.Annotate(extracted, sightingsSource)
+	if err != nil {
+		t.Fatalf("annotate: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("needs_review count = %d, want 1", n)
+	}
+	items := tree.(map[string]any)["sightings"].([]any)
+	if items[0].(map[string]any)["status"] != "needs_review" {
+		t.Errorf("a status with no quote beside it was left alone: %v", items[0])
+	}
+	log := tree.(map[string]any)["log"].(map[string]any)
+	if _, present := log["status"]; present {
+		t.Errorf("an object with neither key was given a status: %v", log)
+	}
+}
