@@ -11,6 +11,29 @@ steps:
       url: "{{ .vars.board_api }}/v1/boards/{{ .vars.board }}/jobs?content=true"
       select: jobs.0
 
+  - id: judged
+    tool: judge.ask
+    with:
+      subject_id: "{{ .steps.role.id }}"
+      subject: |
+        Candidate: {{ .vars.profile }}
+
+        Role: {{ .steps.role.title }} at {{ .steps.role.company_name }}
+
+        {{ .steps.role.content }}
+      questions: |
+        - id: stretch
+          type: noul
+          ask: Is this role a stretch for the candidate?
+        - id: seniority
+          type: score
+          levels: [junior, mid, senior, staff]
+          ask: How senior is this role?
+        - id: focus
+          type: choice
+          options: [backend, frontend, platform, data, other]
+          ask: What is the main focus of this role?
+
   - id: verdict
     tool: model.complete
     with:
