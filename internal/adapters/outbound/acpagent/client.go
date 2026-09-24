@@ -201,8 +201,6 @@ func (c *Client) mcpServers() []mcpServer {
 	return []mcpServer{{Type: "http", Name: c.cfg.MCP.Name, URL: c.cfg.MCP.URL, Headers: headers}}
 }
 
-func (c *Client) onNotify(string, json.RawMessage) {}
-
 func (c *Client) onRequest(method string, _ json.RawMessage) (any, *rpcError) {
 	return nil, &rpcError{Code: -32601, Message: "method not found: " + method}
 }

@@ -11,7 +11,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tunedev/atlas/internal/core/ports"
 )
+
+var _ ports.Agent = (*Client)(nil)
 
 func stubConfig(mode string, stderr *bytes.Buffer) Config {
 	cfg := testConfig()
