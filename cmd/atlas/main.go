@@ -43,6 +43,10 @@ func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index) tools.
 		TopLogProbs: cfg.Judge.TopLogProbs,
 		MaxTokens:   cfg.Judge.MaxTokens,
 	})
+	extractor := app.NewExtractor(provider, app.ExtractorConfig{
+		Temperature: cfg.Extract.Temperature,
+		MaxTokens:   cfg.Extract.MaxTokens,
+	})
 	return tools.NewRegistry(
 		tools.NewHTTP(cfg.Pack.HTTPTimeout, cfg.Pack.HTTPMaxBytes),
 		tools.NewModel(provider),
@@ -50,6 +54,7 @@ func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index) tools.
 		tools.NewFileRead(cfg.Pack.FileMaxBytes),
 		tools.NewDocsPut(docs, index),
 		tools.NewQuoteGround(),
+		tools.NewExtract(extractor),
 	)
 }
 
