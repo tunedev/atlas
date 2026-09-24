@@ -172,6 +172,16 @@ question `path` and collide with it.
 
 ## Known gaps
 
+- Two options that merely share a leading character can fail a call. The
+  option-set validation rejects an option that is a proper prefix of another,
+  but an engine may emit any prefix of a value as its first token, including a
+  single character. When that prefix matches two options, the read cannot tell
+  them apart and the whole call errors, taking every other answer in it with
+  it. Measured: `senior` and `staff` in one option set, against an alternative
+  `s`. Validation does not catch this, because neither option is a prefix of
+  the other; a pack author avoids it by giving a question's options distinct
+  initial characters.
+
 - A distribution of exactly 1.0 used to be indistinguishable from a
   manufactured one. It no longer is: every `Answer` now carries `Confidence`
   and `Coverage`, computed in `app.answerFor` from the same mass and
@@ -201,6 +211,17 @@ question `path` and collide with it.
   rejects a thin-coverage answer or treats a low `Confidence` differently —
   that judgment call belongs to whatever reads the record later (epic 11),
   now that it has the numbers to make it with.
+
+  A purpose-built classifier (`receptron/laya`, a decision head over a
+  ModernBERT encoder) was measured against this exact failure and does not
+  exhibit it: on every case where this judge's coverage was 0, the
+  classifier returned a real distribution spread across the declared
+  options, never a single-option collapse — by construction, since it reads
+  one logit per option's own marker rather than parsing generated text. It
+  was measured on a handful of subjects, not evaluated for calibration
+  against known-correct answers, and the Go binding it depends on is not yet
+  tagged upstream, so it is not wired in here. See
+  `docs/notes/2026-09-24-laya-spike.md`.
 - `optionMatch`'s trim strips surrounding whitespace, then one layer of `"`
   quotes, in that order — so `" x "` (space, x, space, inside quotes) keeps
   its inner spaces rather than trimming again after the quotes come off. No

@@ -27,7 +27,7 @@ steps:
           ask: Is this role a stretch for the candidate?
         - id: seniority
           type: score
-          levels: [junior, mid, senior, staff]
+          levels: [junior, mid, senior, principal]
           ask: How senior is this role?
         - id: focus
           type: choice
