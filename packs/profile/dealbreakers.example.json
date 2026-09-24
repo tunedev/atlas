@@ -1,0 +1,17 @@
+{
+  "rules": [
+    {
+      "id": "salary-floor",
+      "statement": "Base salary must be at least $145,000.",
+      "kind": "comparable",
+      "op": ">=",
+      "value": 145000
+    },
+    {
+      "id": "no-on-call",
+      "statement": "No on-call or pager rotation.",
+      "kind": "judged",
+      "threshold": 0.6
+    }
+  ]
+}

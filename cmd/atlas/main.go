@@ -47,6 +47,8 @@ func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index) tools.
 		tools.NewHTTP(cfg.Pack.HTTPTimeout, cfg.Pack.HTTPMaxBytes),
 		tools.NewModel(provider),
 		tools.NewJudge(judge, docs, index),
+		tools.NewFileRead(cfg.Pack.FileMaxBytes),
+		tools.NewDocsPut(docs, index),
 	)
 }
 

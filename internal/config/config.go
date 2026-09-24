@@ -23,6 +23,9 @@ type PackConfig struct {
 	Path         string
 	HTTPTimeout  time.Duration
 	HTTPMaxBytes int64
+	// FileMaxBytes bounds a file.read call. Over-limit fails; it is never
+	// truncated.
+	FileMaxBytes int64
 	// Vars overrides the pack's own vars for one run. Filled from repeated
 	// -var name=value flags only: vars are per-run input, not configuration.
 	Vars map[string]string
@@ -74,6 +77,9 @@ func (c Config) validate() error {
 	}
 	if c.Pack.HTTPMaxBytes <= 0 {
 		return fmt.Errorf("config: http max bytes must be positive, got %d", c.Pack.HTTPMaxBytes)
+	}
+	if c.Pack.FileMaxBytes <= 0 {
+		return fmt.Errorf("config: file max bytes must be positive, got %d", c.Pack.FileMaxBytes)
 	}
 	if c.Model.Timeout <= 0 {
 		return fmt.Errorf("config: model timeout must be positive, got %s", c.Model.Timeout)

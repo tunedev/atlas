@@ -77,6 +77,7 @@ func defaults() Config {
 		Pack: PackConfig{
 			HTTPTimeout:  20 * time.Second,
 			HTTPMaxBytes: 10 * 1024 * 1024,
+			FileMaxBytes: 10 * 1024 * 1024,
 			Vars:         map[string]string{},
 		},
 		Model: ModelConfig{
@@ -121,6 +122,13 @@ func applyEnv(c *Config) error {
 			return fmt.Errorf("config: ATLAS_PACK_HTTP_MAX_BYTES: invalid integer %q: %w", v, err)
 		}
 		c.Pack.HTTPMaxBytes = n
+	}
+	if v := os.Getenv("ATLAS_PACK_FILE_MAX_BYTES"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_PACK_FILE_MAX_BYTES: invalid integer %q: %w", v, err)
+		}
+		c.Pack.FileMaxBytes = n
 	}
 	if v := os.Getenv("ATLAS_MODEL_BASE_URL"); v != "" {
 		c.Model.BaseURL = v
@@ -223,6 +231,7 @@ func applyFlags(c *Config, args []string) error {
 	fs.Var(varsFlag(c.Pack.Vars), "var", "override a pack var for this run, as name=value (repeatable)")
 	fs.DurationVar(&c.Pack.HTTPTimeout, "http-timeout", c.Pack.HTTPTimeout, "timeout for http.request")
 	fs.Int64Var(&c.Pack.HTTPMaxBytes, "http-max-bytes", c.Pack.HTTPMaxBytes, "max response body size for http.request, in bytes")
+	fs.Int64Var(&c.Pack.FileMaxBytes, "file-max-bytes", c.Pack.FileMaxBytes, "max size of a file read by file.read or file.text, in bytes")
 	fs.StringVar(&c.Model.BaseURL, "model-base-url", c.Model.BaseURL, "OpenAI-compatible base URL")
 	fs.StringVar(&c.Model.Name, "model-name", c.Model.Name, "model identifier")
 	fs.DurationVar(&c.Model.Timeout, "model-timeout", c.Model.Timeout, "model call timeout")

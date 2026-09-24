@@ -422,3 +422,21 @@ func TestAVarFlagWithoutEqualsIsRejected(t *testing.T) {
 		t.Fatal("-var port was accepted with no value")
 	}
 }
+
+func TestFileMaxBytesHasAPositiveDefaultAndAnEnvVar(t *testing.T) {
+	cfg, err := config.Load([]string{"-pack", "p.yaml"})
+	if err != nil || cfg.Pack.FileMaxBytes <= 0 {
+		t.Fatalf("default FileMaxBytes = %d, err = %v", cfg.Pack.FileMaxBytes, err)
+	}
+	t.Setenv("ATLAS_PACK_FILE_MAX_BYTES", "2048")
+	cfg, err = config.Load([]string{"-pack", "p.yaml"})
+	if err != nil || cfg.Pack.FileMaxBytes != 2048 {
+		t.Errorf("FileMaxBytes = %d, err = %v", cfg.Pack.FileMaxBytes, err)
+	}
+}
+
+func TestZeroFileMaxBytesIsRejected(t *testing.T) {
+	if _, err := config.Load([]string{"-pack", "p.yaml", "-file-max-bytes", "0"}); err == nil {
+		t.Fatal("a zero file size limit was accepted")
+	}
+}
