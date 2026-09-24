@@ -215,8 +215,11 @@ func TestRenderJSONSerialisesAStepOutputForAnotherStepsStringField(t *testing.T)
 	if !strings.Contains(got, `"count": 3`) {
 		t.Errorf("a whole number did not render as one:\n%s", got)
 	}
-	if strings.Contains(got, "&amp;") || strings.Contains(got, "&lt;") || strings.Contains(got, "&gt;") {
-		t.Errorf("json is HTML-escaped; a hand-edited file would be unreadable:\n%s", got)
+	if !strings.Contains(got, `&`) || !strings.Contains(got, `<`) {
+		t.Errorf("literal & or < was escaped; output is HTML-escaped when it should not be:\n%s", got)
+	}
+	if !strings.Contains(got, "Kestrel & <Merlin>") {
+		t.Errorf("the data did not round-trip through JSON correctly:\n%s", got)
 	}
 	if _, present := back["gone"]; present {
 		t.Errorf("a null-valued key survived sanitising: %v", back)
