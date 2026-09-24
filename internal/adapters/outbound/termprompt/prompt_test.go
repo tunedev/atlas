@@ -115,3 +115,38 @@ func waitForPrompt(t *testing.T, out *syncBuffer, n int) string {
 	t.Fatalf("prompt %d never appeared:\n%s", n, out.String())
 	return ""
 }
+
+func TestALateAnswerDoesNotAnswerTheNextPrompt(t *testing.T) {
+	in, answer := io.Pipe()
+	out := &syncBuffer{}
+	p := termprompt.New(in, out)
+
+	req1 := ports.PermissionRequest{ToolName: "first.tool", Kind: "read", Summary: "First"}
+	req2 := ports.PermissionRequest{ToolName: "second.tool", Kind: "read", Summary: "Second"}
+
+	ctx1, cancel1 := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel1()
+
+	got1, err1 := p.Decide(ctx1, req1)
+	if got1 != ports.PermissionDeny || err1 == nil {
+		t.Errorf("first Decide = %q, %v; want deny with error", got1, err1)
+	}
+
+	_, _ = io.WriteString(answer, "y\n")
+
+	var got2 ports.PermissionDecision
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		got2, _ = p.Decide(context.Background(), req2)
+	}()
+
+	waitForPrompt(t, out, 2)
+	_, _ = io.WriteString(answer, "n\n")
+	wg.Wait()
+
+	if got2 != ports.PermissionDeny {
+		t.Errorf("second Decide = %q; want deny (the y from first was discarded)", got2)
+	}
+}
