@@ -428,13 +428,14 @@ func TestAgentConfigFromEnvAndFlags(t *testing.T) {
 	t.Setenv("ATLAS_AGENT_ARGS", "--acp  --quiet")
 	t.Setenv("ATLAS_AGENT_TOOLS", "http.request, judge.ask")
 	t.Setenv("ATLAS_PERMISSION_RULES", "http.request:atlas:allow, *:execute:ask,*:*:deny")
-	cfg, err := config.Load([]string{"-pack", "p.yaml", "-agent-turn-timeout", "2m", "-agent-workdir", "/srv/work"})
+	workDir := t.TempDir()
+	cfg, err := config.Load([]string{"-pack", "p.yaml", "-agent-turn-timeout", "2m", "-agent-workdir", workDir})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(cfg.Agent.Args, []string{"--acp", "--quiet"}) ||
 		!reflect.DeepEqual(cfg.Agent.Tools, []string{"http.request", "judge.ask"}) ||
-		cfg.Agent.TurnTimeout != 2*time.Minute || cfg.Agent.WorkDir != "/srv/work" {
+		cfg.Agent.TurnTimeout != 2*time.Minute || cfg.Agent.WorkDir != workDir {
 		t.Errorf("agent config %+v", cfg.Agent)
 	}
 	want := []config.PermissionRule{
