@@ -2,6 +2,7 @@ package mcpserve_test
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -250,5 +251,54 @@ func TestConfigErrorsFailAtConstruction(t *testing.T) {
 	clash := registry{"a.b": tool, "a_b": tool}
 	if _, err := mcpserve.NewHandler(clash, &fixed{}, mcpserve.Config{Tools: []string{"a.b", "a_b"}}); err == nil || !strings.Contains(err.Error(), "a_b") {
 		t.Errorf("clash: err = %v", err)
+	}
+}
+
+// callRaw posts body to a server whose permission engine is perm and
+// returns what perm was asked. It bypasses the SDK client, which rewrites
+// arguments before they reach the wire.
+func callRaw(t *testing.T, perm *fixed, body string) []ports.PermissionRequest {
+	t.Helper()
+	token := mcpserve.NewToken()
+	h, err := mcpserve.NewHandler(registry{"weather.get": &echoTool{}}, perm,
+		mcpserve.Config{Tools: []string{"weather.get"}, MaxResultBytes: 1 << 20, SummaryBytes: 200, Token: token, CallTimeout: testCallTimeout})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/mcp", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	resp, err := (&http.Client{Transport: bearer{token}}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if len(perm.asked) != 1 {
+		t.Fatalf("permission asked %d times; want 1 (status %s, reply %s)", len(perm.asked), resp.Status, reply)
+	}
+	return perm.asked
+}
+
+func TestPermissionSummaryIsOneCompactLine(t *testing.T) {
+	body := "{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"tools/call\",\n" +
+		" \"params\": {\"name\": \"weather_get\", \"arguments\": {\n    \"city\":  \"Oslo\",\r\n\t\"days\": 2\n  }}}"
+	asked := callRaw(t, &fixed{d: ports.PermissionDeny}, body)
+	if got, want := asked[0].Summary, `weather.get {"city":"Oslo","days":2}`; got != want {
+		t.Errorf("summary %q; want %q", got, want)
+	}
+}
+
+func TestACallWithoutArgumentsIsAsked(t *testing.T) {
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"weather_get"}}`
+	asked := callRaw(t, &fixed{d: ports.PermissionDeny}, body)
+	if got := asked[0].Summary; !strings.HasPrefix(got, "weather.get") {
+		t.Errorf("summary %q; want one naming weather.get", got)
 	}
 }

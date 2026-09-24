@@ -4,6 +4,7 @@
 package mcpserve
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -99,7 +100,7 @@ func handle(tool ports.Tool, perm ports.Permission, cfg Config) mcp.ToolHandler 
 		d, err := perm.Decide(ctx, ports.PermissionRequest{
 			ToolName: tool.Name(),
 			Kind:     Kind,
-			Summary:  app.BoundSummary(tool.Name()+" "+string(args), cfg.SummaryBytes),
+			Summary:  app.BoundSummary(tool.Name()+" "+compactJSON(args), cfg.SummaryBytes),
 		})
 		if err != nil || d != ports.PermissionAllow {
 			return failed("permission denied for %s", tool.Name()), nil
@@ -168,4 +169,14 @@ func Listen(addr string, h http.Handler, headerTimeout time.Duration) (*http.Ser
 	srv := &http.Server{Handler: h, ReadHeaderTimeout: headerTimeout}
 	go func() { _ = srv.Serve(ln) }() // owned by srv, stops at srv.Shutdown or srv.Close
 	return srv, "http://" + ln.Addr().String() + endpoint, nil
+}
+
+// compactJSON is raw without insignificant whitespace. raw is empty when the
+// call carried no arguments, and is then returned as it is.
+func compactJSON(raw json.RawMessage) string {
+	var b bytes.Buffer
+	if json.Compact(&b, raw) != nil {
+		return string(raw)
+	}
+	return b.String()
 }
