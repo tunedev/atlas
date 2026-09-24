@@ -119,7 +119,50 @@ func TestDoFailsWhenTheAgentDiesMidTurn(t *testing.T) {
 	}
 }
 
-func TestARealSubprocessDyingMidTurnFailsTheTurn(t *testing.T) {
+func TestDoFailsWhenSessionNewReturnsNoSessionID(t *testing.T) {
+	c, fa := startTestClient(t, testConfig(), map[string]any{}, allowAll{})
+	go func() {
+		fa.reply(fa.expect("session/new"), map[string]any{"sessionId": ""})
+	}()
+	_, sid, err := c.Do(context.Background(), ports.AgentTask{Prompt: "p", WorkDir: t.TempDir()}, "", func(ports.AgentEvent) {})
+	if err == nil || !strings.Contains(err.Error(), "no session id") {
+		t.Errorf("err = %v; want one naming a missing session id", err)
+	}
+	if sid != "" {
+		t.Errorf("sid = %q; want empty", sid)
+	}
+}
+
+// TestAnUndeliveredUpdateIsReleasedWhenTheTurnEnds proves onNotify cannot
+// block the read loop forever once a turn is over: with nobody reading
+// t.updates, the send blocks until c.end closes t.ended, not indefinitely.
+func TestAnUndeliveredUpdateIsReleasedWhenTheTurnEnds(t *testing.T) {
+	c, _ := startTestClient(t, testConfig(), map[string]any{}, allowAll{})
+	trn := c.begin("s1")
+
+	done := make(chan struct{})
+	go func() {
+		c.onNotify("session/update", json.RawMessage(
+			`{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"x"}}}`))
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		t.Fatal("onNotify returned before the turn ended; nobody was reading its updates")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	c.end(trn)
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("onNotify did not return after the turn ended")
+	}
+}
+
+func TestARealSubprocessDyingWhileOpeningASessionFailsTheTurn(t *testing.T) {
 	c, err := New(context.Background(), stubConfig("die", &bytes.Buffer{}), allowAll{})
 	if err != nil {
 		t.Fatal(err)

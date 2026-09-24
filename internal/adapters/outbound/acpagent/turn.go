@@ -62,6 +62,9 @@ func (c *Client) open(ctx context.Context, t *turn, workDir string) ([]string, e
 	if err := c.await(ctx, t, "session/new", newSessionParams{CWD: workDir, MCPServers: c.mcpServers()}, &res, nil); err != nil {
 		return nil, err
 	}
+	if res.SessionID == "" {
+		return nil, errors.New("acpagent: session/new returned no session id")
+	}
 	c.mu.Lock()
 	t.sessionID = res.SessionID
 	c.mu.Unlock()
