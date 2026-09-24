@@ -198,3 +198,21 @@ func TestAgentDoReportsBothWhenAFailedTurnCannotBeRecorded(t *testing.T) {
 		t.Errorf("err = %v; want both the turn's error and the recording's", err)
 	}
 }
+
+func TestAgentDoRefusesASessionFromAnotherProtocolVersion(t *testing.T) {
+	first, docs, _ := newAgentTool(t, &scriptedAgent{}, "agent-bin")
+	if _, err := first.Invoke(context.Background(), map[string]string{"prompt": "a", "subject_id": "notes-1"}); err != nil {
+		t.Fatal(err)
+	}
+	agent := &scriptedAgent{}
+	upgraded := tools.NewAgent(agent, docs, &bytes.Buffer{}, tools.AgentSettings{
+		Command: "agent-bin", Args: []string{"--acp"}, ProtocolVersion: 2, WorkDir: "/work", Timeout: time.Minute,
+	})
+	_, err := upgraded.Invoke(context.Background(), map[string]string{"prompt": "b", "subject_id": "notes-1", "resume": "true"})
+	if err == nil || !strings.Contains(err.Error(), "protocol version 1") || !strings.Contains(err.Error(), "agent's 2") {
+		t.Errorf("err = %v; want one naming both protocol versions", err)
+	}
+	if agent.gotSession != "" || agent.gotTask.Prompt != "" {
+		t.Errorf("the agent was asked to resume %q", agent.gotSession)
+	}
+}

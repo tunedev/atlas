@@ -63,6 +63,10 @@ func (t *Agent) Invoke(ctx context.Context, with map[string]string) (any, error)
 			return nil, fmt.Errorf("agent.do: session for %s belongs to %s %v, not the configured %s %v",
 				subjectID, prev.Command, prev.Args, t.s.Command, t.s.Args)
 		}
+		if prev.ProtocolVersion != t.s.ProtocolVersion {
+			return nil, fmt.Errorf("agent.do: session for %s was made with protocol version %d, not the configured agent's %d",
+				subjectID, prev.ProtocolVersion, t.s.ProtocolVersion)
+		}
 		session = prev
 	}
 
