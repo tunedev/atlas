@@ -417,6 +417,79 @@ identical write shape (subject-keyed document plus a flat index row) is a real p
 epics now have in common — worth a shared helper if a third case shows up, not worth
 extracting for two.
 
+## The record versus the rendered artifact (deferred to 9.5)
+
+**The record holds structured history and text. A rendered document is a build artifact,
+not a record.** `profile/history.json` (6.1) and the evidence corpus (6.4) are the record;
+a PDF produced from either is something derived from them, on demand, never itself the
+thing committed as the profile. Git holding diffable text keeps a tailored CV or letter
+reviewable as a diff between one application and the next — two paragraphs changed for two
+different postings should show up as two changed lines, not two opaque binary blobs. This
+also softens, without resolving, the harness spec's open question about binary artifacts in
+git (`docs/specs/2026-09-17-job-hunt-harness-design.md`, "Binary artifacts in git"): if
+Epic 9 never commits the rendered PDF at all, that question narrows to whatever it produces
+as a *build output* (regenerable, arguably untracked) rather than as part of the record
+itself.
+
+**The direction Epic 9 should inherit — a direction, not a decision here:** content as
+data, markup as a template rendering that data, and the renderer as a swappable step behind
+it. Concretely, a CV variant's content lives in structured JSON (drawn from
+`profile/history.json`), a template turns that JSON into markup (Typst source, LaTeX, or
+similar), and a renderer turns that markup into the final document. The renderer is a
+natural `Converter` pair — markup format in, PDF out — in the shape the sibling `cana`
+service already defines: `cana`'s `Converter` interface names the `Pair` of formats it
+serves (`Pair() Pair`) and streams `src` to `dst` (`Convert(ctx, dst io.Writer, src
+io.Reader) error`), with no format arguments on the method itself and no per-format
+identifier; a registry indexes implementations by `Pair`, and a `Chain` composes two
+converters into a third so the registry cannot tell a chained conversion from a direct one.
+That port is a plausible long-term home for the markup-to-PDF step once `cana` has a
+conversion surface at all — **today it does not**: `cana` is scaffolding, `canad` resolves
+config and serves `/ops/config`, and no `Converter` is registered or wired for any pair.
+Until then, the realistic path is a local single-binary renderer invoked directly, the same
+"look for a binary that is already there" instinct this spec already applies to
+`pdftotext`.
+
+**Why the source of truth is the structured history, not the markup.** Story 9.1 wants "a
+CV variant per role: drawn from the structured history, ordered for this posting" — that is
+a data operation (select and reorder entries from `profile/history.json`), not a markup
+operation. If the record were the markup file instead, producing a variant would mean a
+model editing LaTeX or Typst source directly, and a model editing markup plumbing (a stray
+brace, an unbalanced environment, a broken template include) can produce a document that
+still renders — silently wrong, not loudly broken — which is a strictly worse failure mode
+than a data-shape error would be.
+
+**The toolchain constraint, factually, without choosing.** A full TeX distribution is a
+multi-gigabyte install, which fails this project's "installed by a friend" bar outright; the
+plane test in `../CLAUDE.md` needs a renderer that is one binary, works offline, and needs
+no separate install step. Two realistic single-binary candidates exist, named here without
+choosing between them:
+
+- **Typst** — a single self-contained CLI binary (on the order of 15 MB), needing no TeX
+  installation, whose core compilation works fully offline. Third-party packages it
+  references are fetched over the network on first use and then cached locally, so a
+  document using only the built-in library compiles offline from a cold start, and one
+  using packages needs one prior online run (or a pre-populated cache) to be reproducible
+  offline afterward.
+- **Tectonic** — also a single self-contained binary (a modernized TeX/LaTeX engine over
+  XeTeX and TeXLive), but by default it resolves the packages a document needs from a
+  network-hosted "bundle" (a zip of TeX Live files) the first time each one is used, rather
+  than requiring a preinstalled TeX tree. Fully offline operation is possible but means
+  pointing it at a local bundle explicitly, not the out-of-the-box behaviour.
+
+(Verified by searching current documentation and community sources for each project's
+distribution model and offline behaviour, rather than asserting from training memory; not
+verified against a real tailored-output test, which is what 9.5 should do before choosing.)
+Epic 9 story 9.5 is where either is actually picked, in front of real tailored output, not
+here.
+
+**One consequence for Epic 6 itself.** Whatever the ingest path stores must not assume a
+PDF is the artifact of record. Checked against this spec: `profile/source/<filename>`
+(**Where each part lives**) stores the user's *uploaded* CV — ingest's input, kept for
+re-extraction — never a rendered output, so nothing in this spec currently treats a PDF as
+the record. This paragraph exists to keep it that way as Epic 9 is built: the record stays
+`profile/history.json` and the evidence corpus, and any future rendered document, of any
+format, is a build artifact derived from them, not a replacement for them.
+
 ## Testing (including offline, no model)
 
 | What | How | Needs a model? |
@@ -446,6 +519,7 @@ would otherwise be the thing under test.
 | Per-claim semantic ("is this a fair characterisation") judging by default | Available via `judge.ask`; not mandated here, to keep ingest to one model call by default |
 | DuckDB indexing of profile revisions | No query scans profile history yet; wiring it would be a port used because it exists |
 | True deletion of a committed profile document | Unresolved — see below |
+| The rendering toolchain (Typst, Tectonic, or otherwise) | Epic 9 story 9.5 decides, with real tailored output in front of it — see **The record versus the rendered artifact** |
 
 ## Open questions
 
