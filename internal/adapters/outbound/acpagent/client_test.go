@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -81,6 +82,26 @@ func TestCloseKillsAnAgentThatIgnoresEOF(t *testing.T) {
 	}
 	if time.Since(start) > 3*time.Second {
 		t.Errorf("Close took %s; the kill did not happen", time.Since(start))
+	}
+}
+
+func TestCloseKillsTheAgentsDescendants(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process groups are a unix mechanism")
+	}
+	c, err := New(context.Background(), stubConfig("orphan", &bytes.Buffer{}), allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err = c.Close(ctx)
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("Close err = %v; want it to report the deadline", err)
+	}
+	if time.Since(start) > 3*time.Second {
+		t.Errorf("Close took %s; a descendant kept the pipe open", time.Since(start))
 	}
 }
 

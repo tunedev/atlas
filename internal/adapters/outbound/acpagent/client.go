@@ -36,17 +36,19 @@ type MCPServer struct {
 
 // Client is one running agent subprocess. It implements ports.Agent.
 type Client struct {
-	conn  *conn
-	stdin io.Closer
-	cmd   *exec.Cmd
-	perm  ports.Permission
-	cfg   Config
+	conn   *conn
+	stdin  io.Closer
+	stdout io.Closer
+	cmd    *exec.Cmd
+	perm   ports.Permission
+	cfg    Config
 
 	version int
 	caps    agentCapabilities
 
 	closing   chan struct{}
 	closeOnce sync.Once
+	closeErr  error
 
 	turnMu sync.Mutex // one turn at a time
 	mu     sync.Mutex // guards turn
@@ -60,6 +62,7 @@ func New(ctx context.Context, cfg Config, perm ports.Permission) (*Client, error
 	cmd := exec.Command(cfg.Command, cfg.Args...)
 	cmd.Env = cfg.Env
 	cmd.Stderr = &prefixWriter{w: cfg.Stderr, prefix: filepath.Base(cfg.Command) + ": "}
+	isolate(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("acpagent: stdin: %w", err)
@@ -74,6 +77,7 @@ func New(ctx context.Context, cfg Config, perm ports.Permission) (*Client, error
 
 	c := newClient(stdout, stdin, cfg, perm)
 	c.cmd = cmd
+	c.stdout = stdout
 	if err := c.initialize(ctx); err != nil {
 		c.kill()
 		c.conn.wait()
@@ -113,14 +117,28 @@ func (c *Client) initialize(ctx context.Context) error {
 func (c *Client) ProtocolVersion() int { return c.version }
 
 // Close closes the agent's stdin, which ACP agents treat as shutdown, and
-// waits for it to exit. If ctx ends first the process is killed.
+// waits for it to exit. If ctx ends first, the agent's whole process group
+// is killed and its stdout closed directly, which ends the read loop even
+// when a descendant process inherited the pipe and kept it open. Close is
+// idempotent: only the first call's ctx is used, and every call returns
+// that call's result.
 func (c *Client) Close(ctx context.Context) error {
-	c.closeOnce.Do(func() { close(c.closing) })
+	c.closeOnce.Do(func() {
+		close(c.closing)
+		c.closeErr = c.shutdown(ctx)
+	})
+	return c.closeErr
+}
+
+func (c *Client) shutdown(ctx context.Context) error {
 	_ = c.stdin.Close()
 
 	stopped := make(chan error, 1)
-	// Owned by Close; stops once the read loop, request handlers and the
-	// process have all finished, which the kill below guarantees.
+	// Owned by shutdown; stops once the read loop, request handlers and the
+	// process have all finished. On ctx expiry, kill below guarantees this:
+	// it kills the whole process group and closes stdout directly, so the
+	// read loop ends even if a descendant escaped the group and kept the
+	// pipe open.
 	go func() {
 		c.conn.wait()
 		stopped <- c.reap()
@@ -144,9 +162,16 @@ func (c *Client) reap() error {
 	return nil
 }
 
+// kill ends the agent's whole process group and closes its stdout. Closing
+// stdout here, before cmd.Wait, is deliberate: it is what unblocks the read
+// loop if a descendant process inherited the pipe and the group kill did
+// not reach it.
 func (c *Client) kill() {
 	if c.cmd != nil {
-		_ = c.cmd.Process.Kill()
+		killTree(c.cmd)
+	}
+	if c.stdout != nil {
+		_ = c.stdout.Close()
 	}
 }
 
