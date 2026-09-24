@@ -5,15 +5,20 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 
 	"go.opentelemetry.io/otel"
 
+	"github.com/tunedev/atlas/internal/adapters/inbound/mcpserve"
 	"github.com/tunedev/atlas/internal/adapters/inbound/packfile"
+	"github.com/tunedev/atlas/internal/adapters/outbound/acpagent"
 	"github.com/tunedev/atlas/internal/adapters/outbound/gitdocs"
 	"github.com/tunedev/atlas/internal/adapters/outbound/openaiprov"
 	"github.com/tunedev/atlas/internal/adapters/outbound/sqlindex"
+	"github.com/tunedev/atlas/internal/adapters/outbound/termprompt"
 	"github.com/tunedev/atlas/internal/adapters/outbound/tools"
 	"github.com/tunedev/atlas/internal/config"
 	"github.com/tunedev/atlas/internal/core/app"
@@ -48,6 +53,82 @@ func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index) tools.
 		tools.NewModel(provider),
 		tools.NewJudge(judge, docs, index),
 	)
+}
+
+// startAgent launches the configured agent, offers it the configured tools
+// from base over MCP, and returns the agent.do tool with a function that
+// stops both. base is the registry without agent.do, so the agent cannot
+// reach itself.
+func startAgent(ctx context.Context, cfg config.Config, base ports.Registry, docs ports.Docs) (ports.Tool, func() error, error) {
+	perm := app.NewPermissionPolicy(permissionRules(cfg.Permission.Rules), termprompt.New(os.Stdin, os.Stderr))
+
+	var srv *http.Server
+	var server *acpagent.MCPServer
+	if cfg.Agent.Tools != nil {
+		token := mcpserve.NewToken()
+		handler, err := mcpserve.NewHandler(base, perm, mcpserve.Config{
+			Tools:          cfg.Agent.Tools,
+			MaxResultBytes: cfg.Agent.MaxToolResultBytes,
+			SummaryBytes:   cfg.Permission.SummaryBytes,
+			Token:          token,
+			CallTimeout:    cfg.Agent.TurnTimeout,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		var url string
+		srv, url, err = mcpserve.Listen(cfg.Agent.MCPAddr, handler, cfg.Agent.MCPHeaderTimeout)
+		if err != nil {
+			return nil, nil, err
+		}
+		server = &acpagent.MCPServer{Name: mcpserve.ServerName, URL: url, Headers: mcpserve.AuthHeader(token)}
+	}
+
+	startCtx, cancel := context.WithTimeout(ctx, cfg.Agent.StartTimeout)
+	defer cancel()
+	client, err := acpagent.New(startCtx, acpagent.Config{
+		Command:         cfg.Agent.Command,
+		Args:            cfg.Agent.Args,
+		Env:             config.AgentEnv(os.Environ()),
+		Stderr:          os.Stderr,
+		MaxMessageBytes: cfg.Agent.MaxMessageBytes,
+		SummaryBytes:    cfg.Permission.SummaryBytes,
+		MCP:             server,
+		WaitDelay:       cfg.Agent.CloseTimeout,
+	}, perm)
+	if err != nil {
+		if srv != nil {
+			_ = srv.Close()
+		}
+		return nil, nil, err
+	}
+
+	stop := func() error {
+		stopCtx, cancel := context.WithTimeout(context.Background(), cfg.Agent.CloseTimeout)
+		defer cancel()
+		err := client.Close(stopCtx)
+		if srv != nil {
+			err = errors.Join(err, srv.Shutdown(stopCtx))
+		}
+		return err
+	}
+	tool := tools.NewAgent(client, docs, os.Stderr, tools.AgentSettings{
+		Command:         cfg.Agent.Command,
+		Args:            cfg.Agent.Args,
+		ProtocolVersion: client.ProtocolVersion(),
+		WorkDir:         cfg.Agent.WorkDir,
+		Timeout:         cfg.Agent.TurnTimeout,
+	})
+	return tool, stop, nil
+}
+
+// permissionRules converts configured rules into the policy's own type.
+func permissionRules(rules []config.PermissionRule) []app.PermissionRule {
+	out := make([]app.PermissionRule, len(rules))
+	for i, r := range rules {
+		out[i] = app.PermissionRule{ToolName: r.ToolName, Kind: r.Kind, Decision: ports.PermissionDecision(r.Decision)}
+	}
+	return out
 }
 
 func run() error {
@@ -87,6 +168,19 @@ func run() error {
 	defer func() { _ = index.Close() }()
 
 	registry := buildRegistry(cfg, docs, index)
+
+	if cfg.Agent.Command != "" {
+		agentTool, stop, err := startAgent(ctx, cfg, registry, docs)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if err := stop(); err != nil {
+				fmt.Fprintf(os.Stderr, "atlas: %v\n", err)
+			}
+		}()
+		registry = registry.With(agentTool)
+	}
 
 	// telemetry.Init has already installed the tracer provider, so the
 	// tracer obtained here is the real one when tracing is enabled and the
