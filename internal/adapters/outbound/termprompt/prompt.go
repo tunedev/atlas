@@ -23,12 +23,12 @@ type Prompt struct {
 	slot  chan struct{}
 }
 
-// New starts the reader goroutine that owns in. It reads lines until end of
-// input or a read error and then closes the line channel. Lines no Decide
-// has taken wait in the reader, at most two at a time, and the next Decide
-// discards them before it prints its prompt.
+// New starts the reader goroutine that owns in. A line reaches only a
+// Decide already waiting for it after printing its prompt; any other line
+// is dropped. At end of input or a read error the reader closes the line
+// channel, and every later Decide denies.
 func New(in io.Reader, out io.Writer) *Prompt {
-	lines := make(chan string, 1)
+	lines := make(chan string)
 	// Owned by the Prompt; stops at end of input or a read error, and
 	// otherwise lives as long as in does.
 	go read(in, lines)
@@ -38,7 +38,10 @@ func New(in io.Reader, out io.Writer) *Prompt {
 func read(in io.Reader, lines chan<- string) {
 	s := bufio.NewScanner(in)
 	for s.Scan() {
-		lines <- s.Text()
+		select {
+		case lines <- s.Text():
+		default:
+		}
 	}
 	close(lines)
 }
@@ -54,7 +57,6 @@ func (p *Prompt) Decide(ctx context.Context, req ports.PermissionRequest) (ports
 		return ports.PermissionDeny, fmt.Errorf("termprompt: %w", err)
 	}
 
-	p.discardStale()
 	fmt.Fprintf(p.out, "atlas: the agent wants to run %s (%s)\n  %s\nallow? [y/N] ",
 		graphic(req.ToolName), graphic(req.Kind), graphic(req.Summary))
 	select {
@@ -66,22 +68,6 @@ func (p *Prompt) Decide(ctx context.Context, req ports.PermissionRequest) (ports
 	case <-ctx.Done():
 		fmt.Fprintln(p.out)
 		return ports.PermissionDeny, fmt.Errorf("termprompt: %w", ctx.Err())
-	}
-}
-
-// discardStale drops the lines already read while no prompt was showing.
-// It leaves a closed channel closed, so the next receive still sees end of
-// input.
-func (p *Prompt) discardStale() {
-	for {
-		select {
-		case _, ok := <-p.lines:
-			if !ok {
-				return
-			}
-		default:
-			return
-		}
 	}
 }
 

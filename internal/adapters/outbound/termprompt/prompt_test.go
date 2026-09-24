@@ -36,11 +36,23 @@ func TestAnswers(t *testing.T) {
 		"n\n": ports.PermissionDeny, "\n": ports.PermissionDeny, "maybe\n": ports.PermissionDeny,
 		"": ports.PermissionDeny, // EOF
 	}
-	for in, want := range cases {
+	for typed, want := range cases {
+		in, answer := io.Pipe()
 		out := &syncBuffer{}
-		got, err := termprompt.New(strings.NewReader(in), out).Decide(context.Background(), req)
+		p := termprompt.New(in, out)
+		// Owned by this case; ends once the answer is typed and in closed,
+		// or after two seconds with no prompt.
+		go func() {
+			for deadline := time.Now().Add(2 * time.Second); !strings.Contains(out.String(), "allow? [y/N]") && time.Now().Before(deadline); {
+				time.Sleep(5 * time.Millisecond)
+			}
+			time.Sleep(10 * time.Millisecond)
+			_, _ = io.WriteString(answer, typed)
+			_ = answer.Close()
+		}()
+		got, err := p.Decide(context.Background(), req)
 		if err != nil || got != want {
-			t.Errorf("answer %q: Decide = %q, %v; want %q", in, got, err, want)
+			t.Errorf("answer %q: Decide = %q, %v; want %q", typed, got, err, want)
 		}
 		for _, part := range []string{req.ToolName, req.Kind, req.Summary} {
 			if !strings.Contains(out.String(), part) {
@@ -98,13 +110,16 @@ func TestConcurrentPromptsDoNotInterleave(t *testing.T) {
 }
 
 // waitForPrompt waits until out holds n prompts and returns the tool name
-// in the most recent one.
+// in the most recent one. A line reaches only a Decide already waiting in
+// its receive, which it enters just after printing, so it also allows that
+// step to happen before the caller types.
 func waitForPrompt(t *testing.T, out *syncBuffer, n int) string {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		s := out.String()
 		if strings.Count(s, "allow? [y/N]") == n {
+			time.Sleep(10 * time.Millisecond)
 			last := s[strings.LastIndex(s, "run ")+len("run "):]
 			return last[:strings.Index(last, " ")]
 		}
@@ -251,5 +266,42 @@ func TestAgentTextCannotRedrawThePrompt(t *testing.T) {
 		if !strings.Contains(s, part) {
 			t.Errorf("prompt %q does not show %q escaped", s, part)
 		}
+	}
+}
+
+func TestStaleLinesNeverAnswerTheNextPrompt(t *testing.T) {
+	variants := map[string][]string{
+		"one line per write": {"y\n", "y\n", "y\n"},
+		"one write":          {"y\ny\ny\n"},
+	}
+	for name, writes := range variants {
+		t.Run(name, func(t *testing.T) {
+			for range 50 {
+				in, answer := io.Pipe()
+				p := termprompt.New(in, &syncBuffer{})
+
+				timedOut, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+				_, _ = p.Decide(timedOut, req)
+				cancel()
+
+				// Owned by this iteration; answer.Close below ends a write
+				// that no reader takes.
+				go func() {
+					for _, w := range writes {
+						_, _ = io.WriteString(answer, w)
+					}
+				}()
+				// Gives the reader time to take the late lines from in.
+				time.Sleep(5 * time.Millisecond)
+
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+				d, err := p.Decide(ctx, ports.PermissionRequest{ToolName: "shell.exec", Kind: "execute", Summary: "rm"})
+				cancel()
+				_ = answer.Close()
+				if d != ports.PermissionDeny || !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("Decide after stale lines = %q, %v; want deny with the deadline error", d, err)
+				}
+			}
+		})
 	}
 }
