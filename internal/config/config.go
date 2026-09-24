@@ -24,8 +24,8 @@ type PackConfig struct {
 	Path         string
 	HTTPTimeout  time.Duration
 	HTTPMaxBytes int64
-	// FileMaxBytes bounds a file.read call. Over-limit fails; it is never
-	// truncated.
+	// FileMaxBytes bounds a file.read or file.text call. Over-limit fails; it
+	// is never truncated.
 	FileMaxBytes int64
 	// Vars overrides the pack's own vars for one run. Filled from repeated
 	// -var name=value flags only: vars are per-run input, not configuration.

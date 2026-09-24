@@ -12,8 +12,8 @@ import (
 // The harness knows nothing about any use case. A pack supplies every word
 // specific to what it does; the Go tree supplies none of them.
 //
-// Deliberately includes every pack's vocabulary: a harness that is generic for one use case and not another is
-// not generic.
+// Deliberately includes every pack's vocabulary: a harness that is generic
+// for one use case and not another is not generic.
 func TestGoTreeIsFreeOfUseCaseVocabulary(t *testing.T) {
 	forbidden := []string{
 		"posting", "greenhouse", "cover letter", "coverletter",
