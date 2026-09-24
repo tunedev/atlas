@@ -56,6 +56,18 @@ func TestRecordDocumentRejectsAMissingPathOrKind(t *testing.T) {
 	}
 }
 
+func TestRecordDocumentRejectsANonCanonicalPath(t *testing.T) {
+	d := aDocument()
+	d.Path = "decisions/../profile/x.json"
+	docs, index := newFakeDocs(), &fakeIndex{}
+	if _, err := app.RecordDocument(context.Background(), docs, index, d); err == nil {
+		t.Fatal("a non-canonical path was recorded")
+	}
+	if len(docs.put) != 0 {
+		t.Errorf("a rejected path was written anyway")
+	}
+}
+
 func TestRecordDocumentReportsAFailedUpsertWithTheRevision(t *testing.T) {
 	docs := newFakeDocs()
 	rev, err := app.RecordDocument(context.Background(), docs, &failingIndex{err: errors.New("index down")}, aDocument())

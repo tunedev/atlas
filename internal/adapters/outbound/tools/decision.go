@@ -30,7 +30,7 @@ func (t *Decision) Invoke(ctx context.Context, with map[string]string) (any, err
 
 	var verdict string
 	if jpath != "" {
-		v, err := app.VerdictAt(ctx, t.docs, jpath, question)
+		v, err := app.VerdictAt(ctx, t.docs, with["subject_id"], jpath, question)
 		if err != nil {
 			return nil, fmt.Errorf("decision.record: %w", err)
 		}

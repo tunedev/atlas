@@ -300,6 +300,13 @@ func TestTheDocumentWhenHasMillisecondPrecision(t *testing.T) {
 	}
 }
 
+func TestRecordJudgementRejectsASubjectIDContainingASlash(t *testing.T) {
+	docs, index := newFakeDocs(), &fakeIndex{}
+	if _, err := app.RecordJudgement(context.Background(), docs, index, "a/b", recordQuestions(), aJudgement()); err == nil {
+		t.Fatal("a subject id containing a slash was recorded")
+	}
+}
+
 func TestAnEmptySubjectIDIsAnError(t *testing.T) {
 	docs, index := newFakeDocs(), &fakeIndex{}
 	if _, err := app.RecordJudgement(context.Background(), docs, index, "", recordQuestions(), aJudgement()); err == nil {

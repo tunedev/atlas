@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
+	"strings"
 	"time"
 
 	"github.com/tunedev/atlas/internal/core/ports"
@@ -37,6 +39,9 @@ func RecordDocument(ctx context.Context, docs ports.Docs, index ports.Index, d D
 	if d.Path == "" {
 		return "", errors.New("record: path is empty")
 	}
+	if path.Clean(d.Path) != d.Path || d.Path == ".." || strings.HasPrefix(d.Path, "../") || path.IsAbs(d.Path) {
+		return "", fmt.Errorf("record: path %q is not a clean relative path", d.Path)
+	}
 	if d.Kind == "" {
 		return "", fmt.Errorf("record: %s: kind is empty", d.Path)
 	}
@@ -55,4 +60,13 @@ func RecordDocument(ctx context.Context, docs ports.Docs, index ports.Index, d D
 		return rev, fmt.Errorf("record: upsert %s: %w", d.Path, err)
 	}
 	return rev, nil
+}
+
+// checkSubjectID rejects a subject id that could carry a document outside
+// its own directory: one containing a path separator or a ".." segment.
+func checkSubjectID(id string) error {
+	if strings.Contains(id, "/") || strings.Contains(id, "..") {
+		return fmt.Errorf("subject id %q is not a plain name", id)
+	}
+	return nil
 }

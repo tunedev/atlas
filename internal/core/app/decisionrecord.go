@@ -40,6 +40,9 @@ func RecordDecision(ctx context.Context, docs ports.Docs, index ports.Index, d D
 	if d.SubjectID == "" {
 		return "", errors.New("decision: subject id is empty")
 	}
+	if err := checkSubjectID(d.SubjectID); err != nil {
+		return "", fmt.Errorf("decision: %w", err)
+	}
 	if d.Choice == "" {
 		return "", errors.New("decision: choice is empty")
 	}
@@ -80,8 +83,9 @@ func RecordDecision(ctx context.Context, docs ports.Docs, index ports.Index, d D
 
 // VerdictAt returns the option the judgement at judgementPath chose for
 // questionID, so a decision can snapshot what the model said when the
-// person chose. A missing judgement or question is an error.
-func VerdictAt(ctx context.Context, docs ports.Docs, judgementPath, questionID string) (string, error) {
+// person chose. A missing judgement or question is an error, and so is a
+// judgement about a subject other than subjectID.
+func VerdictAt(ctx context.Context, docs ports.Docs, subjectID, judgementPath, questionID string) (string, error) {
 	body, err := docs.Get(ctx, judgementPath)
 	if err != nil {
 		return "", fmt.Errorf("decision: read judgement %s: %w", judgementPath, err)
@@ -92,6 +96,9 @@ func VerdictAt(ctx context.Context, docs ports.Docs, judgementPath, questionID s
 	var doc judgementDoc
 	if err := json.Unmarshal(body, &doc); err != nil {
 		return "", fmt.Errorf("decision: decode judgement %s: %w", judgementPath, err)
+	}
+	if doc.SubjectID != subjectID {
+		return "", fmt.Errorf("decision: judgement %s is about %q, not %q", judgementPath, doc.SubjectID, subjectID)
 	}
 	for _, a := range doc.Answers {
 		if a.ID == questionID {

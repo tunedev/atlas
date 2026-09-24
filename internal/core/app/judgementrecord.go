@@ -80,6 +80,9 @@ func RecordJudgement(ctx context.Context, docs ports.Docs, index ports.Index, su
 	if subjectID == "" {
 		return "", errors.New("judgement: subject id is empty")
 	}
+	if err := checkSubjectID(subjectID); err != nil {
+		return "", fmt.Errorf("judgement: %w", err)
+	}
 	if len(j.Answers) == 0 {
 		return "", errors.New("judgement: no answers to record")
 	}

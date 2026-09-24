@@ -53,6 +53,14 @@ func TestASecondDecisionAboutOneSubjectDoesNotOverwriteTheFirst(t *testing.T) {
 	}
 }
 
+func TestRecordDecisionRejectsASubjectIDWithADotDotSegment(t *testing.T) {
+	d := aDecision()
+	d.SubjectID = "../profile"
+	if _, err := app.RecordDecision(context.Background(), newFakeDocs(), &fakeIndex{}, d); err == nil {
+		t.Fatal("a subject id with a dot-dot segment was recorded")
+	}
+}
+
 func TestADecisionNeedsASubjectAndAChoice(t *testing.T) {
 	for _, d := range []app.Decision{{Choice: "read"}, {SubjectID: "subject-1"}} {
 		if _, err := app.RecordDecision(context.Background(), newFakeDocs(), &fakeIndex{}, d); err == nil {
@@ -67,14 +75,29 @@ func TestVerdictAtReadsTheChosenAnswerFromTheJudgement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("judgement: %v", err)
 	}
-	got, err := app.VerdictAt(context.Background(), docs, path, "readable")
+	got, err := app.VerdictAt(context.Background(), docs, "subject-1", path, "readable")
 	if err != nil || got != "yes" {
 		t.Errorf("verdict = %q, err = %v", got, err)
 	}
-	if _, err := app.VerdictAt(context.Background(), docs, path, "absent"); err == nil || !strings.Contains(err.Error(), "absent") {
+	if _, err := app.VerdictAt(context.Background(), docs, "subject-1", path, "absent"); err == nil || !strings.Contains(err.Error(), "absent") {
 		t.Errorf("a question the judgement never asked gave err = %v", err)
 	}
-	if _, err := app.VerdictAt(context.Background(), docs, "judgements/none.json", "readable"); err == nil {
+	if _, err := app.VerdictAt(context.Background(), docs, "subject-1", "judgements/none.json", "readable"); err == nil {
 		t.Error("a judgement that does not exist gave a verdict")
+	}
+}
+
+func TestVerdictAtRejectsAJudgementAboutADifferentSubject(t *testing.T) {
+	docs, index := newFakeDocs(), &fakeIndex{}
+	path, err := app.RecordJudgement(context.Background(), docs, index, "subject-1", recordQuestions(), aJudgement())
+	if err != nil {
+		t.Fatalf("judgement: %v", err)
+	}
+	_, err = app.VerdictAt(context.Background(), docs, "subject-2", path, "readable")
+	if err == nil {
+		t.Fatal("a judgement about a different subject gave a verdict")
+	}
+	if !strings.Contains(err.Error(), "subject-1") || !strings.Contains(err.Error(), "subject-2") {
+		t.Errorf("error does not name both subjects: %v", err)
 	}
 }
