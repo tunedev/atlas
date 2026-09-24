@@ -74,6 +74,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	blueprint, err = blueprint.WithVars(cfg.Pack.Vars)
+	if err != nil {
+		return err
+	}
 
 	docs, err := gitdocs.Open(ctx, cfg.Store.Root)
 	if err != nil {

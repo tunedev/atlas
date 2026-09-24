@@ -23,6 +23,9 @@ type PackConfig struct {
 	Path         string
 	HTTPTimeout  time.Duration
 	HTTPMaxBytes int64
+	// Vars overrides the pack's own vars for one run. Filled from repeated
+	// -var name=value flags only: vars are per-run input, not configuration.
+	Vars map[string]string
 }
 
 // ModelConfig configures the one model provider atlas is wired to. APIKey is

@@ -77,6 +77,7 @@ func defaults() Config {
 		Pack: PackConfig{
 			HTTPTimeout:  20 * time.Second,
 			HTTPMaxBytes: 10 * 1024 * 1024,
+			Vars:         map[string]string{},
 		},
 		Model: ModelConfig{
 			BaseURL:  "http://localhost:11434/v1",
@@ -201,9 +202,25 @@ func applyEnv(c *Config) error {
 	return nil
 }
 
+// varsFlag collects repeated -var name=value flags into a map. The value is
+// everything after the first "=", so a value may itself contain "=".
+type varsFlag map[string]string
+
+func (v varsFlag) String() string { return "" }
+
+func (v varsFlag) Set(s string) error {
+	name, value, ok := strings.Cut(s, "=")
+	if !ok || name == "" {
+		return fmt.Errorf("-var %q: want name=value", s)
+	}
+	v[name] = value
+	return nil
+}
+
 func applyFlags(c *Config, args []string) error {
 	fs := flag.NewFlagSet("atlas", flag.ContinueOnError)
 	fs.StringVar(&c.Pack.Path, "pack", c.Pack.Path, "path to a pack file")
+	fs.Var(varsFlag(c.Pack.Vars), "var", "override a pack var for this run, as name=value (repeatable)")
 	fs.DurationVar(&c.Pack.HTTPTimeout, "http-timeout", c.Pack.HTTPTimeout, "timeout for http.request")
 	fs.Int64Var(&c.Pack.HTTPMaxBytes, "http-max-bytes", c.Pack.HTTPMaxBytes, "max response body size for http.request, in bytes")
 	fs.StringVar(&c.Model.BaseURL, "model-base-url", c.Model.BaseURL, "OpenAI-compatible base URL")

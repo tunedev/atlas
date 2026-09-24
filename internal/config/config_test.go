@@ -406,3 +406,19 @@ func TestATooHighJudgeTemperatureIsRejectedAtStartup(t *testing.T) {
 		t.Errorf("error does not name the setting: %v", err)
 	}
 }
+
+func TestVarFlagsCollectNameValuePairs(t *testing.T) {
+	cfg, err := config.Load([]string{"-pack", "p.yaml", "-var", "port=Calais", "-var", "note=a=b"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Pack.Vars["port"] != "Calais" || cfg.Pack.Vars["note"] != "a=b" {
+		t.Errorf("vars = %v", cfg.Pack.Vars)
+	}
+}
+
+func TestAVarFlagWithoutEqualsIsRejected(t *testing.T) {
+	if _, err := config.Load([]string{"-pack", "p.yaml", "-var", "port"}); err == nil {
+		t.Fatal("-var port was accepted with no value")
+	}
+}
