@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/tunedev/atlas/internal/core/app"
 	"github.com/tunedev/atlas/internal/core/ports"
@@ -83,11 +86,27 @@ func (t *Agent) Invoke(ctx context.Context, with map[string]string) (any, error)
 	}, nil
 }
 
-// report prints tool calls and plans as they happen. Message text arrives
-// in fragments and is returned whole in the result instead.
+// report prints tool calls and plans as they happen, with control text
+// escaped. Message text arrives in fragments and is returned whole in the
+// result instead.
 func (t *Agent) report(ev ports.AgentEvent) {
 	if ev.Kind == ports.AgentEventMessage {
 		return
 	}
-	fmt.Fprintf(t.progress, "agent %s: %s\n", ev.Kind, ev.Text)
+	fmt.Fprintf(t.progress, "agent %s: %s\n", ev.Kind, graphic(ev.Text))
+}
+
+// graphic escapes every non-printable rune in s, so text from the agent
+// cannot move the cursor, clear a line or start a new one.
+func graphic(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if unicode.IsPrint(r) {
+			b.WriteRune(r)
+			continue
+		}
+		q := strconv.QuoteRune(r)
+		b.WriteString(q[1 : len(q)-1])
+	}
+	return b.String()
 }

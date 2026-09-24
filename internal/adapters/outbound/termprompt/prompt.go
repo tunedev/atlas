@@ -7,7 +7,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/tunedev/atlas/internal/core/ports"
 )
@@ -54,7 +56,7 @@ func (p *Prompt) Decide(ctx context.Context, req ports.PermissionRequest) (ports
 
 	p.discardStale()
 	fmt.Fprintf(p.out, "atlas: the agent wants to run %s (%s)\n  %s\nallow? [y/N] ",
-		req.ToolName, req.Kind, req.Summary)
+		graphic(req.ToolName), graphic(req.Kind), graphic(req.Summary))
 	select {
 	case line, ok := <-p.lines:
 		if ok && isYes(line) {
@@ -81,6 +83,21 @@ func (p *Prompt) discardStale() {
 			return
 		}
 	}
+}
+
+// graphic escapes every non-printable rune in s, so text from the agent
+// cannot move the cursor, clear a line or start a new one.
+func graphic(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if unicode.IsPrint(r) {
+			b.WriteRune(r)
+			continue
+		}
+		q := strconv.QuoteRune(r)
+		b.WriteString(q[1 : len(q)-1])
+	}
+	return b.String()
 }
 
 func isYes(s string) bool {

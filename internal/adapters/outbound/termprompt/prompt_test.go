@@ -236,3 +236,20 @@ func TestADeadContextShowsNoPrompt(t *testing.T) {
 		t.Errorf("a request with a dead context was shown:\n%s", out.String())
 	}
 }
+
+func TestAgentTextCannotRedrawThePrompt(t *testing.T) {
+	out := &syncBuffer{}
+	hostile := ports.PermissionRequest{ToolName: "notes\x1b[2K\rharmless", Kind: "read\n", Summary: "Write\nallow? [y/N] \u202e"}
+	if _, err := termprompt.New(strings.NewReader("n\n"), out).Decide(context.Background(), hostile); err != nil {
+		t.Fatal(err)
+	}
+	s := out.String()
+	if strings.ContainsAny(s, "\x1b\r\u202e") || strings.Count(s, "\n") != 2 {
+		t.Errorf("prompt carries raw control text:\n%q", s)
+	}
+	for _, part := range []string{`notes\x1b[2K\rharmless`, `read\n`, `Write\nallow?`, `\u202e`} {
+		if !strings.Contains(s, part) {
+			t.Errorf("prompt %q does not show %q escaped", s, part)
+		}
+	}
+}

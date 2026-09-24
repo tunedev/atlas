@@ -17,14 +17,23 @@ type scriptedAgent struct {
 	gotTask    ports.AgentTask
 	gotSession string
 	deadline   bool
+	events     []ports.AgentEvent
 }
 
 func (s *scriptedAgent) Do(ctx context.Context, task ports.AgentTask, sessionID string, onEvent func(ports.AgentEvent)) (ports.AgentResult, string, error) {
 	s.gotTask, s.gotSession = task, sessionID
 	_, s.deadline = ctx.Deadline()
-	onEvent(ports.AgentEvent{Kind: ports.AgentEventMessage, Text: "fragment"})
-	onEvent(ports.AgentEvent{Kind: ports.AgentEventToolCall, Text: "Read notes.txt [completed]"})
-	onEvent(ports.AgentEvent{Kind: ports.AgentEventPlan, Text: "[pending] summarise"})
+	events := s.events
+	if events == nil {
+		events = []ports.AgentEvent{
+			{Kind: ports.AgentEventMessage, Text: "fragment"},
+			{Kind: ports.AgentEventToolCall, Text: "Read notes.txt [completed]"},
+			{Kind: ports.AgentEventPlan, Text: "[pending] summarise"},
+		}
+	}
+	for _, ev := range events {
+		onEvent(ev)
+	}
 	sid := sessionID
 	if sid == "" {
 		sid = "sess-new"
@@ -99,5 +108,17 @@ func TestAgentDoRequiresPromptAndSubject(t *testing.T) {
 		if _, err := tool.Invoke(context.Background(), with); err == nil {
 			t.Errorf("Invoke(%v) succeeded", with)
 		}
+	}
+}
+
+func TestAgentDoEscapesControlTextInProgress(t *testing.T) {
+	agent := &scriptedAgent{events: []ports.AgentEvent{{Kind: ports.AgentEventToolCall, Text: "Read\x1b[2K\rharmless\nagent plan: fake"}}}
+	tool, _, progress := newAgentTool(t, agent, "agent-bin")
+	if _, err := tool.Invoke(context.Background(), map[string]string{"prompt": "summarise", "subject_id": "notes-1"}); err != nil {
+		t.Fatal(err)
+	}
+	want := `agent tool_call: Read\x1b[2K\rharmless\nagent plan: fake` + "\n"
+	if progress.String() != want {
+		t.Errorf("progress %q; want %q", progress.String(), want)
 	}
 }
