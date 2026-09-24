@@ -440,3 +440,21 @@ func TestZeroFileMaxBytesIsRejected(t *testing.T) {
 		t.Fatal("a zero file size limit was accepted")
 	}
 }
+
+func TestExtractConfigDefaultsAndValidation(t *testing.T) {
+	cfg, err := config.Load([]string{"-pack", "p.yaml"})
+	if err != nil || cfg.Extract.MaxTokens <= 0 || cfg.Extract.Temperature != 0 {
+		t.Fatalf("extract = %+v, err = %v", cfg.Extract, err)
+	}
+	t.Setenv("ATLAS_EXTRACT_MAX_TOKENS", "8192")
+	cfg, err = config.Load([]string{"-pack", "p.yaml", "-extract-temperature", "0.2"})
+	if err != nil || cfg.Extract.MaxTokens != 8192 || cfg.Extract.Temperature != 0.2 {
+		t.Errorf("extract = %+v, err = %v", cfg.Extract, err)
+	}
+	if _, err := config.Load([]string{"-pack", "p.yaml", "-extract-max-tokens", "0"}); err == nil {
+		t.Error("zero extract max tokens was accepted")
+	}
+	if _, err := config.Load([]string{"-pack", "p.yaml", "-extract-temperature", "3"}); err == nil {
+		t.Error("an extract temperature above 2 was accepted")
+	}
+}

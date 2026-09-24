@@ -102,6 +102,10 @@ func defaults() Config {
 			TopLogProbs: 5,
 			MaxTokens:   256,
 		},
+		Extract: ExtractConfig{
+			Temperature: 0,
+			MaxTokens:   4096,
+		},
 	}
 }
 
@@ -207,6 +211,20 @@ func applyEnv(c *Config) error {
 		}
 		c.Judge.MaxTokens = n
 	}
+	if v := os.Getenv("ATLAS_EXTRACT_TEMPERATURE"); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_EXTRACT_TEMPERATURE: invalid float %q: %w", v, err)
+		}
+		c.Extract.Temperature = f
+	}
+	if v := os.Getenv("ATLAS_EXTRACT_MAX_TOKENS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_EXTRACT_MAX_TOKENS: invalid integer %q: %w", v, err)
+		}
+		c.Extract.MaxTokens = n
+	}
 	return nil
 }
 
@@ -245,6 +263,8 @@ func applyFlags(c *Config, args []string) error {
 	fs.IntVar(&c.Judge.Seed, "judge-seed", c.Judge.Seed, "sampling seed for judge calls")
 	fs.IntVar(&c.Judge.TopLogProbs, "judge-top-logprobs", c.Judge.TopLogProbs, "alternatives per token the judge reads mass from")
 	fs.IntVar(&c.Judge.MaxTokens, "judge-max-tokens", c.Judge.MaxTokens, "max reply tokens for judge calls")
+	fs.Float64Var(&c.Extract.Temperature, "extract-temperature", c.Extract.Temperature, "sampling temperature for extraction")
+	fs.IntVar(&c.Extract.MaxTokens, "extract-max-tokens", c.Extract.MaxTokens, "max reply tokens for extraction")
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("config: parse flags: %w", err)
 	}

@@ -12,11 +12,12 @@ import (
 // Nothing here describes any particular use case: what to run comes from a
 // pack file, named by Pack.Path.
 type Config struct {
-	Pack  PackConfig
-	Model ModelConfig
-	OTel  OTelConfig
-	Store StoreConfig
-	Judge JudgeConfig
+	Pack    PackConfig
+	Model   ModelConfig
+	OTel    OTelConfig
+	Store   StoreConfig
+	Judge   JudgeConfig
+	Extract ExtractConfig
 }
 
 type PackConfig struct {
@@ -56,6 +57,14 @@ type JudgeConfig struct {
 	Temperature float64
 	Seed        int
 	TopLogProbs int
+	MaxTokens   int
+}
+
+// ExtractConfig pins how extraction samples. Temperature 0 means the same
+// text gives the same value; MaxTokens bounds the reply, which for a long
+// document is far larger than a judgement's.
+type ExtractConfig struct {
+	Temperature float64
 	MaxTokens   int
 }
 
@@ -116,6 +125,12 @@ func (c Config) validate() error {
 	}
 	if c.Judge.Temperature > 2 {
 		return fmt.Errorf("config: judge temperature must not exceed 2, got %v", c.Judge.Temperature)
+	}
+	if c.Extract.MaxTokens <= 0 {
+		return fmt.Errorf("config: extract max tokens must be positive, got %d", c.Extract.MaxTokens)
+	}
+	if c.Extract.Temperature < 0 || c.Extract.Temperature > 2 {
+		return fmt.Errorf("config: extract temperature must be within [0, 2], got %v", c.Extract.Temperature)
 	}
 	return nil
 }
