@@ -2,6 +2,8 @@
 # carries a verbatim quote and a status: grounded when the quote is in the
 # CV's text, needs_review when it is not. The extracted text is committed as
 # profile/source.txt; the CV file itself is not committed.
+# grounded means the quote occurs in the CV text, not that the entry's other
+# fields are right — review every entry by hand.
 #   atlas -pack packs/profile-ingest.yaml -var cv_path="$HOME/cv.pdf"
 name: profile-ingest
 vars:
@@ -12,15 +14,6 @@ steps:
     tool: file.text
     with:
       path: "{{ .vars.cv_path }}"
-
-  - id: keep_source
-    tool: docs.put
-    with:
-      path: profile/source.txt
-      body: "{{ .steps.source.text }}"
-      kind: profile
-      fields: "section: source"
-      message: "Ingest {{ .steps.source.name }} sha256:{{ .steps.source.sha256 }}"
 
   - id: extract
     tool: extract.run
@@ -69,6 +62,15 @@ steps:
     with:
       fields: "{{ json .steps.extract.fields }}"
       source: "{{ .steps.source.text }}"
+
+  - id: keep_source
+    tool: docs.put
+    with:
+      path: profile/source.txt
+      body: "{{ .steps.source.text }}"
+      kind: profile
+      fields: "section: source"
+      message: "Ingest {{ .steps.source.name }} sha256:{{ .steps.source.sha256 }}"
 
   - id: save
     tool: docs.put
