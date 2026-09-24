@@ -22,6 +22,13 @@ type Answer struct {
 	Distribution map[string]float64
 	Expected     float64      // set for a score alone
 	Alternatives []Alternative // raw, as read at the answer token
+	Confidence   float64      // 1 minus Distribution's normalised entropy
+	Coverage     Coverage     // how many declared options the alternatives named
+}
+
+type Coverage struct {
+	Represented int // declared options named by at least one alternative
+	Declared    int // the question's effective option count
 }
 
 type Sampling struct {
@@ -147,8 +154,9 @@ via `ports.Docs`) and indexes it as one row keyed by that path (via
 `ports.Index`), same pattern as every other document `docs/design/the-record.md`
 describes. The document holds the subject text, the model name, the
 provider name, the sampling that produced the call, every question asked,
-every answer with its distribution and the raw alternatives it was read
-from, and an `outcome` field carried as `any` and marshalled as JSON `null`
+every answer with its distribution, confidence, coverage, and the raw
+alternatives it was read from, and an `outcome` field carried as `any` and
+marshalled as JSON `null`
 — present, not omitted, so the key reads `null` until a later increment
 (checking a probability against a real outcome, epic 11) fills it in. The
 index row mirrors the subject, model and provider as flat string fields,
@@ -158,36 +166,41 @@ distribution.
 `tools.Judge` (`judge.ask`) is the one caller: it parses a pack's YAML
 questions block into `[]ports.Question`, calls `Judge.Ask`, then
 `RecordJudgement`, and returns each answer keyed by question id (`chosen`,
-`p`, `distribution`, `expected` for a score) plus the path written, under the
-key `"path"` — reserved, so a pack cannot name a question `path` and collide
-with it.
+`p`, `distribution`, `confidence`, `coverage`, `expected` for a score) plus
+the path written, under the key `"path"` — reserved, so a pack cannot name a
+question `path` and collide with it.
 
 ## Known gaps
 
-- A distribution of exactly 1.0 is not evidence of a confident answer. An
-  engine's alternatives at the answer token carry its pre-constraint
-  distribution, and at a schema-constrained position those alternatives are
-  often the prose the model would have written before the schema forced
-  compliance — so a question's declared options can be entirely absent from
-  them. When none of a question's options appear among the alternatives, the
-  only mass that lands is the emitted token's own probability, through the
-  own-text fallback, and normalising a single-member map yields exactly 1.0
-  regardless of what that probability was. Measured: the live `focus`
-  question's alternatives were `AI` (0.883), `Building`, `Develop`,
-  `Internal`, `Business`, with none of its five declared options among them.
-  The same reasoning applies in degree to partial coverage: any declared
-  option absent from the alternatives is pinned to zero mass because it did
-  not survive the engine's top-k window, not because the model ruled it out,
-  so a two-of-five distribution looks as resolved as a five-of-five one.
-  Nothing in the code distinguishes these cases today.
+- A distribution of exactly 1.0 used to be indistinguishable from a
+  manufactured one. It no longer is: every `Answer` now carries `Confidence`
+  and `Coverage`, computed in `app.answerFor` from the same mass and
+  alternatives `Distribution` was already built from.
 
-  This is parked rather than fixed here: `Answer.Alternatives` and the
-  questions as asked are already stored, so coverage is computable after the
-  fact from what is recorded — unlike sampling and the outcome slot, nothing
-  is lost by deriving it later. Widening `TopLogProbs` reduces how often
-  this happens but cannot remove the structural problem, and needs live
-  measurement first, so it is its own experiment rather than a default
-  changed here.
+  `Confidence` is 1 minus `Distribution`'s Shannon entropy, normalised by the
+  maximum entropy the question's declared options admit (`log k`): 0 for
+  mass spread evenly across all of them, 1 for mass on one. `Coverage`
+  (`Represented`, `Declared`) says how many of the question's declared
+  options the engine's *alternatives* actually named, versus how many there
+  were — deliberately excluding the own-text fallback, so an option that
+  entered `Distribution` only because nothing else was there does not count
+  as represented.
+
+  This is what makes the two cases the entropy formula alone cannot tell
+  apart now visible side by side: the live `focus` question's alternatives
+  were `AI` (0.883), `Building`, `Develop`, `Internal`, `Business`, with none
+  of its five declared options among them, yet the own-text fallback still
+  produced `Chosen: "other"` and `Distribution: {"other": 1}`. That reads as
+  `Confidence: 1` by the formula — and `Coverage: {Represented: 0, Declared:
+  5}` in the same answer says plainly that the 1.0 measured nothing. A
+  two-of-five distribution likewise now reports `Coverage: {2, 5}` rather
+  than looking as resolved as a five-of-five one.
+
+  What remains open: the numbers are recorded, in both the judgement
+  document and the tool result, and nothing yet acts on them. No caller
+  rejects a thin-coverage answer or treats a low `Confidence` differently —
+  that judgment call belongs to whatever reads the record later (epic 11),
+  now that it has the numbers to make it with.
 - `optionMatch`'s trim strips surrounding whitespace, then one layer of `"`
   quotes, in that order — so `" x "` (space, x, space, inside quotes) keeps
   its inner spaces rather than trimming again after the quotes come off. No

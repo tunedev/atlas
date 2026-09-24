@@ -35,6 +35,16 @@ type Question struct {
 // alternatives the engine returned at the answer token, before any option
 // matching or normalising, so a distribution built from one alternative can
 // be told apart from one built from several.
+//
+// Confidence and Coverage both describe how much the distribution is worth
+// trusting, and neither can substitute for the other. Confidence is 1 minus
+// Distribution's normalised entropy: it reads 1 whenever all mass sits on
+// one option, whether that option won by beating real rivals or because it
+// was the only option present at all. Coverage.Represented says which of
+// those two happened: how many of the question's declared options the
+// engine's alternatives actually named. A Confidence of 1 with a
+// Coverage.Represented of 0 is not a contradiction -- it is the single-option
+// fallback made visible.
 type Answer struct {
 	ID           string
 	Kind         Kind
@@ -42,6 +52,20 @@ type Answer struct {
 	Distribution map[string]float64
 	Expected     float64
 	Alternatives []Alternative
+	Confidence   float64
+	Coverage     Coverage
+}
+
+// Coverage says how many of a question's declared options the engine's
+// alternatives actually named (Represented), out of how many it had
+// (Declared). It counts only what appeared among the alternatives: an
+// option that entered Distribution solely through the own-text fallback
+// (rawMassPerClass in app/mass.go) is not represented, since the point of
+// Coverage is to show when the engine offered nothing about the question's
+// options at all.
+type Coverage struct {
+	Represented int
+	Declared    int
 }
 
 // Sampling is how the engine was told to sample when it produced a
