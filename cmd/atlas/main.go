@@ -56,6 +56,7 @@ func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index) tools.
 		tools.NewDocsPut(docs, index),
 		tools.NewQuoteGround(),
 		tools.NewExtract(extractor),
+		tools.NewDecision(docs, index),
 	)
 }
 

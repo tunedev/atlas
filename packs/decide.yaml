@@ -1,0 +1,24 @@
+# Records an apply or skip. When a judgement preceded it, pass its path and
+# the question whose answer is the verdict, so a later reader can see where
+# the person overrode the model.
+#   atlas -pack packs/decide.yaml -var subject_id=greenhouse:gitlab:12345 \
+#     -var choice=apply -var reason="Remote, strong backend focus" \
+#     -var judgement_path=judgements/greenhouse:gitlab:12345/<ts>.json \
+#     -var verdict_question=stretch
+name: decide
+vars:
+  subject_id: ""
+  choice: ""
+  reason: ""
+  judgement_path: ""
+  verdict_question: ""
+
+steps:
+  - id: decision
+    tool: decision.record
+    with:
+      subject_id: "{{ .vars.subject_id }}"
+      choice: "{{ .vars.choice }}"
+      reason: "{{ .vars.reason }}"
+      judgement_path: "{{ .vars.judgement_path }}"
+      verdict_question: "{{ .vars.verdict_question }}"
