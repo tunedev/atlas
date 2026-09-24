@@ -6,12 +6,19 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/tunedev/atlas/internal/adapters/inbound/mcpserve"
 	"github.com/tunedev/atlas/internal/core/ports"
 )
+
+// testCallTimeout bounds tool calls in tests that are not themselves
+// exercising mcpserve.Config.CallTimeout. It is generous relative to any
+// test's own client-side deadline, so it never fires first, and distinct
+// from blocking's 5s fallback so the two cannot be mistaken for each other.
+const testCallTimeout = 3 * time.Second
 
 type echoTool struct{ got map[string]string }
 
@@ -44,11 +51,15 @@ func (b bearer) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 func serve(t *testing.T, perm ports.Permission, maxResult int) (*mcp.ClientSession, *echoTool) {
+	return serveWithCallTimeout(t, perm, maxResult, testCallTimeout)
+}
+
+func serveWithCallTimeout(t *testing.T, perm ports.Permission, maxResult int, callTimeout time.Duration) (*mcp.ClientSession, *echoTool) {
 	t.Helper()
 	tool := &echoTool{}
 	token := mcpserve.NewToken()
 	h, err := mcpserve.NewHandler(registry{"weather.get": tool, "hidden.tool": tool}, perm,
-		mcpserve.Config{Tools: []string{"weather.get"}, MaxResultBytes: maxResult, SummaryBytes: 200, Token: token})
+		mcpserve.Config{Tools: []string{"weather.get"}, MaxResultBytes: maxResult, SummaryBytes: 200, Token: token, CallTimeout: callTimeout})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,11 +129,17 @@ func TestDeniedCallDoesNotRun(t *testing.T) {
 
 func TestBadArgumentsAndOversizeResultsAreToolErrors(t *testing.T) {
 	session, _ := serve(t, &fixed{d: ports.PermissionAllow}, 10)
-	res, _ := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "weather_get", Arguments: map[string]any{"where": map[string]any{"city": "Oslo"}}})
+	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "weather_get", Arguments: map[string]any{"where": map[string]any{"city": "Oslo"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !res.IsError || !strings.Contains(text(res), `"where"`) {
 		t.Errorf("nested: %q", text(res))
 	}
-	res, _ = session.CallTool(context.Background(), &mcp.CallToolParams{Name: "weather_get", Arguments: map[string]any{"city": "Oslo"}})
+	res, err = session.CallTool(context.Background(), &mcp.CallToolParams{Name: "weather_get", Arguments: map[string]any{"city": "Oslo"}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !res.IsError || !strings.Contains(text(res), "10 bytes") {
 		t.Errorf("oversize: %q", text(res))
 	}
@@ -140,6 +157,89 @@ func TestRequestsWithoutTheTokenAreRefused(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("status %d; want 401", resp.StatusCode)
 	}
+}
+
+func TestWrongOrMalformedTokenIsRefused(t *testing.T) {
+	token := mcpserve.NewToken()
+	h, err := mcpserve.NewHandler(registry{}, &fixed{}, mcpserve.Config{Token: token})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	cases := map[string]string{
+		"wrong token":            "Bearer wrong",
+		"right token, no prefix": token,
+	}
+	for name, header := range cases {
+		req, err := http.NewRequest(http.MethodPost, srv.URL+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", header)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("%s: status %d; want 401", name, resp.StatusCode)
+		}
+	}
+}
+
+// blocking is a Permission whose Decide blocks until ctx is done or a long
+// fallback elapses, reporting which happened first. It stands in for a
+// human prompt that would otherwise hang forever on an abandoned call.
+type blocking struct{ cancelled chan error }
+
+func (b *blocking) Decide(ctx context.Context, _ ports.PermissionRequest) (ports.PermissionDecision, error) {
+	select {
+	case <-ctx.Done():
+		b.cancelled <- ctx.Err()
+		return ports.PermissionDeny, ctx.Err()
+	case <-time.After(5 * time.Second):
+		b.cancelled <- nil
+		return ports.PermissionDeny, nil
+	}
+}
+
+// waitForCancellation fails the test if Decide does not observe cancellation
+// within a window well short of blocking's 5s fallback, proving the call was
+// bounded rather than left to run to that fallback.
+func waitForCancellation(t *testing.T, cancelled chan error) {
+	t.Helper()
+	select {
+	case err := <-cancelled:
+		if err == nil {
+			t.Fatal("Decide returned via its fallback, not cancellation")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Decide did not observe cancellation within 2s")
+	}
+}
+
+func TestACancelledCallCancelsItsPermissionPrompt(t *testing.T) {
+	perm := &blocking{cancelled: make(chan error, 1)}
+	// A CallTimeout well past the assertion window: isolates
+	// PropagateRequestCancellation as the only mechanism that can cancel
+	// the still-pending permission prompt within that window.
+	session, _ := serveWithCallTimeout(t, perm, 1<<20, testCallTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	_, _ = session.CallTool(ctx, &mcp.CallToolParams{Name: "weather_get", Arguments: map[string]any{"city": "Oslo"}})
+	waitForCancellation(t, perm.cancelled)
+}
+
+func TestACallIsBoundedByCallTimeout(t *testing.T) {
+	perm := &blocking{cancelled: make(chan error, 1)}
+	session, _ := serveWithCallTimeout(t, perm, 1<<20, 200*time.Millisecond)
+	// No client-side deadline: isolates CallTimeout as the only mechanism
+	// that can cancel the still-pending permission prompt.
+	_, _ = session.CallTool(context.Background(), &mcp.CallToolParams{Name: "weather_get", Arguments: map[string]any{"city": "Oslo"}})
+	waitForCancellation(t, perm.cancelled)
 }
 
 func TestConfigErrorsFailAtConstruction(t *testing.T) {

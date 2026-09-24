@@ -45,6 +45,11 @@ type Config struct {
 	MaxResultBytes int
 	SummaryBytes   int
 	Token          string
+	// CallTimeout bounds every permission check and tool invocation. It is
+	// the only backstop for a client whose MCP protocol version predates
+	// 2026-07-28, where an abandoned call's cancellation cannot reach the
+	// server (see StreamableHTTPOptions.PropagateRequestCancellation).
+	CallTimeout time.Duration
 }
 
 // NewHandler builds the MCP endpoint over reg. A configured tool the
@@ -70,7 +75,7 @@ func NewHandler(reg ports.Registry, perm ports.Permission, cfg Config) (http.Han
 	}
 
 	h := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server },
-		&mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
+		&mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, PropagateRequestCancellation: true})
 	mux := http.NewServeMux()
 	mux.Handle(endpoint, requireToken(cfg.Token, h))
 	return mux, nil
@@ -84,6 +89,8 @@ func PublishedName(registryName string) string {
 
 func handle(tool ports.Tool, perm ports.Permission, cfg Config) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		ctx, cancel := context.WithTimeout(ctx, cfg.CallTimeout)
+		defer cancel()
 		args := req.Params.Arguments
 		with, err := flatten(args)
 		if err != nil {
@@ -99,7 +106,7 @@ func handle(tool ports.Tool, perm ports.Permission, cfg Config) mcp.ToolHandler 
 		}
 		out, err := tool.Invoke(ctx, with)
 		if err != nil {
-			return failed("%v", err), nil
+			return failed("%s: %v", tool.Name(), err), nil
 		}
 		text, err := render(out)
 		if err != nil {
