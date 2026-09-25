@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -266,5 +267,29 @@ func TestATargetCannotExpressAHeaderOrCookie(t *testing.T) {
 	}
 	if _, err := crawlsource.ParseTargets(fmt.Sprintf(target, "a", "https://me:secret@library.example/")); err == nil {
 		t.Error("a target whose URL carries credentials was accepted")
+	}
+}
+
+func TestCollyEnvironmentSettingsChangeNothing(t *testing.T) {
+	cacheDir := t.TempDir()
+	for k, v := range map[string]string{
+		"COLLY_CACHE_DIR": cacheDir, "COLLY_ALLOWED_DOMAINS": "elsewhere.invalid", "COLLY_FOLLOW_REDIRECTS": "no",
+		"COLLY_USER_AGENT": "someone-else", "COLLY_PARSE_HTTP_ERROR_RESPONSE": "yes",
+	} {
+		t.Setenv(k, v)
+	}
+	srv, _ := recorded(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/start" {
+			http.Redirect(w, r, "/events", http.StatusFound)
+			return
+		}
+		routes(map[string]string{"/events": eventsPage})(w, r)
+	})
+	ids, err := crawl(t, testConfig(), fmt.Sprintf(target, "a", srv.URL+"/start"))
+	if err != nil || len(ids) != 2 {
+		t.Errorf("ids = %v err = %v", ids, err)
+	}
+	if entries, _ := os.ReadDir(cacheDir); len(entries) != 0 {
+		t.Errorf("COLLY_CACHE_DIR was used: %d entries", len(entries))
 	}
 }

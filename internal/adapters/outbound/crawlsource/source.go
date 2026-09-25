@@ -47,6 +47,8 @@ type Crawler struct {
 	browser browser
 }
 
+var _ ports.Source = (*Source)(nil)
+
 // Source crawls its targets one after another through a Conduct, reading
 // each page with Colly, or with a browser when a target asks for rendering
 // and rendering is on.
@@ -209,7 +211,16 @@ func (s *Source) fetch(ctx context.Context, t Target) (*goquery.Selection, *url.
 
 // fetched reads t's page with Colly, through the Conduct.
 func (s *Source) fetched(ctx context.Context, t Target) (*goquery.Selection, *url.URL, error) {
-	c := colly.NewCollector(colly.UserAgent(s.cfg.UserAgent), colly.StdlibContext(ctx), colly.AllowURLRevisit())
+	c := colly.NewCollector(colly.StdlibContext(ctx), colly.AllowURLRevisit())
+	// NewCollector applies COLLY_* environment settings; these pin every one.
+	c.UserAgent = s.cfg.UserAgent
+	c.CacheDir = ""
+	c.ParseHTTPErrorResponse = false
+	c.AllowedDomains, c.DisallowedDomains = nil, nil
+	c.DetectCharset = false
+	c.MaxDepth, c.MaxRequests = 0, 0
+	c.TraceHTTP = false
+	c.SetRedirectHandler(nil)
 	c.IgnoreRobotsTxt = true // the Conduct checks robots.txt, for both fetch paths
 	c.MaxBodySize = 0        // the Conduct bounds the body, failing rather than truncating
 	c.DisableCookies()

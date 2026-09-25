@@ -15,10 +15,12 @@ type revalidator struct {
 	dir string
 }
 
-// stored is one URL's cached response.
+// stored is one URL's cached response: its validators, its Content-Type and
+// its body.
 type stored struct {
 	ETag         string `json:"etag"`
 	LastModified string `json:"last_modified"`
+	ContentType  string `json:"content_type"`
 	Body         []byte `json:"body"`
 }
 
@@ -53,7 +55,7 @@ func (v revalidator) condition(req *http.Request, s stored) {
 
 // save keeps a 200 response's body when it came with a validator.
 func (v revalidator) save(u string, resp *http.Response, body []byte) error {
-	s := stored{ETag: resp.Header.Get("ETag"), LastModified: resp.Header.Get("Last-Modified"), Body: body}
+	s := stored{ETag: resp.Header.Get("ETag"), LastModified: resp.Header.Get("Last-Modified"), ContentType: resp.Header.Get("Content-Type"), Body: body}
 	if s.ETag == "" && s.LastModified == "" {
 		return nil
 	}

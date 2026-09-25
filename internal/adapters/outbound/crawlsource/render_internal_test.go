@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -108,5 +109,21 @@ func TestRenderedHTMLOverTheLimitFails(t *testing.T) {
 	}
 	if html, err := boundHTML(strings.Repeat("x", 100), 100); err != nil || len(html) != 100 {
 		t.Errorf("len = %d err = %v; an at-limit page must pass whole", len(html), err)
+	}
+}
+
+func TestAFailedLaunchLeavesNoProfileBehind(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	srv, _ := site(t, map[string]string{"/app": "<html></html>"})
+	cfg := testConfig()
+	c := chrome{cfg: cfg, conduct: newConduct(cfg, http.DefaultTransport), lookPath: func() (string, bool) { return "/bin/false", true }}
+	u, _ := url.Parse(srv.URL + "/app")
+	if _, err := c.render(context.Background(), u); err == nil {
+		t.Fatal("a browser that exits at once rendered a page")
+	}
+	profiles, _ := filepath.Glob(filepath.Join(tmp, "atlas-render-*"))
+	if len(profiles) != 0 {
+		t.Errorf("profiles left behind: %v", profiles)
 	}
 }

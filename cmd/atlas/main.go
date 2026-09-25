@@ -113,10 +113,8 @@ func run() error {
 		PullTimeout: cfg.Feed.PullTimeout,
 	})
 
-	// Built once so every crawl.pull invocation shares one robots.txt cache
-	// and one set of per-host pacing state; a fresh Crawler per invocation
-	// would let two steps in one run hit the same host without waiting on
-	// each other.
+	// One Crawler for the process, so every crawl.pull shares its robots.txt
+	// cache and per-host pacing.
 	crawler, err := crawlsource.NewCrawler(crawlsource.Config{
 		UserAgent:     cfg.Crawl.UserAgent,
 		Delay:         cfg.Crawl.Delay,

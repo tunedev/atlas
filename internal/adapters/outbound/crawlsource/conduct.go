@@ -59,6 +59,11 @@ func (c *Conduct) RoundTrip(req *http.Request) (*http.Response, error) {
 		if int64(len(cached.Body)) > c.cfg.MaxBytes {
 			return nil, fmt.Errorf("crawlsource: %s: body exceeds max size of %d bytes", req.URL.Redacted(), c.cfg.MaxBytes)
 		}
+		resp.Header.Del("Content-Encoding")
+		resp.Header.Del("Content-Length")
+		if cached.ContentType != "" {
+			resp.Header.Set("Content-Type", cached.ContentType)
+		}
 		resp.StatusCode, resp.Status = http.StatusOK, "200 OK"
 		resp.Body = io.NopCloser(bytes.NewReader(cached.Body))
 		resp.ContentLength = int64(len(cached.Body))
@@ -104,15 +109,8 @@ func (c *Conduct) Allow(ctx context.Context, u *url.URL) error {
 // permitted refuses a URL carrying userinfo, checks u against its host's
 // robots.txt and records the host's Crawl-delay as the floor of its turns,
 // without taking a turn itself. A Crawl-delay lengthens the turn and never
-// shortens it.
-//
-// The disallow check goes through RobotsData.TestAgent rather than
-// FindGroup+Group.Test: when robots.txt could not be read, fetchRobots hands
-// back the library's disallow-everything sentinel, whose FindGroup falls
-// back to the library's empty-rules group (Group.Test on it defaults to
-// allow, per the "no restrictions by default" rule) rather than reporting
-// the sentinel's disallow-all state. TestAgent is the one entry point that
-// consults that state.
+// shortens it. The check uses TestAgent, the one entry point that honours
+// the disallow-everything data an unreadable robots.txt yields.
 func (c *Conduct) permitted(ctx context.Context, u *url.URL) error {
 	if u.User != nil {
 		return fmt.Errorf("crawlsource: %s carries userinfo: %w", u.Redacted(), ErrCredential)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -49,7 +50,12 @@ func (c chrome) render(ctx context.Context, u *url.URL) (string, error) {
 	if err := c.conduct.Allow(ctx, u); err != nil {
 		return "", err
 	}
-	l := launcher.New().Bin(bin).Headless(true).Context(ctx)
+	profile, err := os.MkdirTemp("", "atlas-render-*")
+	if err != nil {
+		return "", fmt.Errorf("make a profile: %w", err)
+	}
+	defer os.RemoveAll(profile)
+	l := launcher.New().Bin(bin).UserDataDir(profile).Headless(true).Context(ctx)
 	control, err := l.Launch()
 	if err != nil {
 		// Launch's leakless branch can return an error after starting the

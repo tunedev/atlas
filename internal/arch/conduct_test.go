@@ -47,9 +47,10 @@ func TestTheCrawlerImportsNoCookieJar(t *testing.T) {
 
 // The crawler never downloads a browser: Rod downloads one when a launcher
 // has no Bin, or when a browser connects without a control URL, so every
-// launcher must be given Bin and nothing may call the download paths. The
-// check below only recognises Bin chained directly on launcher.New(), so
-// that call must stay one expression for the rule to remain checkable.
+// launcher must be given Bin, every browser a control URL, and nothing may
+// call the download paths. The checks below only recognise Bin chained
+// directly on launcher.New() and ControlURL on rod.New(), so each call must
+// stay one expression for the rule to remain checkable.
 func TestTheCrawlerNeverDownloadsABrowser(t *testing.T) {
 	dir := filepath.Join("..", "adapters", "outbound", "crawlsource")
 	files, err := filepath.Glob(filepath.Join(dir, "*.go"))
@@ -72,6 +73,9 @@ func TestTheCrawlerNeverDownloadsABrowser(t *testing.T) {
 		}
 		if n, withBin := strings.Count(src, "launcher.New()"), strings.Count(src, "launcher.New().Bin("); n != withBin {
 			t.Errorf("%s: %d launchers, %d chained directly with .Bin(; a launcher without Bin downloads a browser — keep launcher.New().Bin(path) as one expression", f, n, withBin)
+		}
+		if n, withControl := strings.Count(src, "rod.New()"), strings.Count(src, "rod.New().ControlURL("); n != withControl {
+			t.Errorf("%s: %d browsers, %d chained directly with .ControlURL(; a browser without a control URL downloads one — keep rod.New().ControlURL(url) as one expression", f, n, withControl)
 		}
 	}
 }

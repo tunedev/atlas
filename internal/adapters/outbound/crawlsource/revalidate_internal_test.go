@@ -1,6 +1,7 @@
 package crawlsource
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -160,5 +161,65 @@ func TestARevalidatedBodyOverTheNewLimitFails(t *testing.T) {
 	}
 	if full != 1 {
 		t.Errorf("full responses = %d, want 1; the second request must be answered 304", full)
+	}
+}
+
+func TestARevalidatedPageStillParsesWhenThe304CarriesEntityHeaders(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/robots.txt" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("If-None-Match") == `"v1"` {
+			w.Header().Set("Content-Encoding", "gzip")
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("ETag", `"v1"`)
+		w.Header().Set("Content-Type", "text/html")
+		io.WriteString(w, eventsPage)
+	}))
+	t.Cleanup(srv.Close)
+	ts, err := ParseTargets("- id: a\n  url: " + srv.URL + "/p\n  item: li.event\n  key: link\n  fields:\n    link: {css: a, attr: href}\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := testConfig()
+	cfg.CacheDir = t.TempDir()
+	src, err := New(cfg, ts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for run := range 2 {
+		if items, err := src.Pull(context.Background()); err != nil || len(items) == 0 {
+			t.Fatalf("run %d: items = %d err = %v", run, len(items), err)
+		}
+	}
+	if got := src.LastReport().Revalidated; got != 1 {
+		t.Errorf("revalidated = %d, want 1", got)
+	}
+}
+
+func TestARevalidatedPageKeepsItsContentType(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("If-None-Match") == `"v1"` {
+			w.Header().Set("Content-Encoding", "gzip")
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("ETag", `"v1"`)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		io.WriteString(w, "the page")
+	}))
+	t.Cleanup(srv.Close)
+	c := cachedConduct(t)
+	resp, err := get(t, c, srv.URL+"/p")
+	readAll(t, resp, err)
+	resp, err = get(t, c, srv.URL+"/p")
+	if body := readAll(t, resp, err); body != "the page" {
+		t.Errorf("body = %q", body)
+	}
+	if ct, ce := resp.Header.Get("Content-Type"), resp.Header.Get("Content-Encoding"); ct != "text/html; charset=utf-8" || ce != "" {
+		t.Errorf("Content-Type %q Content-Encoding %q; the cached body's own headers must be served", ct, ce)
 	}
 }
