@@ -43,10 +43,20 @@ func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index) tools.
 		TopLogProbs: cfg.Judge.TopLogProbs,
 		MaxTokens:   cfg.Judge.MaxTokens,
 	})
+	extractor := app.NewExtractor(provider, app.ExtractorConfig{
+		Temperature: cfg.Extract.Temperature,
+		MaxTokens:   cfg.Extract.MaxTokens,
+	})
 	return tools.NewRegistry(
 		tools.NewHTTP(cfg.Pack.HTTPTimeout, cfg.Pack.HTTPMaxBytes),
 		tools.NewModel(provider),
 		tools.NewJudge(judge, docs, index),
+		tools.NewFileRead(cfg.Pack.FileMaxBytes),
+		tools.NewFileText(cfg.Pack.FileMaxBytes),
+		tools.NewDocsPut(docs, index),
+		tools.NewQuoteGround(),
+		tools.NewExtract(extractor),
+		tools.NewDecision(docs, index),
 	)
 }
 
@@ -71,6 +81,10 @@ func run() error {
 	}()
 
 	blueprint, err := packfile.Load(cfg.Pack.Path)
+	if err != nil {
+		return err
+	}
+	blueprint, err = blueprint.WithVars(cfg.Pack.Vars)
 	if err != nil {
 		return err
 	}

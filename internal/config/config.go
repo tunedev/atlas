@@ -12,17 +12,24 @@ import (
 // Nothing here describes any particular use case: what to run comes from a
 // pack file, named by Pack.Path.
 type Config struct {
-	Pack  PackConfig
-	Model ModelConfig
-	OTel  OTelConfig
-	Store StoreConfig
-	Judge JudgeConfig
+	Pack    PackConfig
+	Model   ModelConfig
+	OTel    OTelConfig
+	Store   StoreConfig
+	Judge   JudgeConfig
+	Extract ExtractConfig
 }
 
 type PackConfig struct {
 	Path         string
 	HTTPTimeout  time.Duration
 	HTTPMaxBytes int64
+	// FileMaxBytes bounds a file.read or file.text call. Over-limit fails; it
+	// is never truncated.
+	FileMaxBytes int64
+	// Vars overrides the pack's own vars for one run. Filled from repeated
+	// -var name=value flags only: vars are per-run input, not configuration.
+	Vars map[string]string
 }
 
 // ModelConfig configures the one model provider atlas is wired to. APIKey is
@@ -53,6 +60,14 @@ type JudgeConfig struct {
 	MaxTokens   int
 }
 
+// ExtractConfig pins how extraction samples. Temperature 0 means the same
+// text gives the same value; MaxTokens bounds the reply, which for a long
+// document is far larger than a judgement's.
+type ExtractConfig struct {
+	Temperature float64
+	MaxTokens   int
+}
+
 // StoreConfig locates the git-backed record and its two derived indices.
 // Root, IndexPath and HistoryPath are expanded from a leading "~" at load
 // time, so nothing downstream handles that expansion itself.
@@ -71,6 +86,9 @@ func (c Config) validate() error {
 	}
 	if c.Pack.HTTPMaxBytes <= 0 {
 		return fmt.Errorf("config: http max bytes must be positive, got %d", c.Pack.HTTPMaxBytes)
+	}
+	if c.Pack.FileMaxBytes <= 0 {
+		return fmt.Errorf("config: file max bytes must be positive, got %d", c.Pack.FileMaxBytes)
 	}
 	if c.Model.Timeout <= 0 {
 		return fmt.Errorf("config: model timeout must be positive, got %s", c.Model.Timeout)
@@ -107,6 +125,12 @@ func (c Config) validate() error {
 	}
 	if c.Judge.Temperature > 2 {
 		return fmt.Errorf("config: judge temperature must not exceed 2, got %v", c.Judge.Temperature)
+	}
+	if c.Extract.MaxTokens <= 0 {
+		return fmt.Errorf("config: extract max tokens must be positive, got %d", c.Extract.MaxTokens)
+	}
+	if c.Extract.Temperature < 0 || c.Extract.Temperature > 2 {
+		return fmt.Errorf("config: extract temperature must be within [0, 2], got %v", c.Extract.Temperature)
 	}
 	return nil
 }

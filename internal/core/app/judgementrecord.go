@@ -10,17 +10,6 @@ import (
 	"github.com/tunedev/atlas/internal/core/ports"
 )
 
-// judgementTimeFormat is RFC 3339 with colons replaced by dashes, since a
-// colon is not portable in a path component, and millisecond precision, so
-// two judgements of the same subject less than a second apart still land at
-// distinct paths.
-const judgementTimeFormat = "2006-01-02T15-04-05.000Z"
-
-// judgementDocTimeFormat is RFC 3339 at the same millisecond precision as
-// judgementTimeFormat, so the document's "when" and the path it lives at
-// order two judgements of the same subject identically.
-const judgementDocTimeFormat = "2006-01-02T15:04:05.000Z"
-
 // judgementQuestion is a Question as it appears in a judgement document.
 type judgementQuestion struct {
 	ID      string   `json:"id"`
@@ -91,6 +80,9 @@ func RecordJudgement(ctx context.Context, docs ports.Docs, index ports.Index, su
 	if subjectID == "" {
 		return "", errors.New("judgement: subject id is empty")
 	}
+	if err := checkSubjectID(subjectID); err != nil {
+		return "", fmt.Errorf("judgement: %w", err)
+	}
 	if len(j.Answers) == 0 {
 		return "", errors.New("judgement: no answers to record")
 	}
@@ -101,16 +93,20 @@ func RecordJudgement(ctx context.Context, docs ports.Docs, index ports.Index, su
 		return "", fmt.Errorf("judgement: encode: %w", err)
 	}
 
-	rev, err := docs.Put(ctx, path, body, "Record judgement for "+subjectID)
+	rev, err := RecordDocument(ctx, docs, index, Document{
+		Path:    path,
+		Body:    body,
+		Message: "Record judgement for " + subjectID,
+		Kind:    "judgement",
+		Fields:  judgementFields(subjectID, qs, j),
+		When:    j.When,
+	})
 	if err != nil {
-		return "", fmt.Errorf("judgement: put: %w", err)
+		if rev == "" {
+			return "", fmt.Errorf("judgement: %w", err)
+		}
+		return path, fmt.Errorf("judgement: %w", err)
 	}
-
-	row := judgementRow(path, rev, subjectID, qs, j)
-	if err := index.Upsert(ctx, row); err != nil {
-		return path, fmt.Errorf("judgement: upsert %s: %w", path, err)
-	}
-
 	return path, nil
 }
 
@@ -120,7 +116,7 @@ func RecordJudgement(ctx context.Context, docs ports.Docs, index ports.Index, su
 // the real Judge stamps When from time.Now(), so a caller passing distinct
 // timestamps gets distinct paths.
 func judgementPath(subjectID string, j ports.Judgement) string {
-	return fmt.Sprintf("judgements/%s/%s.json", subjectID, j.When.UTC().Format(judgementTimeFormat))
+	return fmt.Sprintf("judgements/%s/%s.json", subjectID, j.When.UTC().Format(recordTimeFormat))
 }
 
 // judgementDocFor builds the document body for a judgement of subjectID.
@@ -155,7 +151,7 @@ func judgementDocFor(subjectID string, qs []ports.Question, j ports.Judgement) j
 			TopLogProbs: j.Sampling.TopLogProbs,
 			MaxTokens:   j.Sampling.MaxTokens,
 		},
-		When:      j.When.UTC().Format(judgementDocTimeFormat),
+		When:      j.When.UTC().Format(recordDocTimeFormat),
 		Questions: questions,
 		Answers:   answers,
 		Outcome:   nil,
@@ -172,21 +168,15 @@ func judgementAlternatives(alts []ports.Alternative) []judgementAlternative {
 	return out
 }
 
-// judgementRow is the index row for a judgement written at path and rev.
-// Fields are flat strings; the distribution stays in the document alone.
-func judgementRow(path string, rev ports.Revision, subjectID string, qs []ports.Question, j ports.Judgement) ports.Record {
-	return ports.Record{
-		Path: path,
-		Rev:  rev,
-		Kind: "judgement",
-		When: j.When,
-		Fields: map[string]string{
-			"subject_id": subjectID,
-			"model":      j.Model,
-			"provider":   j.Provider,
-			"questions":  questionIDs(qs),
-			"outcome":    "pending",
-		},
+// judgementFields is the flat index fields for a judgement; the
+// distribution stays in the document alone.
+func judgementFields(subjectID string, qs []ports.Question, j ports.Judgement) map[string]string {
+	return map[string]string{
+		"subject_id": subjectID,
+		"model":      j.Model,
+		"provider":   j.Provider,
+		"questions":  questionIDs(qs),
+		"outcome":    "pending",
 	}
 }
 
