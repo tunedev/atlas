@@ -69,6 +69,9 @@ func (t Target) validate() error {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return fmt.Errorf("url %q must be an absolute http or https URL", t.URL)
 	}
+	if u.User != nil {
+		return errors.New("url must not carry credentials")
+	}
 	if t.Item == "" {
 		return errors.New("no item selector")
 	}

@@ -96,8 +96,8 @@ func (c *Conduct) cached(req *http.Request) (stored, bool) {
 // from the cache.
 func (c *Conduct) Revalidated() int64 { return c.revalidated.Load() }
 
-// Allow checks u against its host's robots.txt, then waits for the host's
-// turn. A Crawl-delay in robots.txt lengthens the turn and never shortens it.
+// Allow refuses a URL carrying userinfo, checks u against its host's
+// robots.txt, then waits for the host's turn. A Crawl-delay in robots.txt lengthens the turn and never shortens it.
 //
 // The disallow check goes through RobotsData.TestAgent rather than
 // FindGroup+Group.Test: when robots.txt could not be read, fetchRobots hands
@@ -107,6 +107,9 @@ func (c *Conduct) Revalidated() int64 { return c.revalidated.Load() }
 // the sentinel's disallow-all state. TestAgent is the one entry point that
 // consults that state.
 func (c *Conduct) Allow(ctx context.Context, u *url.URL) error {
+	if u.User != nil {
+		return fmt.Errorf("crawlsource: %s carries userinfo: %w", u.Redacted(), ErrCredential)
+	}
 	data, err := c.robots.data(ctx, u, c.fetchRobots)
 	if err != nil {
 		return err
@@ -156,13 +159,10 @@ func disallowAll() *robotstxt.RobotsData {
 }
 
 // refuse rejects anything but a plain read: another method, or a credential
-// in a header or in the URL.
+// in a header.
 func refuse(req *http.Request) error {
 	if req.Method != http.MethodGet && req.Method != http.MethodHead {
 		return fmt.Errorf("crawlsource: %s %s: %w", req.Method, req.URL.Redacted(), ErrMethod)
-	}
-	if req.URL.User != nil {
-		return fmt.Errorf("crawlsource: %s carries userinfo: %w", req.URL.Redacted(), ErrCredential)
 	}
 	for _, h := range []string{"Authorization", "Proxy-Authorization", "Cookie"} {
 		if req.Header.Get(h) != "" {

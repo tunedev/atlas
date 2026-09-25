@@ -230,7 +230,15 @@ func TestConductNeverSendsACookieBackOrACredential(t *testing.T) {
 func TestConductRefusesATargetURLCarryingCredentials(t *testing.T) {
 	srv, rec := recorded(t, routes(map[string]string{"/events": eventsPage}))
 	withUser := strings.Replace(srv.URL, "http://", "http://me:secret@", 1) + "/events"
-	_, err := crawl(t, testConfig(), fmt.Sprintf(target, "a", withUser))
+	if _, err := crawlsource.ParseTargets(fmt.Sprintf(target, "a", withUser)); err == nil {
+		t.Error("a target URL carrying credentials was accepted")
+	}
+	built := crawlsource.Target{ID: "a", URL: withUser, Item: "li.event", Key: "link", Fields: map[string]crawlsource.Field{"link": {CSS: "a", Attr: "href"}}}
+	src, err := crawlsource.New(testConfig(), []crawlsource.Target{built})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = src.Pull(context.Background())
 	if err == nil || len(rec.all()) != 0 {
 		t.Errorf("err = %v hits = %d; a URL with credentials must never be requested", err, len(rec.all()))
 	}
@@ -241,5 +249,8 @@ func TestATargetCannotExpressAHeaderOrCookie(t *testing.T) {
 		if _, err := crawlsource.ParseTargets(fmt.Sprintf(target, "a", "https://library.example/") + extra); err == nil {
 			t.Errorf("a target carrying %q was accepted", strings.TrimSpace(extra))
 		}
+	}
+	if _, err := crawlsource.ParseTargets(fmt.Sprintf(target, "a", "https://me:secret@library.example/")); err == nil {
+		t.Error("a target whose URL carries credentials was accepted")
 	}
 }

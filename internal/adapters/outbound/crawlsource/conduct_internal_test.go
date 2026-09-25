@@ -1,10 +1,12 @@
 package crawlsource
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -161,6 +163,17 @@ func TestConductOnlyReadsAndNeverSendsACredential(t *testing.T) {
 	}
 	if n := log.count("/a"); n != 0 {
 		t.Errorf("a refused request reached the server %d times", n)
+	}
+}
+
+func TestAllowRefusesAURLCarryingCredentials(t *testing.T) {
+	srv, log := site(t, map[string]string{"/a": "a"})
+	u, _ := url.Parse(strings.Replace(srv.URL, "http://", "http://me:pw@", 1) + "/a")
+	if err := newConduct(testConfig(), http.DefaultTransport).Allow(context.Background(), u); !errors.Is(err, ErrCredential) {
+		t.Errorf("err = %v, want ErrCredential", err)
+	}
+	if n := len(log.all()); n != 0 {
+		t.Errorf("the server saw %d requests, want none", n)
 	}
 }
 
