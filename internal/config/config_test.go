@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -520,5 +521,71 @@ func TestMalformedFeedDurationEnvVarIsRejected(t *testing.T) {
 	t.Setenv("ATLAS_FEED_STALE_AFTER", "soon")
 	if _, err := config.Load([]string{"-pack", "p.yaml"}); err == nil {
 		t.Error("a malformed ATLAS_FEED_STALE_AFTER was accepted")
+	}
+}
+
+func TestAgentIsOffWithoutACommand(t *testing.T) {
+	cfg, err := config.Load([]string{"-pack", "p.yaml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Agent.Command != "" {
+		t.Errorf("agent command %q; want none by default", cfg.Agent.Command)
+	}
+	wd, _ := os.Getwd()
+	if cfg.Agent.WorkDir != wd {
+		t.Errorf("workdir %q; want the process's %q", cfg.Agent.WorkDir, wd)
+	}
+}
+
+func TestAgentConfigFromEnvAndFlags(t *testing.T) {
+	t.Setenv("ATLAS_AGENT_COMMAND", "agent-bin")
+	t.Setenv("ATLAS_AGENT_ARGS", "--acp  --quiet")
+	t.Setenv("ATLAS_AGENT_TOOLS", "http.request, judge.ask")
+	t.Setenv("ATLAS_PERMISSION_RULES", "http.request:atlas:allow, *:execute:ask,*:*:deny")
+	workDir := t.TempDir()
+	cfg, err := config.Load([]string{"-pack", "p.yaml", "-agent-turn-timeout", "2m", "-agent-workdir", workDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cfg.Agent.Args, []string{"--acp", "--quiet"}) ||
+		!reflect.DeepEqual(cfg.Agent.Tools, []string{"http.request", "judge.ask"}) ||
+		cfg.Agent.TurnTimeout != 2*time.Minute || cfg.Agent.WorkDir != workDir {
+		t.Errorf("agent config %+v", cfg.Agent)
+	}
+	want := []config.PermissionRule{
+		{ToolName: "http.request", Kind: "atlas", Decision: "allow"},
+		{ToolName: "*", Kind: "execute", Decision: "ask"},
+		{ToolName: "*", Kind: "*", Decision: "deny"},
+	}
+	if !reflect.DeepEqual(cfg.Permission.Rules, want) {
+		t.Errorf("rules %+v", cfg.Permission.Rules)
+	}
+}
+
+func TestBadAgentConfigFailsAtLoad(t *testing.T) {
+	cases := map[string]map[string]string{
+		"bad decision":      {"ATLAS_PERMISSION_RULES": "*:*:maybe"},
+		"short rule":        {"ATLAS_PERMISSION_RULES": "*:allow"},
+		"relative workdir":  {"ATLAS_AGENT_COMMAND": "a", "ATLAS_AGENT_WORKDIR": "work"},
+		"zero turn timeout": {"ATLAS_AGENT_COMMAND": "a", "ATLAS_AGENT_TURN_TIMEOUT": "0s"},
+		"tools, no addr":    {"ATLAS_AGENT_COMMAND": "a", "ATLAS_AGENT_TOOLS": "x", "ATLAS_AGENT_MCP_ADDR": " "},
+	}
+	for name, env := range cases {
+		t.Run(name, func(t *testing.T) {
+			for k, v := range env {
+				t.Setenv(k, v)
+			}
+			if _, err := config.Load([]string{"-pack", "p.yaml"}); err == nil {
+				t.Error("loaded")
+			}
+		})
+	}
+}
+
+func TestAgentEnvDropsAtlasVariables(t *testing.T) {
+	got := config.AgentEnv([]string{"HOME=/home/u", "ATLAS_MODEL_API_KEY=secret", "PATH=/bin", "ATLAS_PACK=p"})
+	if !reflect.DeepEqual(got, []string{"HOME=/home/u", "PATH=/bin"}) {
+		t.Errorf("env %v", got)
 	}
 }

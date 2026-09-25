@@ -24,6 +24,9 @@ func Load(args []string) (Config, error) {
 	if err := expandPaths(&cfg); err != nil {
 		return Config{}, err
 	}
+	if err := resolveWorkDir(&cfg); err != nil {
+		return Config{}, err
+	}
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
 	}
@@ -78,6 +81,23 @@ func expandHome(path string) (string, error) {
 	return filepath.Join(home, strings.TrimPrefix(path, "~/")), nil
 }
 
+// resolveWorkDir expands a leading "~" in the agent's working directory and,
+// if it is still empty, defaults it to the process's current directory.
+func resolveWorkDir(c *Config) error {
+	workDir, err := expandHome(c.Agent.WorkDir)
+	if err != nil {
+		return err
+	}
+	if workDir == "" {
+		workDir, err = os.Getwd()
+		if err != nil {
+			return fmt.Errorf("config: resolve working directory: %w", err)
+		}
+	}
+	c.Agent.WorkDir = workDir
+	return nil
+}
+
 func defaults() Config {
 	return Config{
 		Pack: PackConfig{
@@ -114,6 +134,18 @@ func defaults() Config {
 			Seed:        1,
 			TopLogProbs: 5,
 			MaxTokens:   256,
+		},
+		Agent: AgentConfig{
+			MCPAddr:            "127.0.0.1:0",
+			StartTimeout:       60 * time.Second,
+			TurnTimeout:        30 * time.Minute,
+			CloseTimeout:       10 * time.Second,
+			MCPHeaderTimeout:   10 * time.Second,
+			MaxMessageBytes:    16 * 1024 * 1024,
+			MaxToolResultBytes: 1024 * 1024,
+		},
+		Permission: PermissionConfig{
+			SummaryBytes: 200,
 		},
 		Extract: ExtractConfig{
 			Temperature: 0,
@@ -261,6 +293,77 @@ func applyEnv(c *Config) error {
 		}
 		c.Feed.StaleAfter = d
 	}
+	if v := os.Getenv("ATLAS_AGENT_COMMAND"); v != "" {
+		c.Agent.Command = v
+	}
+	if v := os.Getenv("ATLAS_AGENT_ARGS"); v != "" {
+		c.Agent.Args = strings.Fields(v)
+	}
+	if v := os.Getenv("ATLAS_AGENT_WORKDIR"); v != "" {
+		c.Agent.WorkDir = v
+	}
+	if v := os.Getenv("ATLAS_AGENT_TOOLS"); v != "" {
+		c.Agent.Tools = splitList(v)
+	}
+	if v := os.Getenv("ATLAS_AGENT_MCP_ADDR"); v != "" {
+		c.Agent.MCPAddr = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("ATLAS_AGENT_START_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_AGENT_START_TIMEOUT: invalid duration %q: %w", v, err)
+		}
+		c.Agent.StartTimeout = d
+	}
+	if v := os.Getenv("ATLAS_AGENT_TURN_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_AGENT_TURN_TIMEOUT: invalid duration %q: %w", v, err)
+		}
+		c.Agent.TurnTimeout = d
+	}
+	if v := os.Getenv("ATLAS_AGENT_CLOSE_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_AGENT_CLOSE_TIMEOUT: invalid duration %q: %w", v, err)
+		}
+		c.Agent.CloseTimeout = d
+	}
+	if v := os.Getenv("ATLAS_AGENT_MCP_HEADER_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_AGENT_MCP_HEADER_TIMEOUT: invalid duration %q: %w", v, err)
+		}
+		c.Agent.MCPHeaderTimeout = d
+	}
+	if v := os.Getenv("ATLAS_AGENT_MAX_MESSAGE_BYTES"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_AGENT_MAX_MESSAGE_BYTES: invalid integer %q: %w", v, err)
+		}
+		c.Agent.MaxMessageBytes = n
+	}
+	if v := os.Getenv("ATLAS_AGENT_MAX_TOOL_RESULT_BYTES"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_AGENT_MAX_TOOL_RESULT_BYTES: invalid integer %q: %w", v, err)
+		}
+		c.Agent.MaxToolResultBytes = n
+	}
+	if v := os.Getenv("ATLAS_PERMISSION_RULES"); v != "" {
+		rules, err := parseRules(v)
+		if err != nil {
+			return err
+		}
+		c.Permission.Rules = rules
+	}
+	if v := os.Getenv("ATLAS_PERMISSION_SUMMARY_BYTES"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_PERMISSION_SUMMARY_BYTES: invalid integer %q: %w", v, err)
+		}
+		c.Permission.SummaryBytes = n
+	}
 	return nil
 }
 
@@ -306,8 +409,52 @@ func applyFlags(c *Config, args []string) error {
 	fs.StringVar(&c.Feed.CachePath, "feed-cache-path", c.Feed.CachePath, "directory of the feed's local cache; never inside the store root")
 	fs.DurationVar(&c.Feed.PullTimeout, "feed-pull-timeout", c.Feed.PullTimeout, "timeout for one feed pull")
 	fs.DurationVar(&c.Feed.StaleAfter, "feed-stale-after", c.Feed.StaleAfter, "feed age past which source.pull warns")
+	fs.StringVar(&c.Agent.Command, "agent-command", c.Agent.Command, "command that starts the coding agent; empty disables it")
+	fs.Func("agent-args", "space-separated arguments for the agent command", func(v string) error {
+		c.Agent.Args = strings.Fields(v)
+		return nil
+	})
+	fs.StringVar(&c.Agent.WorkDir, "agent-workdir", c.Agent.WorkDir, "absolute default working directory for the agent")
+	fs.Func("agent-tools", "comma-separated registry tools offered to the agent", func(v string) error {
+		c.Agent.Tools = splitList(v)
+		return nil
+	})
+	fs.DurationVar(&c.Agent.TurnTimeout, "agent-turn-timeout", c.Agent.TurnTimeout, "timeout for one agent turn")
+	fs.Func("permission-rules", "comma-separated tool:kind:decision permission rules, first match wins", func(v string) error {
+		rules, err := parseRules(v)
+		if err != nil {
+			return err
+		}
+		c.Permission.Rules = rules
+		return nil
+	})
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("config: parse flags: %w", err)
 	}
 	return nil
+}
+
+// splitList splits a comma-separated list, trimming space and dropping
+// empty entries.
+func splitList(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+// parseRules reads "tool:kind:decision" entries from a comma-separated list.
+func parseRules(s string) ([]PermissionRule, error) {
+	var rules []PermissionRule
+	for _, entry := range splitList(s) {
+		parts := strings.Split(entry, ":")
+		if len(parts) != 3 {
+			return nil, fmt.Errorf("config: permission rule %q is not tool:kind:decision", entry)
+		}
+		rules = append(rules, PermissionRule{ToolName: parts[0], Kind: parts[1], Decision: parts[2]})
+	}
+	return rules, nil
 }
