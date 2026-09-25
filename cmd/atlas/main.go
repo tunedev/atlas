@@ -60,6 +60,7 @@ func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index, source
 		tools.NewExtract(extractor),
 		tools.NewDecision(docs, index),
 		tools.NewSourcePull(source, cfg.Feed.StaleAfter, slog.Default()),
+		tools.NewDedupe(),
 	)
 }
 
