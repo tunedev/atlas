@@ -5,6 +5,7 @@ go 1.27.0
 require (
 	github.com/go-git/go-git/v5 v5.19.2
 	github.com/marcboeker/go-duckdb/v2 v2.4.3
+	github.com/temoto/robotstxt v1.1.2
 	github.com/tsawler/tabula v1.6.14
 	go.opentelemetry.io/otel v1.46.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.46.0
