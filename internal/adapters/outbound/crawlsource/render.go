@@ -51,6 +51,12 @@ func (c chrome) render(ctx context.Context, u *url.URL) (string, error) {
 	l := launcher.New().Bin(bin).Headless(true).Context(ctx)
 	control, err := l.Launch()
 	if err != nil {
+		// Launch's leakless branch can return an error after starting the
+		// browser process and setting the PID, without killing it or
+		// closing the exit channel Cleanup waits on. Kill is a no-op when
+		// no process started (PID 0); Cleanup is not called here because it
+		// would block forever on that unclosed channel.
+		l.Kill()
 		return "", fmt.Errorf("launch %s: %w", bin, err)
 	}
 	defer l.Cleanup()
