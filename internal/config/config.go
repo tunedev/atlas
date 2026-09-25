@@ -14,14 +14,16 @@ import (
 // Nothing here describes any particular use case: what to run comes from a
 // pack file, named by Pack.Path.
 type Config struct {
-	Pack    PackConfig
-	Model   ModelConfig
-	OTel    OTelConfig
-	Store   StoreConfig
-	Feed    FeedConfig
-	Judge   JudgeConfig
-	Extract ExtractConfig
-	Crawl   CrawlConfig
+	Pack       PackConfig
+	Model      ModelConfig
+	OTel       OTelConfig
+	Store      StoreConfig
+	Feed       FeedConfig
+	Judge      JudgeConfig
+	Agent      AgentConfig
+	Permission PermissionConfig
+	Extract    ExtractConfig
+	Crawl      CrawlConfig
 }
 
 type PackConfig struct {
@@ -117,6 +119,74 @@ const minCrawlDelay = time.Second
 // identified reports whether a user agent names a contact.
 func identified(ua string) bool {
 	return strings.Contains(ua, "http://") || strings.Contains(ua, "https://") || strings.Contains(ua, "@")
+}
+
+// AgentConfig configures the one coding agent atlas can drive. The agent is
+// enabled only when Command is set. Tools names the registry tools offered
+// to it. WorkDir is the absolute default directory it works in.
+type AgentConfig struct {
+	Command            string
+	Args               []string
+	WorkDir            string
+	Tools              []string
+	MCPAddr            string
+	StartTimeout       time.Duration
+	TurnTimeout        time.Duration
+	CloseTimeout       time.Duration
+	MCPHeaderTimeout   time.Duration
+	MaxMessageBytes    int
+	MaxToolResultBytes int
+}
+
+// PermissionConfig holds the rules that decide an agent's tool calls, first
+// match wins, and bounds the summary a human is shown.
+type PermissionConfig struct {
+	Rules        []PermissionRule
+	SummaryBytes int
+}
+
+// PermissionRule matches a tool name and kind, either of which may be "*".
+type PermissionRule struct {
+	ToolName string
+	Kind     string
+	Decision string
+}
+
+// AgentEnv is environ without atlas's own variables, so no atlas secret
+// reaches the agent process.
+func AgentEnv(environ []string) []string {
+	var out []string
+	for _, kv := range environ {
+		if !strings.HasPrefix(kv, "ATLAS_") {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
+// validate checks the agent config, called only when the agent is enabled.
+func (a AgentConfig) validate() error {
+	if !filepath.IsAbs(a.WorkDir) {
+		return fmt.Errorf("config: agent workdir must be absolute, got %q", a.WorkDir)
+	}
+	for _, t := range []struct {
+		name string
+		d    time.Duration
+	}{
+		{"start timeout", a.StartTimeout}, {"turn timeout", a.TurnTimeout},
+		{"close timeout", a.CloseTimeout}, {"mcp header timeout", a.MCPHeaderTimeout},
+	} {
+		if t.d <= 0 {
+			return fmt.Errorf("config: agent %s must be positive, got %s", t.name, t.d)
+		}
+	}
+	if a.MaxMessageBytes <= 0 || a.MaxToolResultBytes <= 0 {
+		return fmt.Errorf("config: agent max message and tool result bytes must be positive")
+	}
+	if len(a.Tools) > 0 && a.MCPAddr == "" {
+		return fmt.Errorf("config: agent tools are configured but the MCP address is empty")
+	}
+	return nil
 }
 
 func (c Config) validate() error {
@@ -218,6 +288,21 @@ func (c Config) validate() error {
 	}
 	if overlaps(c.Crawl.CacheDir, c.Store.Root) {
 		return fmt.Errorf("config: crawl cache dir %s overlaps store root %s; fetched pages must never share a directory with the private record", c.Crawl.CacheDir, c.Store.Root)
+	}
+	for _, r := range c.Permission.Rules {
+		switch r.Decision {
+		case "allow", "ask", "deny":
+		default:
+			return fmt.Errorf("config: permission rule %s:%s has unknown decision %q", r.ToolName, r.Kind, r.Decision)
+		}
+	}
+	if c.Permission.SummaryBytes <= 0 {
+		return fmt.Errorf("config: permission summary bytes must be positive, got %d", c.Permission.SummaryBytes)
+	}
+	if c.Agent.Command != "" {
+		if err := c.Agent.validate(); err != nil {
+			return err
+		}
 	}
 	return nil
 }

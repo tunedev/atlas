@@ -5,6 +5,8 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -86,32 +88,55 @@ func TestBuildRegistryRegistersTheJudgeTool(t *testing.T) {
 }
 
 // A hardcoded timeout and a configured one behave identically against a fast
-// endpoint, so the property is checked structurally: buildRegistry must pass
-// configured values through and never a literal of its own.
-func TestBuildRegistryPassesNoLiterals(t *testing.T) {
+// endpoint, so the property is checked structurally: buildRegistry and
+// startAgent must pass configured values through and never a literal of
+// their own.
+func TestCompositionPassesNoLiterals(t *testing.T) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "main.go", nil, 0)
 	if err != nil {
 		t.Fatalf("parse main.go: %v", err)
 	}
-	for _, decl := range f.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Name.Name != "buildRegistry" {
-			continue
-		}
-		ast.Inspect(fn, func(n ast.Node) bool {
-			lit, ok := n.(*ast.BasicLit)
-			if !ok {
+	for _, name := range []string{"buildRegistry", "startAgent"} {
+		found := false
+		for _, decl := range f.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Name.Name != name {
+				continue
+			}
+			found = true
+			ast.Inspect(fn, func(n ast.Node) bool {
+				if lit, ok := n.(*ast.BasicLit); ok {
+					t.Errorf("%s contains the literal %s; every value must come from config", name, lit.Value)
+				}
 				return true
-			}
-			if lit.Kind == token.INT || lit.Kind == token.FLOAT || lit.Kind == token.STRING {
-				t.Errorf("buildRegistry contains the literal %s; every value must come from config", lit.Value)
-			}
-			return true
-		})
-		return
+			})
+		}
+		if !found {
+			t.Errorf("%s not found in main.go", name)
+		}
 	}
-	t.Fatal("buildRegistry not found in main.go")
+}
+
+// TestStartAgentFailsLoudlyForAMissingCommand proves startAgent surfaces the
+// agent process's own failure to start, rather than hanging or returning a
+// generic error.
+func TestStartAgentFailsLoudlyForAMissingCommand(t *testing.T) {
+	docs, index := testStore(t)
+	cfg := config.Config{}
+	cfg.Agent.Command = filepath.Join(t.TempDir(), "no-such-agent")
+	cfg.Agent.Tools = []string{"http.request"}
+	cfg.Agent.MCPAddr = "127.0.0.1:0"
+	cfg.Agent.StartTimeout = time.Second
+	cfg.Agent.MCPHeaderTimeout = time.Second
+	cfg.Agent.MaxMessageBytes = 1 << 20
+	cfg.Agent.MaxToolResultBytes = 1 << 20
+	cfg.Permission.SummaryBytes = 200
+
+	_, _, err := startAgent(context.Background(), cfg, buildRegistry(cfg, docs, index, feedsource.New(feedsource.Config{}), testCrawler(t)), docs)
+	if err == nil || !strings.Contains(err.Error(), "no-such-agent") {
+		t.Errorf("err = %v; want one naming the command", err)
+	}
 }
 
 // main() calls os.Exit; run() must therefore own every defer, or the
