@@ -1,0 +1,15 @@
+- id: app
+  url: http://127.0.0.1:8765/app.html
+  item: li.opening
+  key: link
+  render: true
+  fields:
+    title:
+      css: h3.title
+    location:
+      css: span.location
+    link:
+      css: a
+      attr: href
+  static:
+    company: Northwind

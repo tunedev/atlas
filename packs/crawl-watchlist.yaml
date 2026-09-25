@@ -1,0 +1,25 @@
+# Crawls a watchlist of pages with no API, politely, and counts the same role
+# once however many pages list it. The watchlist is a targets file (see
+# packs/crawl/watchlist.example.yaml); failures are reported per page, never
+# as silent zero.
+#   atlas -pack packs/crawl-watchlist.yaml -var watchlist="$PWD/packs/crawl/watchlist.example.yaml"
+name: crawl-watchlist
+vars:
+  watchlist: ""
+
+steps:
+  - id: watchlist
+    tool: file.read
+    with:
+      path: "{{ .vars.watchlist }}"
+
+  - id: crawl
+    tool: crawl.pull
+    with:
+      targets: "{{ .steps.watchlist.body }}"
+
+  - id: roles
+    tool: items.dedupe
+    with:
+      lists: "[{{ json .steps.crawl.items }}]"
+      key: company, title, location
