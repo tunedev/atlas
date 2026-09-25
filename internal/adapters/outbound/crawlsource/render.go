@@ -93,7 +93,19 @@ func (c chrome) render(ctx context.Context, u *url.URL) (string, error) {
 	if err := page.WaitDOMStable(settle, 0); err != nil {
 		return "", fmt.Errorf("settle %s: %w", u, err)
 	}
-	return page.HTML()
+	html, err := page.HTML()
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", u, err)
+	}
+	return boundHTML(html, c.cfg.MaxBytes)
+}
+
+// boundHTML returns html, or fails when it is longer than max bytes.
+func boundHTML(html string, max int64) (string, error) {
+	if int64(len(html)) > max {
+		return "", fmt.Errorf("%w of %d bytes", errTooLarge, max)
+	}
+	return html, nil
 }
 
 // landed checks the URL a render of u ended on against robots.txt when it

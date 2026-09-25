@@ -101,3 +101,12 @@ func TestARenderThatLandsOnADisallowedURLFails(t *testing.T) {
 		t.Errorf("err = %v; a render that stayed put was refused", err)
 	}
 }
+
+func TestRenderedHTMLOverTheLimitFails(t *testing.T) {
+	if _, err := boundHTML(strings.Repeat("x", 101), 100); err == nil || !strings.Contains(err.Error(), "max size of 100 bytes") {
+		t.Errorf("err = %v; an over-limit page must fail and name the limit", err)
+	}
+	if html, err := boundHTML(strings.Repeat("x", 100), 100); err != nil || len(html) != 100 {
+		t.Errorf("len = %d err = %v; an at-limit page must pass whole", len(html), err)
+	}
+}
