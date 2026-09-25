@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -117,5 +118,23 @@ func TestARetryKeepsTheHostsCrawlDelay(t *testing.T) {
 		if gap := hits[i].At.Sub(hits[i-1].At); gap < time.Second-5*time.Millisecond {
 			t.Errorf("%s then %s %s apart; robots.txt asked for 1s", hits[i-1].Path, hits[i].Path, gap)
 		}
+	}
+}
+
+func TestAnOversizedBodyIsNotRetried(t *testing.T) {
+	log := &siteLog{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.record(r)
+		if r.URL.Path == "/robots.txt" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		io.WriteString(w, strings.Repeat("x", 100))
+	}))
+	t.Cleanup(srv.Close)
+	c := retrying(2)
+	c.cfg.MaxBytes = 50
+	if _, err := get(t, c, srv.URL+"/p"); err == nil || log.count("/p") != 1 {
+		t.Errorf("requests = %d err = %v; an over-limit body fails once", log.count("/p"), err)
 	}
 }

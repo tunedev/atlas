@@ -213,7 +213,7 @@ func (s *Source) fetched(ctx context.Context, t Target) (*goquery.Selection, *ur
 	c.IgnoreRobotsTxt = true // the Conduct checks robots.txt, for both fetch paths
 	c.MaxBodySize = 0        // the Conduct bounds the body, failing rather than truncating
 	c.DisableCookies()
-	c.SetRequestTimeout(s.cfg.Timeout)
+	c.SetRequestTimeout(0) // the Conduct times each attempt; PullTimeout bounds the crawl
 	c.WithTransport(s.conduct)
 
 	var page *goquery.Selection

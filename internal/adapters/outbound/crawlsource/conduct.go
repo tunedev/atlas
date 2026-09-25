@@ -17,6 +17,8 @@ var (
 	ErrDisallowed = errors.New("robots.txt disallows it")
 	ErrCredential = errors.New("the crawler never sends a credential")
 	ErrMethod     = errors.New("the crawler only reads")
+
+	errTooLarge = errors.New("body exceeds max size")
 )
 
 // Conduct is the crawler's only way onto the network. Every request is a GET
@@ -54,7 +56,6 @@ func (c *Conduct) RoundTrip(req *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 	if ok && resp.StatusCode == http.StatusNotModified {
-		resp.Body.Close()
 		if int64(len(cached.Body)) > c.cfg.MaxBytes {
 			return nil, fmt.Errorf("crawlsource: %s: body exceeds max size of %d bytes", req.URL.Redacted(), c.cfg.MaxBytes)
 		}
@@ -64,12 +65,8 @@ func (c *Conduct) RoundTrip(req *http.Request) (*http.Response, error) {
 		c.revalidated.Add(1)
 		return resp, nil
 	}
-	resp, err = bounded(resp, c.cfg.MaxBytes)
-	if err != nil {
-		return nil, err
-	}
 	if resp.StatusCode == http.StatusOK && c.cfg.CacheDir != "" && req.Method == http.MethodGet {
-		// resp.Body is bounded's in-memory reader; this read cannot fail.
+		// resp.Body is send's in-memory reader; this read cannot fail.
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body = io.NopCloser(bytes.NewReader(body))
 		if err := c.cache.save(req.URL.String(), resp, body); err != nil {
@@ -192,7 +189,7 @@ func readBounded(r io.ReadCloser, max int64) ([]byte, error) {
 		return nil, err
 	}
 	if int64(len(body)) > max {
-		return nil, fmt.Errorf("body exceeds max size of %d bytes", max)
+		return nil, fmt.Errorf("%w of %d bytes", errTooLarge, max)
 	}
 	return body, nil
 }

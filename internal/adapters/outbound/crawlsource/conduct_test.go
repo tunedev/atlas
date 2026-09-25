@@ -167,6 +167,20 @@ func TestConductWaitsItsTurnPerHost(t *testing.T) {
 	}
 }
 
+func TestARequestTimeoutDoesNotCoverTheWaitForItsTurn(t *testing.T) {
+	cfg := testConfig()
+	cfg.Timeout = time.Second
+	srv, rec := recorded(t, routes(map[string]string{"/robots.txt": "User-agent: *\nCrawl-delay: 2\n", "/1": eventsPage, "/2": eventsPage}))
+	ids, err := crawl(t, cfg, fmt.Sprintf(target, "one", srv.URL+"/1")+fmt.Sprintf(target, "two", srv.URL+"/2"))
+	if err != nil || len(ids) != 4 {
+		t.Fatalf("ids = %v err = %v; a Crawl-delay longer than the request timeout must not fail a request", ids, err)
+	}
+	hits := rec.all()
+	if gap := hits[len(hits)-1].At.Sub(hits[len(hits)-2].At); gap < 2*time.Second-5*time.Millisecond {
+		t.Errorf("pages %s apart; robots.txt asked for 2s", gap)
+	}
+}
+
 func TestConductIdentifiesItselfOnEveryRequest(t *testing.T) {
 	srv, rec := recorded(t, routes(map[string]string{"/robots.txt": "User-agent: *\nAllow: /\n", "/events": eventsPage}))
 	if _, err := crawl(t, testConfig(), fmt.Sprintf(target, "a", srv.URL+"/events")); err != nil {

@@ -1,7 +1,8 @@
 package crawlsource
 
 import (
-	"io"
+	"context"
+	"errors"
 	"math/rand/v2"
 	"net/http"
 	"strconv"
@@ -11,19 +12,15 @@ import (
 // send makes req, retrying up to cfg.Retries times after a network error, a
 // 429 or a 5xx. It waits what a Retry-After asks, or else an exponential
 // backoff from cfg.Delay with full jitter, and every retry takes its host's
-// turn again. The last response or error is returned as it came.
+// turn again. The last response, its body read and bounded, or the last error
+// is returned as it came.
 func (c *Conduct) send(req *http.Request) (*http.Response, error) {
 	for attempt := 0; ; attempt++ {
-		resp, err := c.next.RoundTrip(req)
+		resp, err := c.attempt(req)
 		if attempt >= c.cfg.Retries || !transient(resp, err) || req.Context().Err() != nil {
 			return resp, err
 		}
-		wait := c.backoff(attempt, resp)
-		if resp != nil {
-			io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
-		}
-		if err := sleep(req.Context(), wait); err != nil {
+		if err := sleep(req.Context(), c.backoff(attempt, resp)); err != nil {
 			return nil, err
 		}
 		if err := c.turns.wait(req.Context(), req.URL.Host); err != nil {
@@ -32,10 +29,21 @@ func (c *Conduct) send(req *http.Request) (*http.Response, error) {
 	}
 }
 
+// attempt makes req once and reads its body, both within cfg.Timeout.
+func (c *Conduct) attempt(req *http.Request) (*http.Response, error) {
+	ctx, cancel := context.WithTimeout(req.Context(), c.cfg.Timeout)
+	defer cancel()
+	resp, err := c.next.RoundTrip(req.WithContext(ctx))
+	if err != nil {
+		return nil, err
+	}
+	return bounded(resp, c.cfg.MaxBytes)
+}
+
 // transient reports whether an outcome is worth another try.
 func transient(resp *http.Response, err error) bool {
 	if err != nil {
-		return true
+		return !errors.Is(err, errTooLarge)
 	}
 	return resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500
 }
