@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,6 +22,15 @@ func crawlConfig() crawlsource.Config {
 		UserAgent: "atlas-test/1 (+https://example.invalid/bot)", Delay: 10 * time.Millisecond,
 		Timeout: 5 * time.Second, PullTimeout: 30 * time.Second, MaxBytes: 1 << 20, RenderTimeout: 10 * time.Second,
 	}
+}
+
+func newCrawler(t *testing.T, cfg crawlsource.Config) *crawlsource.Crawler {
+	t.Helper()
+	c, err := crawlsource.NewCrawler(cfg)
+	if err != nil {
+		t.Fatalf("new crawler: %v", err)
+	}
+	return c
 }
 
 const listing = `<html><body><ul><li class="event"><h3>Tide talk</h3><a href="/tide">x</a></li></ul></body></html>`
@@ -59,7 +69,7 @@ func eventsSite(t *testing.T) *httptest.Server {
 func TestCrawlPullReturnsItemsAndNamesEveryFailure(t *testing.T) {
 	srv := eventsSite(t)
 	var logs bytes.Buffer
-	out, err := tools.NewCrawlPull(crawlConfig(), slog.New(slog.NewTextHandler(&logs, nil))).Invoke(context.Background(), map[string]string{
+	out, err := tools.NewCrawlPull(newCrawler(t, crawlConfig()), slog.New(slog.NewTextHandler(&logs, nil))).Invoke(context.Background(), map[string]string{
 		"targets": fmt.Sprintf(crawlTargets, srv.URL),
 	})
 	if err != nil {
@@ -90,15 +100,61 @@ func TestCrawlPullReturnsItemsAndNamesEveryFailure(t *testing.T) {
 func TestCrawlPullFailsWhenEveryTargetFails(t *testing.T) {
 	srv := eventsSite(t)
 	only := "- id: changed\n  url: " + srv.URL + "/changed\n  item: li.event\n  key: link\n  fields:\n    link: {css: a, attr: href}\n"
-	_, err := tools.NewCrawlPull(crawlConfig(), slog.Default()).Invoke(context.Background(), map[string]string{"targets": only})
+	_, err := tools.NewCrawlPull(newCrawler(t, crawlConfig()), slog.Default()).Invoke(context.Background(), map[string]string{"targets": only})
 	if err == nil || !strings.HasPrefix(err.Error(), "crawl.pull: ") {
 		t.Errorf("err = %v; a crawl that reached nothing must fail the step", err)
 	}
 }
 
 func TestCrawlPullRejectsTargetsItCannotParse(t *testing.T) {
-	_, err := tools.NewCrawlPull(crawlConfig(), slog.Default()).Invoke(context.Background(), map[string]string{"targets": "- id: [unclosed"})
+	_, err := tools.NewCrawlPull(newCrawler(t, crawlConfig()), slog.Default()).Invoke(context.Background(), map[string]string{"targets": "- id: [unclosed"})
 	if err == nil || !strings.HasPrefix(err.Error(), "crawl.pull: ") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// TestCrawlPullPacesAcrossInvocationsSharingOneCrawler proves that politeness
+// pacing is a property of the Crawler, not of one Invoke: two calls against
+// the same host, made back to back through one Crawler, must still be spaced
+// by at least its Delay.
+func TestCrawlPullPacesAcrossInvocationsSharingOneCrawler(t *testing.T) {
+	var mu sync.Mutex
+	var hits []time.Time
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		hits = append(hits, time.Now())
+		mu.Unlock()
+		if r.URL.Path == "/events" {
+			io.WriteString(w, listing)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := crawlConfig()
+	cfg.Delay = 150 * time.Millisecond
+	crawler := newCrawler(t, cfg)
+	pull := tools.NewCrawlPull(crawler, slog.Default())
+
+	one := "- id: good\n  url: " + srv.URL + "/events\n  item: li.event\n  key: link\n  fields:\n    link: {css: a, attr: href}\n"
+	if _, err := pull.Invoke(context.Background(), map[string]string{"targets": one}); err != nil {
+		t.Fatalf("first invoke: %v", err)
+	}
+	mu.Lock()
+	n1 := len(hits)
+	mu.Unlock()
+
+	if _, err := pull.Invoke(context.Background(), map[string]string{"targets": one}); err != nil {
+		t.Fatalf("second invoke: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if n1 == 0 || len(hits) <= n1 {
+		t.Fatalf("hits before second call = %d, after = %d", n1, len(hits))
+	}
+	if gap := hits[n1].Sub(hits[n1-1]); gap < cfg.Delay-5*time.Millisecond {
+		t.Errorf("first request of the second call came %s after the last request of the first; want at least %s (pacing must hold across crawl.pull invocations)", gap, cfg.Delay)
 	}
 }

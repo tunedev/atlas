@@ -13,14 +13,16 @@ import (
 
 // CrawlPull crawls the targets a pack supplies as YAML and returns their
 // items decoded, with every target that yielded nothing named in failures
-// and logged as a warning. A crawl that reached nothing is an error.
+// and logged as a warning. A crawl that reached nothing is an error. Every
+// invocation builds its Source from the same Crawler, so politeness pacing
+// holds across invocations, not just within one.
 type CrawlPull struct {
-	cfg crawlsource.Config
-	log *slog.Logger
+	crawler *crawlsource.Crawler
+	log     *slog.Logger
 }
 
-func NewCrawlPull(cfg crawlsource.Config, log *slog.Logger) *CrawlPull {
-	return &CrawlPull{cfg: cfg, log: log}
+func NewCrawlPull(crawler *crawlsource.Crawler, log *slog.Logger) *CrawlPull {
+	return &CrawlPull{crawler: crawler, log: log}
 }
 
 func (t *CrawlPull) Name() string { return "crawl.pull" }
@@ -30,7 +32,7 @@ func (t *CrawlPull) Invoke(ctx context.Context, with map[string]string) (any, er
 	if err != nil {
 		return nil, fmt.Errorf("crawl.pull: %w", err)
 	}
-	src, err := crawlsource.New(t.cfg, targets)
+	src, err := t.crawler.Source(targets)
 	if err != nil {
 		return nil, fmt.Errorf("crawl.pull: %w", err)
 	}

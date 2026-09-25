@@ -31,7 +31,7 @@ func main() {
 	}
 }
 
-func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index, source ports.Source) tools.Registry {
+func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index, source ports.Source, crawler *crawlsource.Crawler) tools.Registry {
 	provider := openaiprov.New(openaiprov.Config{
 		Name:     cfg.Model.Name,
 		BaseURL:  cfg.Model.BaseURL,
@@ -62,17 +62,7 @@ func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index, source
 		tools.NewDecision(docs, index),
 		tools.NewSourcePull(source, cfg.Feed.StaleAfter, slog.Default()),
 		tools.NewDedupe(),
-		tools.NewCrawlPull(crawlsource.Config{
-			UserAgent:     cfg.Crawl.UserAgent,
-			Delay:         cfg.Crawl.Delay,
-			Timeout:       cfg.Crawl.Timeout,
-			PullTimeout:   cfg.Crawl.PullTimeout,
-			MaxBytes:      cfg.Crawl.MaxBytes,
-			Retries:       cfg.Crawl.Retries,
-			CacheDir:      cfg.Crawl.CacheDir,
-			Render:        cfg.Crawl.Render,
-			RenderTimeout: cfg.Crawl.RenderTimeout,
-		}, slog.Default()),
+		tools.NewCrawlPull(crawler, slog.Default()),
 	)
 }
 
@@ -122,7 +112,27 @@ func run() error {
 		CachePath:   cfg.Feed.CachePath,
 		PullTimeout: cfg.Feed.PullTimeout,
 	})
-	registry := buildRegistry(cfg, docs, index, source)
+
+	// Built once so every crawl.pull invocation shares one robots.txt cache
+	// and one set of per-host pacing state; a fresh Crawler per invocation
+	// would let two steps in one run hit the same host without waiting on
+	// each other.
+	crawler, err := crawlsource.NewCrawler(crawlsource.Config{
+		UserAgent:     cfg.Crawl.UserAgent,
+		Delay:         cfg.Crawl.Delay,
+		Timeout:       cfg.Crawl.Timeout,
+		PullTimeout:   cfg.Crawl.PullTimeout,
+		MaxBytes:      cfg.Crawl.MaxBytes,
+		Retries:       cfg.Crawl.Retries,
+		CacheDir:      cfg.Crawl.CacheDir,
+		Render:        cfg.Crawl.Render,
+		RenderTimeout: cfg.Crawl.RenderTimeout,
+	})
+	if err != nil {
+		return err
+	}
+
+	registry := buildRegistry(cfg, docs, index, source, crawler)
 
 	// telemetry.Init has already installed the tracer provider, so the
 	// tracer obtained here is the real one when tracing is enabled and the

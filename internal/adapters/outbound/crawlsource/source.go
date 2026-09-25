@@ -38,6 +38,15 @@ type Config struct {
 	RenderTimeout time.Duration
 }
 
+// Crawler holds the Conduct and browser a process crawls through, built
+// once. Every Source it builds shares them, so the robots.txt cache and the
+// per-host pacing hold across every Source's Pull, not just within one.
+type Crawler struct {
+	cfg     Config
+	conduct *Conduct
+	browser browser
+}
+
 // Source crawls its targets one after another through a Conduct, reading
 // each page with Colly, or with a browser when a target asks for rendering
 // and rendering is on.
@@ -90,8 +99,9 @@ func (e *emptyError) Error() string {
 	return fmt.Sprintf("%s matched no %q; the page no longer matches its rules", e.url, e.item)
 }
 
-// New checks cfg and targets and builds a Source. It does no I/O.
-func New(cfg Config, targets []Target) (*Source, error) {
+// NewCrawler checks cfg and builds a Crawler: its Conduct and browser. It
+// does no I/O.
+func NewCrawler(cfg Config) (*Crawler, error) {
 	switch {
 	case cfg.UserAgent == "":
 		return nil, errors.New("crawlsource: no user agent")
@@ -101,11 +111,28 @@ func New(cfg Config, targets []Target) (*Source, error) {
 		return nil, errors.New("crawlsource: timeouts must be positive")
 	case cfg.MaxBytes <= 0:
 		return nil, errors.New("crawlsource: max bytes must be positive")
-	case len(targets) == 0:
-		return nil, errors.New("crawlsource: no targets")
 	}
 	conduct := newConduct(cfg, http.DefaultTransport.(*http.Transport).Clone())
-	return &Source{cfg: cfg, targets: targets, conduct: conduct, browser: newChrome(cfg, conduct)}, nil
+	return &Crawler{cfg: cfg, conduct: conduct, browser: newChrome(cfg, conduct)}, nil
+}
+
+// Source builds a Source over targets that shares this Crawler's Conduct and
+// browser, so pacing holds across every Source the Crawler builds.
+func (c *Crawler) Source(targets []Target) (*Source, error) {
+	if len(targets) == 0 {
+		return nil, errors.New("crawlsource: no targets")
+	}
+	return &Source{cfg: c.cfg, targets: targets, conduct: c.conduct, browser: c.browser}, nil
+}
+
+// New checks cfg and targets and builds a Source over a fresh Crawler. It
+// does no I/O.
+func New(cfg Config, targets []Target) (*Source, error) {
+	c, err := NewCrawler(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return c.Source(targets)
 }
 
 // Pull crawls every target. It returns the items it reached, with a Failures
