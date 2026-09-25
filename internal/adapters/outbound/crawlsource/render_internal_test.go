@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-rod/rod/lib/launcher"
 )
@@ -64,4 +65,39 @@ func TestRenderAgainstALocalBrowserLive(t *testing.T) {
 		}
 	}
 	t.Logf("rendered item: %s", items[0].Body)
+}
+
+func TestPermittedChecksRobotsWithoutTakingATurn(t *testing.T) {
+	srv, log := site(t, map[string]string{"/robots.txt": "User-agent: *\nDisallow: /closed\n"})
+	cfg := testConfig()
+	cfg.Delay = time.Second
+	c := newConduct(cfg, http.DefaultTransport)
+	closed, _ := url.Parse(srv.URL + "/closed")
+	open, _ := url.Parse(srv.URL + "/open")
+	if err := c.permitted(context.Background(), closed); !errors.Is(err, ErrDisallowed) {
+		t.Errorf("err = %v, want ErrDisallowed", err)
+	}
+	start := time.Now()
+	if err := c.permitted(context.Background(), open); err != nil {
+		t.Errorf("err = %v; an allowed URL was refused", err)
+	}
+	if took := time.Since(start); took > 100*time.Millisecond {
+		t.Errorf("took %s; permitted must not wait for a turn", took)
+	}
+	if n := len(log.all()); n != 1 {
+		t.Errorf("the server saw %d requests, want only robots.txt", n)
+	}
+}
+
+func TestARenderThatLandsOnADisallowedURLFails(t *testing.T) {
+	srv, _ := site(t, map[string]string{"/robots.txt": "User-agent: *\nDisallow: /closed\n"})
+	cfg := testConfig()
+	c := chrome{cfg: cfg, conduct: newConduct(cfg, http.DefaultTransport)}
+	asked, _ := url.Parse(srv.URL + "/app")
+	if err := c.landed(context.Background(), asked, srv.URL+"/closed"); !errors.Is(err, ErrDisallowed) {
+		t.Errorf("err = %v, want ErrDisallowed", err)
+	}
+	if err := c.landed(context.Background(), asked, srv.URL+"/app"); err != nil {
+		t.Errorf("err = %v; a render that stayed put was refused", err)
+	}
 }

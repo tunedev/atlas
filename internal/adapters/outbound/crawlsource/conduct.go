@@ -93,8 +93,18 @@ func (c *Conduct) cached(req *http.Request) (stored, bool) {
 // from the cache.
 func (c *Conduct) Revalidated() int64 { return c.revalidated.Load() }
 
-// Allow refuses a URL carrying userinfo, checks u against its host's
-// robots.txt, then waits for the host's turn. A Crawl-delay in robots.txt lengthens the turn and never shortens it.
+// Allow checks u is permitted, then waits for its host's turn.
+func (c *Conduct) Allow(ctx context.Context, u *url.URL) error {
+	if err := c.permitted(ctx, u); err != nil {
+		return err
+	}
+	return c.turns.wait(ctx, u.Host)
+}
+
+// permitted refuses a URL carrying userinfo, checks u against its host's
+// robots.txt and records the host's Crawl-delay as the floor of its turns,
+// without taking a turn itself. A Crawl-delay lengthens the turn and never
+// shortens it.
 //
 // The disallow check goes through RobotsData.TestAgent rather than
 // FindGroup+Group.Test: when robots.txt could not be read, fetchRobots hands
@@ -103,7 +113,7 @@ func (c *Conduct) Revalidated() int64 { return c.revalidated.Load() }
 // allow, per the "no restrictions by default" rule) rather than reporting
 // the sentinel's disallow-all state. TestAgent is the one entry point that
 // consults that state.
-func (c *Conduct) Allow(ctx context.Context, u *url.URL) error {
+func (c *Conduct) permitted(ctx context.Context, u *url.URL) error {
 	if u.User != nil {
 		return fmt.Errorf("crawlsource: %s carries userinfo: %w", u.Redacted(), ErrCredential)
 	}
@@ -115,7 +125,7 @@ func (c *Conduct) Allow(ctx context.Context, u *url.URL) error {
 		return fmt.Errorf("crawlsource: %s: %w", u, ErrDisallowed)
 	}
 	c.turns.setFloor(u.Host, data.FindGroup(c.cfg.UserAgent).CrawlDelay)
-	return c.turns.wait(ctx, u.Host)
+	return nil
 }
 
 // fetchRobots reads the robots.txt of u's host, taking the host's turn like

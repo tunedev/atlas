@@ -29,7 +29,8 @@ type browser interface {
 // which turns Rod's download off. Each render uses a fresh temporary
 // profile, so no cookie of the user's reaches a site, and overrides the
 // browser's user agent with the crawler's. Only the page's own navigation
-// passes the Conduct; what the page then loads, the browser fetches itself.
+// passes the Conduct, and the URL it ends on is checked against robots.txt;
+// what the page then loads, the browser fetches itself.
 type chrome struct {
 	cfg      Config
 	conduct  *Conduct
@@ -82,10 +83,33 @@ func (c chrome) render(ctx context.Context, u *url.URL) (string, error) {
 	if err := page.WaitLoad(); err != nil {
 		return "", fmt.Errorf("load %s: %w", u, err)
 	}
+	info, err := page.Info()
+	if err != nil {
+		return "", fmt.Errorf("read the URL of %s: %w", u, err)
+	}
+	if err := c.landed(ctx, u, info.URL); err != nil {
+		return "", err
+	}
 	if err := page.WaitDOMStable(settle, 0); err != nil {
 		return "", fmt.Errorf("settle %s: %w", u, err)
 	}
 	return page.HTML()
+}
+
+// landed checks the URL a render of u ended on against robots.txt when it
+// differs from u.
+func (c chrome) landed(ctx context.Context, u *url.URL, final string) error {
+	if final == u.String() {
+		return nil
+	}
+	f, err := url.Parse(final)
+	if err != nil {
+		return fmt.Errorf("render of %s ended on %q: %w", u, final, err)
+	}
+	if err := c.conduct.permitted(ctx, f); err != nil {
+		return fmt.Errorf("render of %s ended on %s: %w", u, f.Redacted(), err)
+	}
+	return nil
 }
 
 // rendered reads t's page through the browser.
