@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -107,5 +108,57 @@ func TestACorruptCacheEntryIsIgnored(t *testing.T) {
 	}
 	if *full != 2 {
 		t.Errorf("full = %d; a corrupt entry must be refetched, not served", *full)
+	}
+}
+
+// TestARevalidatedBodyOverTheNewLimitFails proves a cached body is still
+// bounded by MaxBytes: a body cached under a larger limit must not be served
+// whole once MaxBytes is lowered, even though the cache is on disk and
+// outlives any one Conduct.
+func TestARevalidatedBodyOverTheNewLimitFails(t *testing.T) {
+	body := strings.Repeat("x", 200)
+	full := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/robots.txt" {
+			// No body: robots.txt must fit under the small MaxBytes used below.
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if r.Header.Get("If-None-Match") == `"v1"` {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("ETag", `"v1"`)
+		full++
+		io.WriteString(w, body)
+	}))
+	t.Cleanup(srv.Close)
+
+	dir := t.TempDir()
+
+	bigCfg := testConfig()
+	bigCfg.CacheDir = dir
+	bigCfg.MaxBytes = 1000
+	big := newConduct(bigCfg, http.DefaultTransport)
+	resp, err := get(t, big, srv.URL+"/p")
+	readAll(t, resp, err)
+
+	smallCfg := testConfig()
+	smallCfg.CacheDir = dir
+	smallCfg.MaxBytes = 10
+	small := newConduct(smallCfg, http.DefaultTransport)
+	resp, err = get(t, small, srv.URL+"/p")
+	if err == nil {
+		resp.Body.Close()
+		t.Fatal("want an error; the cached body exceeds the new MaxBytes")
+	}
+	if !strings.Contains(err.Error(), "10") {
+		t.Errorf("err = %v; want it to name the limit", err)
+	}
+	if small.Revalidated() != 0 {
+		t.Errorf("revalidated = %d, want 0; an over-limit cached body must not count as revalidated", small.Revalidated())
+	}
+	if full != 1 {
+		t.Errorf("full responses = %d, want 1; the second request must be answered 304", full)
 	}
 }

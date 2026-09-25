@@ -55,6 +55,9 @@ func (c *Conduct) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	if ok && resp.StatusCode == http.StatusNotModified {
 		resp.Body.Close()
+		if int64(len(cached.Body)) > c.cfg.MaxBytes {
+			return nil, fmt.Errorf("crawlsource: %s: body exceeds max size of %d bytes", req.URL.Redacted(), c.cfg.MaxBytes)
+		}
 		resp.StatusCode, resp.Status = http.StatusOK, "200 OK"
 		resp.Body = io.NopCloser(bytes.NewReader(cached.Body))
 		resp.ContentLength = int64(len(cached.Body))
@@ -66,6 +69,7 @@ func (c *Conduct) RoundTrip(req *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 	if resp.StatusCode == http.StatusOK && c.cfg.CacheDir != "" && req.Method == http.MethodGet {
+		// resp.Body is bounded's in-memory reader; this read cannot fail.
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body = io.NopCloser(bytes.NewReader(body))
 		if err := c.cache.save(req.URL.String(), resp, body); err != nil {
