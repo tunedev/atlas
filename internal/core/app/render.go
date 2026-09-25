@@ -3,6 +3,7 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -10,6 +11,24 @@ import (
 
 	"github.com/tunedev/atlas/internal/core/domain"
 )
+
+// renderFuncs is every function a template may call beyond text/template's
+// builtins.
+var renderFuncs = template.FuncMap{"json": renderJSON}
+
+// renderJSON serialises v as JSON indented two spaces, without HTML escaping,
+// so one step's structured output can feed another step's string field and
+// a person can still read the result.
+func renderJSON(v any) (string, error) {
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(v); err != nil {
+		return "", err
+	}
+	return b.String(), nil
+}
 
 // Render evaluates one config value as a Go template against state. Packs
 // reach earlier output through .steps.<id>.<path> and their own variables
@@ -32,11 +51,13 @@ import (
 // rejects that case outright, naming the element's path in the error, so the
 // run fails loudly instead of handing a rendered "<nil>" to a model.
 //
-// Deliberately no conditionals, loops, or expression language: a blueprint is
-// a sequence, not a program. The cheapest way to learn what expressiveness a
-// pack actually needs is to run out of it with a real pack in hand.
+// One function is added to text/template's builtins: json, which serialises
+// a value so a step's structured output can reach another step's string
+// field. It sees the same sanitised data as any other template, so a
+// null-valued key is absent from its output. Deliberately nothing else: a
+// blueprint is a sequence, not a program.
 func Render(tmpl string, s *domain.State) (string, error) {
-	t, err := template.New("with").Option("missingkey=error").Parse(tmpl)
+	t, err := template.New("with").Funcs(renderFuncs).Option("missingkey=error").Parse(tmpl)
 	if err != nil {
 		return "", fmt.Errorf("render: parse %q: %w", tmpl, err)
 	}

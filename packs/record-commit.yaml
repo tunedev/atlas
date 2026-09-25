@@ -1,0 +1,32 @@
+# Commits one file from disk into the record and indexes it. Serves any
+# document a person writes or edits by hand: preferences, deal-breakers,
+# evidence. Run with -var for every value, e.g.
+#   atlas -pack packs/record-commit.yaml \
+#     -var source="$HOME/.atlas/workspace/profile/preferences.json" \
+#     -var path=profile/preferences.json -var kind=profile \
+#     -var fields='section: preferences' -var expect=json \
+#     -var message="Raise the salary floor"
+name: record-commit
+vars:
+  source: ""
+  path: ""
+  kind: ""
+  fields: ""
+  expect: ""
+  message: ""
+
+steps:
+  - id: read
+    tool: file.read
+    with:
+      path: "{{ .vars.source }}"
+
+  - id: commit
+    tool: docs.put
+    with:
+      path: "{{ .vars.path }}"
+      body: "{{ .steps.read.body }}"
+      kind: "{{ .vars.kind }}"
+      fields: "{{ .vars.fields }}"
+      expect: "{{ .vars.expect }}"
+      message: "{{ .vars.message }}"
