@@ -3,7 +3,24 @@
 // behaves on the network is fixed in Conduct and has no switch.
 package crawlsource
 
-import "time"
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/PuerkitoBio/goquery"
+	"github.com/gocolly/colly/v2"
+
+	"github.com/tunedev/atlas/internal/core/ports"
+)
 
 // Config is how the crawler behaves: its identity, the least gap between two
 // requests to one host, the bounds on a request, a page and a whole crawl,
@@ -19,4 +36,209 @@ type Config struct {
 	CacheDir      string
 	Render        bool
 	RenderTimeout time.Duration
+}
+
+// Source crawls its targets one after another through a Conduct, reading
+// each page with Colly, or with a browser when a target asks for rendering
+// and rendering is on.
+type Source struct {
+	cfg     Config
+	targets []Target
+	conduct *Conduct
+	browser browser
+
+	mu     sync.Mutex
+	last   time.Time
+	report Report
+}
+
+// Report is what the last Pull did beyond yielding items.
+type Report struct {
+	Revalidated int
+}
+
+// Failure is one target that yielded nothing, and why.
+type Failure struct {
+	Target string
+	URL    string
+	Kind   string
+	Err    error
+}
+
+// Failures is every target of a Pull that yielded nothing.
+type Failures []Failure
+
+func (fs Failures) Error() string {
+	parts := make([]string, len(fs))
+	for i, f := range fs {
+		parts[i] = fmt.Sprintf("%s (%s): %v", f.Target, f.Kind, f.Err)
+	}
+	return "crawlsource: " + strings.Join(parts, "; ")
+}
+
+var errRenderingOff = errors.New("this target needs rendering, and rendering is off; enable it with -crawl-render")
+
+// emptyError is a page that was fetched and yielded no item.
+type emptyError struct {
+	kind, url, item string
+}
+
+func (e *emptyError) Error() string {
+	if e.kind == KindNeedsRendering {
+		return fmt.Sprintf("%s matched no %q and looks like an application shell; it needs rendering", e.url, e.item)
+	}
+	return fmt.Sprintf("%s matched no %q; the page no longer matches its rules", e.url, e.item)
+}
+
+// New checks cfg and targets and builds a Source. It does no I/O.
+func New(cfg Config, targets []Target) (*Source, error) {
+	switch {
+	case cfg.UserAgent == "":
+		return nil, errors.New("crawlsource: no user agent")
+	case cfg.Delay <= 0:
+		return nil, errors.New("crawlsource: delay must be positive")
+	case cfg.Timeout <= 0, cfg.PullTimeout <= 0:
+		return nil, errors.New("crawlsource: timeouts must be positive")
+	case cfg.MaxBytes <= 0:
+		return nil, errors.New("crawlsource: max bytes must be positive")
+	case len(targets) == 0:
+		return nil, errors.New("crawlsource: no targets")
+	}
+	conduct := newConduct(cfg, http.DefaultTransport.(*http.Transport).Clone())
+	return &Source{cfg: cfg, targets: targets, conduct: conduct, browser: newChrome(cfg, conduct)}, nil
+}
+
+// Pull crawls every target. It returns the items it reached, with a Failures
+// error naming each target that yielded none; it returns the error alone
+// when every target failed.
+func (s *Source) Pull(ctx context.Context) ([]ports.Item, error) {
+	ctx, cancel := context.WithTimeout(ctx, s.cfg.PullTimeout)
+	defer cancel()
+	before := s.conduct.Revalidated()
+
+	var items []ports.Item
+	var failed Failures
+	for _, t := range s.targets {
+		got, err := s.crawl(ctx, t)
+		if err != nil {
+			failed = append(failed, Failure{Target: t.ID, URL: t.URL, Kind: kindOf(err), Err: err})
+			continue
+		}
+		items = append(items, got...)
+	}
+
+	s.mu.Lock()
+	s.last = time.Now().UTC()
+	s.report = Report{Revalidated: int(s.conduct.Revalidated() - before)}
+	s.mu.Unlock()
+
+	switch {
+	case len(failed) == len(s.targets):
+		return nil, failed
+	case len(failed) > 0:
+		return items, failed
+	}
+	return items, nil
+}
+
+// LastRefreshed is when the last Pull finished. It fails before any has.
+func (s *Source) LastRefreshed(_ context.Context) (time.Time, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.last.IsZero() {
+		return time.Time{}, errors.New("crawlsource: nothing crawled yet")
+	}
+	return s.last, nil
+}
+
+// LastReport is what the last Pull did beyond yielding items.
+func (s *Source) LastReport() Report {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.report
+}
+
+func (s *Source) crawl(ctx context.Context, t Target) ([]ports.Item, error) {
+	page, base, err := s.fetch(ctx, t)
+	if err != nil {
+		return nil, err
+	}
+	fields := extract(page, t, base)
+	if len(fields) == 0 {
+		return nil, &emptyError{kind: emptyKind(page), url: t.URL, item: t.Item}
+	}
+	return itemsOf(t, fields, time.Now().UTC())
+}
+
+func (s *Source) fetch(ctx context.Context, t Target) (*goquery.Selection, *url.URL, error) {
+	if t.Render {
+		if !s.cfg.Render {
+			return nil, nil, fmt.Errorf("%s: %w", t.URL, errRenderingOff)
+		}
+		return s.rendered(ctx, t)
+	}
+	return s.fetched(ctx, t)
+}
+
+// fetched reads t's page with Colly, through the Conduct.
+func (s *Source) fetched(ctx context.Context, t Target) (*goquery.Selection, *url.URL, error) {
+	c := colly.NewCollector(colly.UserAgent(s.cfg.UserAgent), colly.StdlibContext(ctx), colly.AllowURLRevisit())
+	c.IgnoreRobotsTxt = true // the Conduct checks robots.txt, for both fetch paths
+	c.MaxBodySize = 0        // the Conduct bounds the body, failing rather than truncating
+	c.DisableCookies()
+	c.SetRequestTimeout(s.cfg.Timeout)
+	c.WithTransport(s.conduct)
+
+	var page *goquery.Selection
+	var base *url.URL
+	var fetchErr error
+	c.OnHTML("html", func(e *colly.HTMLElement) { page, base = e.DOM, e.Request.URL })
+	c.OnError(func(r *colly.Response, err error) {
+		fetchErr = fmt.Errorf("%s: status %d: %w", t.URL, r.StatusCode, err)
+	})
+	if err := c.Visit(t.URL); err != nil && fetchErr == nil {
+		fetchErr = fmt.Errorf("%s: %w", t.URL, err)
+	}
+	if fetchErr != nil {
+		return nil, nil, fetchErr
+	}
+	if page == nil {
+		return nil, nil, fmt.Errorf("%s: response is not HTML", t.URL)
+	}
+	return page, base, nil
+}
+
+func itemsOf(t Target, fields []map[string]string, when time.Time) ([]ports.Item, error) {
+	seen := map[string]bool{}
+	var out []ports.Item
+	for _, f := range fields {
+		sum := sha256.Sum256([]byte(f[t.Key]))
+		id := t.ID + "/" + hex.EncodeToString(sum[:8])
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		body, err := json.Marshal(f)
+		if err != nil {
+			return nil, fmt.Errorf("crawlsource: encode %s: %w", id, err)
+		}
+		out = append(out, ports.Item{ID: id, Body: body, When: when})
+	}
+	return out, nil
+}
+
+// kindOf names why a target failed.
+func kindOf(err error) string {
+	var empty *emptyError
+	switch {
+	case errors.As(err, &empty):
+		return empty.kind
+	case errors.Is(err, ErrDisallowed):
+		return KindDisallowed
+	case errors.Is(err, errRenderingOff):
+		return KindNeedsRendering
+	case errors.Is(err, ErrNoBrowser):
+		return KindRenderingUnavailable
+	}
+	return KindFetch
 }
