@@ -3,6 +3,7 @@ module github.com/tunedev/atlas
 go 1.27.0
 
 require (
+	github.com/PuerkitoBio/goquery v1.11.0
 	github.com/go-git/go-git/v5 v5.19.2
 	github.com/marcboeker/go-duckdb/v2 v2.4.3
 	github.com/temoto/robotstxt v1.1.2
@@ -19,6 +20,7 @@ require (
 	dario.cat/mergo v1.0.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProtonMail/go-crypto v1.1.6 // indirect
+	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/apache/arrow-go/v18 v18.4.1 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
