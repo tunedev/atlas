@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sync/atomic"
 
 	"github.com/temoto/robotstxt"
 )
@@ -23,14 +24,19 @@ var (
 // robots.txt, waits for its host's turn, carries the configured user agent,
 // and has its body bounded. There is no option to switch any of it off.
 type Conduct struct {
-	cfg    Config
-	next   http.RoundTripper
-	robots *robotsCache
-	turns  *hostTurns
+	cfg         Config
+	next        http.RoundTripper
+	robots      *robotsCache
+	turns       *hostTurns
+	cache       revalidator
+	revalidated atomic.Int64
 }
 
 func newConduct(cfg Config, next http.RoundTripper) *Conduct {
-	return &Conduct{cfg: cfg, next: next, robots: newRobotsCache(), turns: newHostTurns(cfg.Delay)}
+	return &Conduct{
+		cfg: cfg, next: next, robots: newRobotsCache(), turns: newHostTurns(cfg.Delay),
+		cache: revalidator{dir: cfg.CacheDir},
+	}
 }
 
 func (c *Conduct) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -42,12 +48,49 @@ func (c *Conduct) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	req = req.Clone(req.Context())
 	req.Header.Set("User-Agent", c.cfg.UserAgent)
+	cached, ok := c.cached(req)
 	resp, err := c.next.RoundTrip(req)
 	if err != nil {
 		return nil, err
 	}
-	return bounded(resp, c.cfg.MaxBytes)
+	if ok && resp.StatusCode == http.StatusNotModified {
+		resp.Body.Close()
+		resp.StatusCode, resp.Status = http.StatusOK, "200 OK"
+		resp.Body = io.NopCloser(bytes.NewReader(cached.Body))
+		resp.ContentLength = int64(len(cached.Body))
+		c.revalidated.Add(1)
+		return resp, nil
+	}
+	resp, err = bounded(resp, c.cfg.MaxBytes)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusOK && c.cfg.CacheDir != "" && req.Method == http.MethodGet {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		if err := c.cache.save(req.URL.String(), resp, body); err != nil {
+			return nil, fmt.Errorf("crawlsource: cache %s: %w", req.URL.Redacted(), err)
+		}
+	}
+	return resp, nil
 }
+
+// cached makes req conditional when a GET for its URL was cached, returning
+// what was cached.
+func (c *Conduct) cached(req *http.Request) (stored, bool) {
+	if c.cfg.CacheDir == "" || req.Method != http.MethodGet {
+		return stored{}, false
+	}
+	s, ok := c.cache.load(req.URL.String())
+	if ok {
+		c.cache.condition(req, s)
+	}
+	return s, ok
+}
+
+// Revalidated is how many requests were answered "not modified" and served
+// from the cache.
+func (c *Conduct) Revalidated() int64 { return c.revalidated.Load() }
 
 // Allow checks u against its host's robots.txt, then waits for the host's
 // turn. A Crawl-delay in robots.txt lengthens the turn and never shortens it.
