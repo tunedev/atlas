@@ -26,7 +26,7 @@ func (c *Conduct) send(req *http.Request) (*http.Response, error) {
 		if err := sleep(req.Context(), wait); err != nil {
 			return nil, err
 		}
-		if err := c.turns.wait(req.Context(), req.URL.Host, 0); err != nil {
+		if err := c.turns.wait(req.Context(), req.URL.Host); err != nil {
 			return nil, err
 		}
 	}

@@ -9,25 +9,31 @@ import (
 // hostTurns spaces requests to one host by at least gap, or by a longer
 // floor the host asks for. Hosts never wait on each other.
 type hostTurns struct {
-	gap  time.Duration
-	mu   sync.Mutex
-	next map[string]time.Time
+	gap   time.Duration
+	mu    sync.Mutex
+	last  map[string]time.Time
+	floor map[string]time.Duration
 }
 
 func newHostTurns(gap time.Duration) *hostTurns {
-	return &hostTurns{gap: gap, next: map[string]time.Time{}}
+	return &hostTurns{gap: gap, last: map[string]time.Time{}, floor: map[string]time.Duration{}}
 }
 
-// wait blocks until host's turn, then books the following one.
-func (h *hostTurns) wait(ctx context.Context, host string, floor time.Duration) error {
-	gap := max(h.gap, floor)
+// setFloor makes every later turn on host at least d after the one before.
+func (h *hostTurns) setFloor(host string, d time.Duration) {
 	h.mu.Lock()
-	now := time.Now()
-	at := h.next[host]
-	if at.Before(now) {
-		at = now
+	defer h.mu.Unlock()
+	h.floor[host] = d
+}
+
+// wait blocks until host's turn and books it.
+func (h *hostTurns) wait(ctx context.Context, host string) error {
+	h.mu.Lock()
+	at := time.Now()
+	if next := h.last[host].Add(max(h.gap, h.floor[host])); next.After(at) {
+		at = next
 	}
-	h.next[host] = at.Add(gap)
+	h.last[host] = at
 	h.mu.Unlock()
 
 	return sleep(ctx, time.Until(at))

@@ -86,3 +86,36 @@ func TestBackoffDoesNotOverflowOrPanicOnALargeAttempt(t *testing.T) {
 		}
 	}
 }
+
+func TestARetryKeepsTheHostsCrawlDelay(t *testing.T) {
+	log := &siteLog{}
+	failed := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.record(r)
+		switch {
+		case r.URL.Path == "/robots.txt":
+			io.WriteString(w, "User-agent: *\nCrawl-delay: 1\n")
+		case r.URL.Path == "/a" && !failed:
+			failed = true
+			w.WriteHeader(http.StatusServiceUnavailable)
+		default:
+			io.WriteString(w, "page")
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := retrying(1)
+	for _, p := range []string{"/a", "/b"} {
+		if _, err := get(t, c, srv.URL+p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hits := log.all()
+	if len(hits) != 4 {
+		t.Fatalf("hits = %v", hits)
+	}
+	for i := 1; i < len(hits); i++ {
+		if gap := hits[i].At.Sub(hits[i-1].At); gap < time.Second-5*time.Millisecond {
+			t.Errorf("%s then %s %s apart; robots.txt asked for 1s", hits[i-1].Path, hits[i].Path, gap)
+		}
+	}
+}

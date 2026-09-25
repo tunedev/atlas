@@ -117,15 +117,15 @@ func (c *Conduct) Allow(ctx context.Context, u *url.URL) error {
 	if !data.TestAgent(u.RequestURI(), c.cfg.UserAgent) {
 		return fmt.Errorf("crawlsource: %s: %w", u, ErrDisallowed)
 	}
-	group := data.FindGroup(c.cfg.UserAgent)
-	return c.turns.wait(ctx, u.Host, group.CrawlDelay)
+	c.turns.setFloor(u.Host, data.FindGroup(c.cfg.UserAgent).CrawlDelay)
+	return c.turns.wait(ctx, u.Host)
 }
 
 // fetchRobots reads the robots.txt of u's host, taking the host's turn like
 // any other request and following redirects. A 4xx allows everything; a 5xx,
 // an unexpected status or an unreachable host disallows everything.
 func (c *Conduct) fetchRobots(ctx context.Context, u *url.URL) (*robotstxt.RobotsData, error) {
-	if err := c.turns.wait(ctx, u.Host, 0); err != nil {
+	if err := c.turns.wait(ctx, u.Host); err != nil {
 		return nil, err
 	}
 	robotsURL := url.URL{Scheme: u.Scheme, Host: u.Host, Path: "/robots.txt"}
