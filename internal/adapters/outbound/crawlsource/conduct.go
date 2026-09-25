@@ -49,7 +49,7 @@ func (c *Conduct) RoundTrip(req *http.Request) (*http.Response, error) {
 	req = req.Clone(req.Context())
 	req.Header.Set("User-Agent", c.cfg.UserAgent)
 	cached, ok := c.cached(req)
-	resp, err := c.next.RoundTrip(req)
+	resp, err := c.send(req)
 	if err != nil {
 		return nil, err
 	}
