@@ -6,11 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 
 	"go.opentelemetry.io/otel"
 
 	"github.com/tunedev/atlas/internal/adapters/inbound/packfile"
+	"github.com/tunedev/atlas/internal/adapters/outbound/feedsource"
 	"github.com/tunedev/atlas/internal/adapters/outbound/gitdocs"
 	"github.com/tunedev/atlas/internal/adapters/outbound/openaiprov"
 	"github.com/tunedev/atlas/internal/adapters/outbound/sqlindex"
@@ -28,7 +30,7 @@ func main() {
 	}
 }
 
-func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index) tools.Registry {
+func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index, source ports.Source) tools.Registry {
 	provider := openaiprov.New(openaiprov.Config{
 		Name:     cfg.Model.Name,
 		BaseURL:  cfg.Model.BaseURL,
@@ -57,6 +59,7 @@ func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index) tools.
 		tools.NewQuoteGround(),
 		tools.NewExtract(extractor),
 		tools.NewDecision(docs, index),
+		tools.NewSourcePull(source, cfg.Feed.StaleAfter, slog.Default()),
 	)
 }
 
@@ -100,7 +103,13 @@ func run() error {
 	}
 	defer func() { _ = index.Close() }()
 
-	registry := buildRegistry(cfg, docs, index)
+	source := feedsource.New(feedsource.Config{
+		RemoteURL:   cfg.Feed.RemoteURL,
+		Ref:         cfg.Feed.Ref,
+		CachePath:   cfg.Feed.CachePath,
+		PullTimeout: cfg.Feed.PullTimeout,
+	})
+	registry := buildRegistry(cfg, docs, index, source)
 
 	// telemetry.Init has already installed the tracer provider, so the
 	// tracer obtained here is the real one when tracing is enabled and the

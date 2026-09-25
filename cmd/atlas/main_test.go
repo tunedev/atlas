@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tunedev/atlas/internal/adapters/outbound/feedsource"
 	"github.com/tunedev/atlas/internal/adapters/outbound/gitdocs"
 	"github.com/tunedev/atlas/internal/adapters/outbound/sqlindex"
 	"github.com/tunedev/atlas/internal/config"
@@ -43,7 +44,7 @@ func TestBuildRegistryRegistersBothShippedTools(t *testing.T) {
 	cfg.Judge.MaxTokens = 256
 
 	docs, index := testStore(t)
-	reg := buildRegistry(cfg, docs, index)
+	reg := buildRegistry(cfg, docs, index, feedsource.New(feedsource.Config{}))
 
 	if _, ok := reg.Lookup("http.request"); !ok {
 		t.Error("http.request is not registered")
@@ -58,8 +59,8 @@ func TestBuildRegistryRegistersBothShippedTools(t *testing.T) {
 
 func TestBuildRegistryRegistersTheJudgeTool(t *testing.T) {
 	docs, index := testStore(t)
-	r := buildRegistry(config.Config{}, docs, index)
-	for _, name := range []string{"http.request", "model.complete", "judge.ask", "file.read", "file.text", "docs.put", "quote.ground", "extract.run", "decision.record"} {
+	r := buildRegistry(config.Config{}, docs, index, feedsource.New(feedsource.Config{}))
+	for _, name := range []string{"http.request", "model.complete", "judge.ask", "source.pull", "file.read", "file.text", "docs.put", "quote.ground", "extract.run", "decision.record"} {
 		if _, ok := r.Lookup(name); !ok {
 			t.Errorf("registry has no %s", name)
 		}

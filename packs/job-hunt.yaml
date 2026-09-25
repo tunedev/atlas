@@ -1,15 +1,15 @@
 name: job-hunt
 vars:
-  board_api: https://boards-api.greenhouse.io
   board: gitlab
   profile: "Backend engineer. Go, distributed systems, Kubernetes, Postgres, OpenTelemetry."
 
 steps:
   - id: role
-    tool: http.request
+    tool: source.pull
     with:
-      url: "{{ .vars.board_api }}/v1/boards/{{ .vars.board }}/jobs?content=true"
-      select: jobs.0
+      prefix: "postings/greenhouse/{{ .vars.board }}"
+      match: status=open
+      select: items.0
 
   - id: judged
     tool: judge.ask
@@ -18,9 +18,9 @@ steps:
       subject: |
         Candidate: {{ .vars.profile }}
 
-        Role: {{ .steps.role.title }} at {{ .steps.role.company_name }}
+        Role: {{ .steps.role.title }} at {{ .steps.role.company }}
 
-        {{ .steps.role.content }}
+        {{ .steps.role.description_text }}
       questions: |
         - id: stretch
           type: noul
@@ -46,10 +46,10 @@ steps:
       user: |
         Candidate: {{ .vars.profile }}
 
-        Role: {{ .steps.role.title }} at {{ .steps.role.company_name }}
-        Location: {{ .steps.role.location.name }}
+        Role: {{ .steps.role.title }} at {{ .steps.role.company }}
+        Location: {{ .steps.role.location }}
 
-        {{ .steps.role.content }}
+        {{ .steps.role.description_text }}
 
   - id: documents
     tool: model.complete
@@ -64,6 +64,6 @@ steps:
         Candidate: {{ .vars.profile }}
         Verdict was {{ .steps.verdict.decision }}.
 
-        Role: {{ .steps.role.title }} at {{ .steps.role.company_name }}
+        Role: {{ .steps.role.title }} at {{ .steps.role.company }}
 
-        {{ .steps.role.content }}
+        {{ .steps.role.description_text }}

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tunedev/atlas/internal/config"
 )
@@ -456,5 +457,68 @@ func TestExtractConfigDefaultsAndValidation(t *testing.T) {
 	}
 	if _, err := config.Load([]string{"-pack", "p.yaml", "-extract-temperature", "3"}); err == nil {
 		t.Error("an extract temperature above 2 was accepted")
+	}
+}
+
+func TestFeedDefaults(t *testing.T) {
+	cfg, err := config.Load([]string{"-pack", "p.yaml"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	f := cfg.Feed
+	if f.RemoteURL == "" || f.Ref != "refs/heads/main" || f.PullTimeout <= 0 || f.StaleAfter != 24*time.Hour {
+		t.Errorf("Feed defaults = %+v", f)
+	}
+	if strings.HasPrefix(f.CachePath, "~") {
+		t.Errorf("CachePath %q was not expanded", f.CachePath)
+	}
+}
+
+func TestFeedLayers(t *testing.T) {
+	t.Setenv("ATLAS_FEED_REF", "refs/tags/pre-v2")
+	t.Setenv("ATLAS_FEED_STALE_AFTER", "12h")
+	cfg, err := config.Load([]string{"-pack", "p.yaml", "-feed-stale-after", "6h"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Feed.Ref != "refs/tags/pre-v2" || cfg.Feed.StaleAfter != 6*time.Hour {
+		t.Errorf("Feed = %+v; env sets the ref, the flag wins on stale-after", cfg.Feed)
+	}
+}
+
+func TestFeedCacheOverlappingTheStoreRootIsRejected(t *testing.T) {
+	root := t.TempDir()
+	for name, cache := range map[string]string{
+		"same":   root,
+		"inside": filepath.Join(root, "feed"),
+		"around": filepath.Dir(root),
+	} {
+		_, err := config.Load([]string{"-pack", "p.yaml", "-store-root", root, "-feed-cache-path", cache})
+		if err == nil {
+			t.Errorf("%s: a feed cache overlapping the store root was accepted", name)
+		}
+	}
+	if _, err := config.Load([]string{"-pack", "p.yaml", "-store-root", root, "-feed-cache-path", t.TempDir()}); err != nil {
+		t.Errorf("separate directories rejected: %v", err)
+	}
+}
+
+func TestInvalidFeedConfigIsRejectedAtStartup(t *testing.T) {
+	for name, args := range map[string][]string{
+		"short ref":         {"-feed-ref", "main"},
+		"empty remote":      {"-feed-remote-url", ""},
+		"zero stale-after":  {"-feed-stale-after", "0s"},
+		"zero pull timeout": {"-feed-pull-timeout", "0s"},
+	} {
+		if _, err := config.Load(append([]string{"-pack", "p.yaml"}, args...)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+func TestMalformedFeedDurationEnvVarIsRejected(t *testing.T) {
+	t.Setenv("ATLAS_FEED_STALE_AFTER", "soon")
+	if _, err := config.Load([]string{"-pack", "p.yaml"}); err == nil {
+		t.Error("a malformed ATLAS_FEED_STALE_AFTER was accepted")
 	}
 }

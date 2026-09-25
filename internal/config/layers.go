@@ -21,7 +21,7 @@ func Load(args []string) (Config, error) {
 	if err := applyFlags(&cfg, args); err != nil {
 		return Config{}, err
 	}
-	if err := expandStorePaths(&cfg); err != nil {
+	if err := expandPaths(&cfg); err != nil {
 		return Config{}, err
 	}
 	if err := cfg.validate(); err != nil {
@@ -30,11 +30,11 @@ func Load(args []string) (Config, error) {
 	return cfg, nil
 }
 
-// expandStorePaths resolves a leading "~" in each store path against the
-// user's home directory, so the rest of the program never handles a literal
+// expandPaths resolves a leading "~" in each store path and the feed cache path
+// against the user's home directory, so the rest of the program never handles a literal
 // "~". It fails loudly rather than falling back to a relative path if the
 // home directory cannot be determined.
-func expandStorePaths(c *Config) error {
+func expandPaths(c *Config) error {
 	root, err := expandHome(c.Store.Root)
 	if err != nil {
 		return err
@@ -52,6 +52,12 @@ func expandStorePaths(c *Config) error {
 		return err
 	}
 	c.Store.HistoryPath = historyPath
+
+	cachePath, err := expandHome(c.Feed.CachePath)
+	if err != nil {
+		return err
+	}
+	c.Feed.CachePath = cachePath
 
 	return nil
 }
@@ -95,6 +101,13 @@ func defaults() Config {
 			Root:        "~/.atlas/workspace",
 			IndexPath:   "~/.atlas/index.db",
 			HistoryPath: "~/.atlas/history.duckdb",
+		},
+		Feed: FeedConfig{
+			RemoteURL:   "https://github.com/tunedev/feed.git",
+			Ref:         "refs/heads/main",
+			CachePath:   "~/.atlas/feed-cache",
+			PullTimeout: 2 * time.Minute,
+			StaleAfter:  24 * time.Hour,
 		},
 		Judge: JudgeConfig{
 			Temperature: 0,
@@ -225,6 +238,29 @@ func applyEnv(c *Config) error {
 		}
 		c.Extract.MaxTokens = n
 	}
+	if v := os.Getenv("ATLAS_FEED_REMOTE_URL"); v != "" {
+		c.Feed.RemoteURL = v
+	}
+	if v := os.Getenv("ATLAS_FEED_REF"); v != "" {
+		c.Feed.Ref = v
+	}
+	if v := os.Getenv("ATLAS_FEED_CACHE_PATH"); v != "" {
+		c.Feed.CachePath = v
+	}
+	if v := os.Getenv("ATLAS_FEED_PULL_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_FEED_PULL_TIMEOUT: invalid duration %q: %w", v, err)
+		}
+		c.Feed.PullTimeout = d
+	}
+	if v := os.Getenv("ATLAS_FEED_STALE_AFTER"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_FEED_STALE_AFTER: invalid duration %q: %w", v, err)
+		}
+		c.Feed.StaleAfter = d
+	}
 	return nil
 }
 
@@ -265,6 +301,11 @@ func applyFlags(c *Config, args []string) error {
 	fs.IntVar(&c.Judge.MaxTokens, "judge-max-tokens", c.Judge.MaxTokens, "max reply tokens for judge calls")
 	fs.Float64Var(&c.Extract.Temperature, "extract-temperature", c.Extract.Temperature, "sampling temperature for extraction")
 	fs.IntVar(&c.Extract.MaxTokens, "extract-max-tokens", c.Extract.MaxTokens, "max reply tokens for extraction")
+	fs.StringVar(&c.Feed.RemoteURL, "feed-remote-url", c.Feed.RemoteURL, "git remote of the public feed")
+	fs.StringVar(&c.Feed.Ref, "feed-ref", c.Feed.Ref, "full ref of the feed to follow: refs/heads/... or refs/tags/...")
+	fs.StringVar(&c.Feed.CachePath, "feed-cache-path", c.Feed.CachePath, "directory of the feed's local cache; never inside the store root")
+	fs.DurationVar(&c.Feed.PullTimeout, "feed-pull-timeout", c.Feed.PullTimeout, "timeout for one feed pull")
+	fs.DurationVar(&c.Feed.StaleAfter, "feed-stale-after", c.Feed.StaleAfter, "feed age past which source.pull warns")
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("config: parse flags: %w", err)
 	}
