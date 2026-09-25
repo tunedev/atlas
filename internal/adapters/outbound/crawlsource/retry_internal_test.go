@@ -75,3 +75,14 @@ func TestTooManyRequestsWaitsWhatTheServerAsks(t *testing.T) {
 		t.Errorf("retried after %s; the server asked for 1s", gap)
 	}
 }
+
+func TestBackoffDoesNotOverflowOrPanicOnALargeAttempt(t *testing.T) {
+	c := retrying(100)
+	for _, attempt := range []int{34, 64, 1000} {
+		wait := c.backoff(attempt, nil)
+		upper := c.cfg.Delay << maxBackoffShift
+		if wait < 0 || wait >= upper {
+			t.Errorf("backoff(%d) = %s, want [0, %s)", attempt, wait, upper)
+		}
+	}
+}

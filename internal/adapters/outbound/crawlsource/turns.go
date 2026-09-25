@@ -30,10 +30,15 @@ func (h *hostTurns) wait(ctx context.Context, host string, floor time.Duration) 
 	h.next[host] = at.Add(gap)
 	h.mu.Unlock()
 
-	timer := time.NewTimer(time.Until(at))
-	defer timer.Stop()
+	return sleep(ctx, time.Until(at))
+}
+
+// sleep blocks for d, or until ctx is done.
+func sleep(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
 	select {
-	case <-timer.C:
+	case <-t.C:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

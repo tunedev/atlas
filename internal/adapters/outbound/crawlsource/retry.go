@@ -1,7 +1,6 @@
 package crawlsource
 
 import (
-	"context"
 	"io"
 	"math/rand/v2"
 	"net/http"
@@ -41,6 +40,10 @@ func transient(resp *http.Response, err error) bool {
 	return resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500
 }
 
+// maxBackoffShift caps the exponent in backoff's Delay<<attempt so neither
+// the shift nor rand.N's argument can overflow into a negative duration.
+const maxBackoffShift = 10
+
 // backoff is how long to wait before retrying after attempt.
 func (c *Conduct) backoff(attempt int, resp *http.Response) time.Duration {
 	if resp != nil {
@@ -48,16 +51,6 @@ func (c *Conduct) backoff(attempt int, resp *http.Response) time.Duration {
 			return time.Duration(secs) * time.Second
 		}
 	}
-	return rand.N(c.cfg.Delay << attempt)
-}
-
-func sleep(ctx context.Context, d time.Duration) error {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-t.C:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	span := c.cfg.Delay << min(attempt, maxBackoffShift)
+	return rand.N(span)
 }
