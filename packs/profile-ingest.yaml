@@ -1,0 +1,85 @@
+# Turns a CV (PDF or DOCX) into profile/history.json. Every entry and claim
+# carries a verbatim quote and a status: grounded when the quote is in the
+# CV's text, needs_review when it is not. The extracted text is committed as
+# profile/source.txt; the CV file itself is not committed.
+# grounded means the quote occurs in the CV text, not that the entry's other
+# fields are right — review every entry by hand.
+#   atlas -pack packs/profile-ingest.yaml -var cv_path="$HOME/cv.pdf"
+name: profile-ingest
+vars:
+  cv_path: ""
+
+steps:
+  - id: source
+    tool: file.text
+    with:
+      path: "{{ .vars.cv_path }}"
+
+  - id: extract
+    tool: extract.run
+    with:
+      text: "{{ .steps.source.text }}"
+      schema: |
+        {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "required": ["entries"],
+          "additionalProperties": false,
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["employer", "title", "start", "claims", "quote"],
+                "additionalProperties": false,
+                "properties": {
+                  "employer": { "type": "string" },
+                  "title":    { "type": "string" },
+                  "start":    { "type": "string", "pattern": "^[0-9]{4}(-[0-9]{2})?$" },
+                  "end":      { "type": ["string", "null"], "pattern": "^[0-9]{4}(-[0-9]{2})?$" },
+                  "ongoing":  { "type": "boolean" },
+                  "quote":    { "type": "string", "description": "Verbatim substring of the source CV text naming this employer and title." },
+                  "claims": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["text", "quote"],
+                      "additionalProperties": false,
+                      "properties": {
+                        "text":  { "type": "string" },
+                        "quote": { "type": "string", "description": "Verbatim substring of the source CV text supporting text." }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
+  - id: ground
+    tool: quote.ground
+    with:
+      fields: "{{ json .steps.extract.fields }}"
+      source: "{{ .steps.source.text }}"
+
+  - id: keep_source
+    tool: docs.put
+    with:
+      path: profile/source.txt
+      body: "{{ .steps.source.text }}"
+      kind: profile
+      fields: "section: source"
+      message: "Ingest {{ .steps.source.name }} sha256:{{ .steps.source.sha256 }}"
+
+  - id: save
+    tool: docs.put
+    with:
+      path: profile/history.json
+      body: "{{ json .steps.ground.fields }}"
+      kind: profile
+      expect: json
+      message: "Ingest {{ .steps.source.name }} sha256:{{ .steps.source.sha256 }}"
+      fields: |
+        section: history
+        needs_review: "{{ .steps.ground.needs_review }}"

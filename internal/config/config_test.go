@@ -409,6 +409,58 @@ func TestATooHighJudgeTemperatureIsRejectedAtStartup(t *testing.T) {
 	}
 }
 
+func TestVarFlagsCollectNameValuePairs(t *testing.T) {
+	cfg, err := config.Load([]string{"-pack", "p.yaml", "-var", "port=Calais", "-var", "note=a=b"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Pack.Vars["port"] != "Calais" || cfg.Pack.Vars["note"] != "a=b" {
+		t.Errorf("vars = %v", cfg.Pack.Vars)
+	}
+}
+
+func TestAVarFlagWithoutEqualsIsRejected(t *testing.T) {
+	if _, err := config.Load([]string{"-pack", "p.yaml", "-var", "port"}); err == nil {
+		t.Fatal("-var port was accepted with no value")
+	}
+}
+
+func TestFileMaxBytesHasAPositiveDefaultAndAnEnvVar(t *testing.T) {
+	cfg, err := config.Load([]string{"-pack", "p.yaml"})
+	if err != nil || cfg.Pack.FileMaxBytes <= 0 {
+		t.Fatalf("default FileMaxBytes = %d, err = %v", cfg.Pack.FileMaxBytes, err)
+	}
+	t.Setenv("ATLAS_PACK_FILE_MAX_BYTES", "2048")
+	cfg, err = config.Load([]string{"-pack", "p.yaml"})
+	if err != nil || cfg.Pack.FileMaxBytes != 2048 {
+		t.Errorf("FileMaxBytes = %d, err = %v", cfg.Pack.FileMaxBytes, err)
+	}
+}
+
+func TestZeroFileMaxBytesIsRejected(t *testing.T) {
+	if _, err := config.Load([]string{"-pack", "p.yaml", "-file-max-bytes", "0"}); err == nil {
+		t.Fatal("a zero file size limit was accepted")
+	}
+}
+
+func TestExtractConfigDefaultsAndValidation(t *testing.T) {
+	cfg, err := config.Load([]string{"-pack", "p.yaml"})
+	if err != nil || cfg.Extract.MaxTokens <= 0 || cfg.Extract.Temperature != 0 {
+		t.Fatalf("extract = %+v, err = %v", cfg.Extract, err)
+	}
+	t.Setenv("ATLAS_EXTRACT_MAX_TOKENS", "8192")
+	cfg, err = config.Load([]string{"-pack", "p.yaml", "-extract-temperature", "0.2"})
+	if err != nil || cfg.Extract.MaxTokens != 8192 || cfg.Extract.Temperature != 0.2 {
+		t.Errorf("extract = %+v, err = %v", cfg.Extract, err)
+	}
+	if _, err := config.Load([]string{"-pack", "p.yaml", "-extract-max-tokens", "0"}); err == nil {
+		t.Error("zero extract max tokens was accepted")
+	}
+	if _, err := config.Load([]string{"-pack", "p.yaml", "-extract-temperature", "3"}); err == nil {
+		t.Error("an extract temperature above 2 was accepted")
+	}
+}
+
 func TestFeedDefaults(t *testing.T) {
 	cfg, err := config.Load([]string{"-pack", "p.yaml"})
 	if err != nil {

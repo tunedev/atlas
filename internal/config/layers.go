@@ -103,6 +103,8 @@ func defaults() Config {
 		Pack: PackConfig{
 			HTTPTimeout:  20 * time.Second,
 			HTTPMaxBytes: 10 * 1024 * 1024,
+			FileMaxBytes: 10 * 1024 * 1024,
+			Vars:         map[string]string{},
 		},
 		Model: ModelConfig{
 			BaseURL:  "http://localhost:11434/v1",
@@ -145,6 +147,10 @@ func defaults() Config {
 		Permission: PermissionConfig{
 			SummaryBytes: 200,
 		},
+		Extract: ExtractConfig{
+			Temperature: 0,
+			MaxTokens:   4096,
+		},
 	}
 }
 
@@ -165,6 +171,13 @@ func applyEnv(c *Config) error {
 			return fmt.Errorf("config: ATLAS_PACK_HTTP_MAX_BYTES: invalid integer %q: %w", v, err)
 		}
 		c.Pack.HTTPMaxBytes = n
+	}
+	if v := os.Getenv("ATLAS_PACK_FILE_MAX_BYTES"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_PACK_FILE_MAX_BYTES: invalid integer %q: %w", v, err)
+		}
+		c.Pack.FileMaxBytes = n
 	}
 	if v := os.Getenv("ATLAS_MODEL_BASE_URL"); v != "" {
 		c.Model.BaseURL = v
@@ -242,6 +255,20 @@ func applyEnv(c *Config) error {
 			return fmt.Errorf("config: ATLAS_JUDGE_MAX_TOKENS: invalid integer %q: %w", v, err)
 		}
 		c.Judge.MaxTokens = n
+	}
+	if v := os.Getenv("ATLAS_EXTRACT_TEMPERATURE"); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_EXTRACT_TEMPERATURE: invalid float %q: %w", v, err)
+		}
+		c.Extract.Temperature = f
+	}
+	if v := os.Getenv("ATLAS_EXTRACT_MAX_TOKENS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_EXTRACT_MAX_TOKENS: invalid integer %q: %w", v, err)
+		}
+		c.Extract.MaxTokens = n
 	}
 	if v := os.Getenv("ATLAS_FEED_REMOTE_URL"); v != "" {
 		c.Feed.RemoteURL = v
@@ -340,11 +367,28 @@ func applyEnv(c *Config) error {
 	return nil
 }
 
+// varsFlag collects repeated -var name=value flags into a map. The value is
+// everything after the first "=", so a value may itself contain "=".
+type varsFlag map[string]string
+
+func (v varsFlag) String() string { return "" }
+
+func (v varsFlag) Set(s string) error {
+	name, value, ok := strings.Cut(s, "=")
+	if !ok || name == "" {
+		return fmt.Errorf("-var %q: want name=value", s)
+	}
+	v[name] = value
+	return nil
+}
+
 func applyFlags(c *Config, args []string) error {
 	fs := flag.NewFlagSet("atlas", flag.ContinueOnError)
 	fs.StringVar(&c.Pack.Path, "pack", c.Pack.Path, "path to a pack file")
+	fs.Var(varsFlag(c.Pack.Vars), "var", "override a pack var for this run, as name=value (repeatable)")
 	fs.DurationVar(&c.Pack.HTTPTimeout, "http-timeout", c.Pack.HTTPTimeout, "timeout for http.request")
 	fs.Int64Var(&c.Pack.HTTPMaxBytes, "http-max-bytes", c.Pack.HTTPMaxBytes, "max response body size for http.request, in bytes")
+	fs.Int64Var(&c.Pack.FileMaxBytes, "file-max-bytes", c.Pack.FileMaxBytes, "max size of a file read by file.read or file.text, in bytes")
 	fs.StringVar(&c.Model.BaseURL, "model-base-url", c.Model.BaseURL, "OpenAI-compatible base URL")
 	fs.StringVar(&c.Model.Name, "model-name", c.Model.Name, "model identifier")
 	fs.DurationVar(&c.Model.Timeout, "model-timeout", c.Model.Timeout, "model call timeout")
@@ -358,6 +402,8 @@ func applyFlags(c *Config, args []string) error {
 	fs.IntVar(&c.Judge.Seed, "judge-seed", c.Judge.Seed, "sampling seed for judge calls")
 	fs.IntVar(&c.Judge.TopLogProbs, "judge-top-logprobs", c.Judge.TopLogProbs, "alternatives per token the judge reads mass from")
 	fs.IntVar(&c.Judge.MaxTokens, "judge-max-tokens", c.Judge.MaxTokens, "max reply tokens for judge calls")
+	fs.Float64Var(&c.Extract.Temperature, "extract-temperature", c.Extract.Temperature, "sampling temperature for extraction")
+	fs.IntVar(&c.Extract.MaxTokens, "extract-max-tokens", c.Extract.MaxTokens, "max reply tokens for extraction")
 	fs.StringVar(&c.Feed.RemoteURL, "feed-remote-url", c.Feed.RemoteURL, "git remote of the public feed")
 	fs.StringVar(&c.Feed.Ref, "feed-ref", c.Feed.Ref, "full ref of the feed to follow: refs/heads/... or refs/tags/...")
 	fs.StringVar(&c.Feed.CachePath, "feed-cache-path", c.Feed.CachePath, "directory of the feed's local cache; never inside the store root")

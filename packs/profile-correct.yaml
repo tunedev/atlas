@@ -1,0 +1,38 @@
+# Commits a hand-edited profile/history.json as a new revision, re-grounding
+# every quote against profile/source.txt first. A flag clears only when the
+# quote is fixed to text the source contains. The original stays in git:
+#   git -C <store_root> log -p -- profile/history.json
+# store_root must be the same directory as atlas's -store-root / ATLAS_STORE_ROOT.
+name: profile-correct
+vars:
+  store_root: ""
+  message: "Correct history"
+
+steps:
+  - id: history
+    tool: file.read
+    with:
+      path: "{{ .vars.store_root }}/profile/history.json"
+
+  - id: source
+    tool: file.read
+    with:
+      path: "{{ .vars.store_root }}/profile/source.txt"
+
+  - id: ground
+    tool: quote.ground
+    with:
+      fields: "{{ .steps.history.body }}"
+      source: "{{ .steps.source.body }}"
+
+  - id: save
+    tool: docs.put
+    with:
+      path: profile/history.json
+      body: "{{ json .steps.ground.fields }}"
+      kind: profile
+      expect: json
+      message: "{{ .vars.message }}"
+      fields: |
+        section: history
+        needs_review: "{{ .steps.ground.needs_review }}"
