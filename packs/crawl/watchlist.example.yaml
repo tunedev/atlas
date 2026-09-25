@@ -1,0 +1,74 @@
+- id: openings
+  url: http://127.0.0.1:8765/openings.html
+  item: li.opening
+  key: link
+  fields:
+    title:
+      css: h3.title
+    location:
+      css: span.location
+    link:
+      css: a
+      attr: href
+  static:
+    company: Northwind
+
+- id: board
+  url: http://127.0.0.1:8765/board.html
+  item: div.card
+  key: link
+  fields:
+    company:
+      css: span.co
+    title:
+      css: span.role
+    location:
+      css: span.where
+    link:
+      css: a.apply
+      attr: href
+
+- id: private
+  url: http://127.0.0.1:8765/private.html
+  item: li.opening
+  key: link
+  fields:
+    title:
+      css: h3.title
+    location:
+      css: span.location
+    link:
+      css: a
+      attr: href
+  static:
+    company: Northwind
+
+- id: app
+  url: http://127.0.0.1:8765/app.html
+  item: li.opening
+  key: link
+  fields:
+    title:
+      css: h3.title
+    location:
+      css: span.location
+    link:
+      css: a
+      attr: href
+  static:
+    company: Northwind
+
+- id: moved
+  url: http://127.0.0.1:8765/moved.html
+  item: li.opening
+  key: link
+  fields:
+    title:
+      css: h3.title
+    location:
+      css: span.location
+    link:
+      css: a
+      attr: href
+  static:
+    company: Northwind

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tunedev/atlas/internal/adapters/outbound/crawlsource"
 	"github.com/tunedev/atlas/internal/adapters/outbound/feedsource"
 	"github.com/tunedev/atlas/internal/adapters/outbound/gitdocs"
 	"github.com/tunedev/atlas/internal/adapters/outbound/sqlindex"
@@ -34,6 +35,23 @@ func testStore(t *testing.T) (ports.Docs, ports.Index) {
 	return docs, index
 }
 
+// testCrawler builds a Crawler over a minimal valid config, standing in for
+// the one buildRegistry receives from run().
+func testCrawler(t *testing.T) *crawlsource.Crawler {
+	t.Helper()
+	c, err := crawlsource.NewCrawler(crawlsource.Config{
+		UserAgent:   "atlas-test/1 (+https://example.invalid/bot)",
+		Delay:       time.Millisecond,
+		Timeout:     time.Second,
+		PullTimeout: time.Second,
+		MaxBytes:    1 << 20,
+	})
+	if err != nil {
+		t.Fatalf("new crawler: %v", err)
+	}
+	return c
+}
+
 func TestBuildRegistryRegistersBothShippedTools(t *testing.T) {
 	cfg := config.Config{}
 	cfg.Pack.HTTPTimeout = 1234 * time.Millisecond
@@ -46,7 +64,7 @@ func TestBuildRegistryRegistersBothShippedTools(t *testing.T) {
 	cfg.Judge.MaxTokens = 256
 
 	docs, index := testStore(t)
-	reg := buildRegistry(cfg, docs, index, feedsource.New(feedsource.Config{}))
+	reg := buildRegistry(cfg, docs, index, feedsource.New(feedsource.Config{}), testCrawler(t))
 
 	if _, ok := reg.Lookup("http.request"); !ok {
 		t.Error("http.request is not registered")
@@ -61,8 +79,8 @@ func TestBuildRegistryRegistersBothShippedTools(t *testing.T) {
 
 func TestBuildRegistryRegistersTheJudgeTool(t *testing.T) {
 	docs, index := testStore(t)
-	r := buildRegistry(config.Config{}, docs, index, feedsource.New(feedsource.Config{}))
-	for _, name := range []string{"http.request", "model.complete", "judge.ask", "source.pull", "file.read", "file.text", "docs.put", "quote.ground", "extract.run", "decision.record"} {
+	r := buildRegistry(config.Config{}, docs, index, feedsource.New(feedsource.Config{}), testCrawler(t))
+	for _, name := range []string{"http.request", "model.complete", "judge.ask", "source.pull", "file.read", "file.text", "docs.put", "quote.ground", "extract.run", "decision.record", "items.dedupe", "crawl.pull"} {
 		if _, ok := r.Lookup(name); !ok {
 			t.Errorf("registry has no %s", name)
 		}
@@ -115,7 +133,7 @@ func TestStartAgentFailsLoudlyForAMissingCommand(t *testing.T) {
 	cfg.Agent.MaxToolResultBytes = 1 << 20
 	cfg.Permission.SummaryBytes = 200
 
-	_, _, err := startAgent(context.Background(), cfg, buildRegistry(cfg, docs, index, feedsource.New(feedsource.Config{})), docs)
+	_, _, err := startAgent(context.Background(), cfg, buildRegistry(cfg, docs, index, feedsource.New(feedsource.Config{}), testCrawler(t)), docs)
 	if err == nil || !strings.Contains(err.Error(), "no-such-agent") {
 		t.Errorf("err = %v; want one naming the command", err)
 	}

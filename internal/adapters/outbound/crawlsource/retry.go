@@ -1,0 +1,73 @@
+package crawlsource
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"math/rand/v2"
+	"net/http"
+	"strconv"
+	"time"
+)
+
+// send makes req, retrying up to cfg.Retries times after a network error, a
+// 429 or a 5xx. It waits what a Retry-After asks, or else an exponential
+// backoff from cfg.Delay with full jitter, and every retry takes its host's
+// turn again. A wait that would end past req's deadline fails at once. The last response, its body read and bounded, or the last error
+// is returned as it came.
+func (c *Conduct) send(req *http.Request) (*http.Response, error) {
+	for attempt := 0; ; attempt++ {
+		resp, err := c.attempt(req)
+		if attempt >= c.cfg.Retries || !transient(resp, err) || req.Context().Err() != nil {
+			return resp, err
+		}
+		wait := c.backoff(attempt, resp)
+		if pastDeadline(req.Context(), time.Now().Add(wait)) {
+			return nil, fmt.Errorf("crawlsource: host %s asks for %s before a retry: %w", req.URL.Host, wait, errWaitPastDeadline)
+		}
+		if err := sleep(req.Context(), wait); err != nil {
+			return nil, err
+		}
+		if err := c.turns.wait(req.Context(), req.URL.Host); err != nil {
+			return nil, err
+		}
+	}
+}
+
+// attempt makes req once and reads its body, both within cfg.Timeout.
+func (c *Conduct) attempt(req *http.Request) (*http.Response, error) {
+	ctx, cancel := context.WithTimeout(req.Context(), c.cfg.Timeout)
+	defer cancel()
+	resp, err := c.next.RoundTrip(req.WithContext(ctx))
+	if err != nil {
+		return nil, err
+	}
+	return bounded(resp, c.cfg.MaxBytes)
+}
+
+// transient reports whether an outcome is worth another try.
+func transient(resp *http.Response, err error) bool {
+	if err != nil {
+		return !errors.Is(err, errTooLarge)
+	}
+	return resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500
+}
+
+// maxBackoffShift caps the exponent in backoff's Delay<<attempt so neither
+// the shift nor rand.N's argument can overflow into a negative duration.
+const maxBackoffShift = 10
+
+// maxRetryAfter caps the seconds read from a Retry-After before they become a
+// Duration, so a huge value cannot overflow into a negative wait.
+const maxRetryAfter = 24 * 60 * 60
+
+// backoff is how long to wait before retrying after attempt.
+func (c *Conduct) backoff(attempt int, resp *http.Response) time.Duration {
+	if resp != nil {
+		if secs, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && secs >= 0 {
+			return time.Duration(min(secs, maxRetryAfter)) * time.Second
+		}
+	}
+	span := c.cfg.Delay << min(attempt, maxBackoffShift)
+	return rand.N(span)
+}
