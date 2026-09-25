@@ -59,6 +59,12 @@ func expandPaths(c *Config) error {
 	}
 	c.Feed.CachePath = cachePath
 
+	crawlCacheDir, err := expandHome(c.Crawl.CacheDir)
+	if err != nil {
+		return err
+	}
+	c.Crawl.CacheDir = crawlCacheDir
+
 	return nil
 }
 
@@ -118,6 +124,17 @@ func defaults() Config {
 		Extract: ExtractConfig{
 			Temperature: 0,
 			MaxTokens:   4096,
+		},
+		Crawl: CrawlConfig{
+			UserAgent:     "atlas-crawler/0.1 (+https://github.com/tunedev/atlas)",
+			Delay:         2 * time.Second,
+			Timeout:       20 * time.Second,
+			PullTimeout:   10 * time.Minute,
+			MaxBytes:      5 * 1024 * 1024,
+			Retries:       2,
+			CacheDir:      "~/.atlas/crawl-cache",
+			Render:        false,
+			RenderTimeout: 30 * time.Second,
 		},
 	}
 }
@@ -261,6 +278,61 @@ func applyEnv(c *Config) error {
 		}
 		c.Feed.StaleAfter = d
 	}
+	if v := os.Getenv("ATLAS_CRAWL_USER_AGENT"); v != "" {
+		c.Crawl.UserAgent = v
+	}
+	if v := os.Getenv("ATLAS_CRAWL_DELAY"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_CRAWL_DELAY: invalid duration %q: %w", v, err)
+		}
+		c.Crawl.Delay = d
+	}
+	if v := os.Getenv("ATLAS_CRAWL_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_CRAWL_TIMEOUT: invalid duration %q: %w", v, err)
+		}
+		c.Crawl.Timeout = d
+	}
+	if v := os.Getenv("ATLAS_CRAWL_PULL_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_CRAWL_PULL_TIMEOUT: invalid duration %q: %w", v, err)
+		}
+		c.Crawl.PullTimeout = d
+	}
+	if v := os.Getenv("ATLAS_CRAWL_MAX_BYTES"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_CRAWL_MAX_BYTES: invalid integer %q: %w", v, err)
+		}
+		c.Crawl.MaxBytes = n
+	}
+	if v := os.Getenv("ATLAS_CRAWL_RETRIES"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_CRAWL_RETRIES: invalid integer %q: %w", v, err)
+		}
+		c.Crawl.Retries = n
+	}
+	if v := os.Getenv("ATLAS_CRAWL_CACHE_DIR"); v != "" {
+		c.Crawl.CacheDir = v
+	}
+	if v := os.Getenv("ATLAS_CRAWL_RENDER"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_CRAWL_RENDER: invalid bool %q: %w", v, err)
+		}
+		c.Crawl.Render = b
+	}
+	if v := os.Getenv("ATLAS_CRAWL_RENDER_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_CRAWL_RENDER_TIMEOUT: invalid duration %q: %w", v, err)
+		}
+		c.Crawl.RenderTimeout = d
+	}
 	return nil
 }
 
@@ -306,6 +378,15 @@ func applyFlags(c *Config, args []string) error {
 	fs.StringVar(&c.Feed.CachePath, "feed-cache-path", c.Feed.CachePath, "directory of the feed's local cache; never inside the store root")
 	fs.DurationVar(&c.Feed.PullTimeout, "feed-pull-timeout", c.Feed.PullTimeout, "timeout for one feed pull")
 	fs.DurationVar(&c.Feed.StaleAfter, "feed-stale-after", c.Feed.StaleAfter, "feed age past which source.pull warns")
+	fs.StringVar(&c.Crawl.UserAgent, "crawl-user-agent", c.Crawl.UserAgent, "crawler user agent; must name a contact URL or email")
+	fs.DurationVar(&c.Crawl.Delay, "crawl-delay", c.Crawl.Delay, "least gap between two requests to one host (at least 1s)")
+	fs.DurationVar(&c.Crawl.Timeout, "crawl-timeout", c.Crawl.Timeout, "timeout for one crawl request")
+	fs.DurationVar(&c.Crawl.PullTimeout, "crawl-pull-timeout", c.Crawl.PullTimeout, "timeout for one crawl pull")
+	fs.Int64Var(&c.Crawl.MaxBytes, "crawl-max-bytes", c.Crawl.MaxBytes, "max response body size for a crawl request, in bytes")
+	fs.IntVar(&c.Crawl.Retries, "crawl-retries", c.Crawl.Retries, "max retries for a crawl request")
+	fs.StringVar(&c.Crawl.CacheDir, "crawl-cache-dir", c.Crawl.CacheDir, "directory of the crawler's local cache; never inside the store root")
+	fs.BoolVar(&c.Crawl.Render, "crawl-render", c.Crawl.Render, "render JavaScript pages with a browser already on this machine; never downloads one")
+	fs.DurationVar(&c.Crawl.RenderTimeout, "crawl-render-timeout", c.Crawl.RenderTimeout, "timeout for one render")
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("config: parse flags: %w", err)
 	}

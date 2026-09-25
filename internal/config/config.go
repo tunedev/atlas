@@ -21,6 +21,7 @@ type Config struct {
 	Feed    FeedConfig
 	Judge   JudgeConfig
 	Extract ExtractConfig
+	Crawl   CrawlConfig
 }
 
 type PackConfig struct {
@@ -91,6 +92,31 @@ type FeedConfig struct {
 	CachePath   string
 	PullTimeout time.Duration
 	StaleAfter  time.Duration
+}
+
+// CrawlConfig governs the local crawler. The user agent must name a contact
+// (a URL or an email address), and Delay, the least gap between two requests
+// to one host, cannot go below minCrawlDelay. robots.txt is always honoured
+// and has no setting.
+type CrawlConfig struct {
+	UserAgent     string
+	Delay         time.Duration
+	Timeout       time.Duration
+	PullTimeout   time.Duration
+	MaxBytes      int64
+	Retries       int
+	CacheDir      string
+	Render        bool
+	RenderTimeout time.Duration
+}
+
+// minCrawlDelay is the least gap between two requests to one host that the
+// crawler may be configured with.
+const minCrawlDelay = time.Second
+
+// identified reports whether a user agent names a contact.
+func identified(ua string) bool {
+	return strings.Contains(ua, "http://") || strings.Contains(ua, "https://") || strings.Contains(ua, "@")
 }
 
 func (c Config) validate() error {
@@ -165,6 +191,33 @@ func (c Config) validate() error {
 	}
 	if c.Feed.StaleAfter <= 0 {
 		return fmt.Errorf("config: feed stale-after must be positive, got %s", c.Feed.StaleAfter)
+	}
+	if !identified(c.Crawl.UserAgent) {
+		return fmt.Errorf("config: crawl user agent %q must identify the crawler with a contact URL or email", c.Crawl.UserAgent)
+	}
+	if c.Crawl.Delay < minCrawlDelay {
+		return fmt.Errorf("config: crawl delay must be at least %s, got %s", minCrawlDelay, c.Crawl.Delay)
+	}
+	if c.Crawl.Timeout <= 0 {
+		return fmt.Errorf("config: crawl timeout must be positive, got %s", c.Crawl.Timeout)
+	}
+	if c.Crawl.PullTimeout <= 0 {
+		return fmt.Errorf("config: crawl pull timeout must be positive, got %s", c.Crawl.PullTimeout)
+	}
+	if c.Crawl.MaxBytes <= 0 {
+		return fmt.Errorf("config: crawl max bytes must be positive, got %d", c.Crawl.MaxBytes)
+	}
+	if c.Crawl.Retries < 0 {
+		return fmt.Errorf("config: crawl retries must not be negative, got %d", c.Crawl.Retries)
+	}
+	if c.Crawl.RenderTimeout <= 0 {
+		return fmt.Errorf("config: crawl render timeout must be positive, got %s", c.Crawl.RenderTimeout)
+	}
+	if c.Crawl.CacheDir == "" {
+		return fmt.Errorf("config: crawl cache dir is empty")
+	}
+	if overlaps(c.Crawl.CacheDir, c.Store.Root) {
+		return fmt.Errorf("config: crawl cache dir %s overlaps store root %s; fetched pages must never share a directory with the private record", c.Crawl.CacheDir, c.Store.Root)
 	}
 	return nil
 }
