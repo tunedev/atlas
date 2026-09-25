@@ -3,6 +3,7 @@ package crawlsource
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -231,5 +232,46 @@ func TestConductFailsAnOversizedBodyRatherThanTruncating(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if len(body) != 100 {
 		t.Errorf("at-limit body = %d bytes", len(body))
+	}
+}
+
+func TestAHostAskingForMoreThanTheCrawlHasFailsAtOnceAndSparesTheRest(t *testing.T) {
+	slow, _ := site(t, map[string]string{"/robots.txt": "User-agent: *\nCrawl-delay: 86400\n", "/1": eventsPage, "/2": eventsPage})
+	fast, _ := site(t, map[string]string{"/1": eventsPage})
+	var yaml string
+	for i, u := range []string{slow.URL + "/1", slow.URL + "/2", fast.URL + "/1"} {
+		yaml += fmt.Sprintf("- id: t%d\n  url: %s\n  item: li.event\n  key: link\n  fields:\n    link: {css: a, attr: href}\n", i, u)
+	}
+	ts, err := ParseTargets(yaml)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := testConfig()
+	cfg.PullTimeout = time.Second
+	src, err := New(cfg, ts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	items, err := src.Pull(context.Background())
+	if took := time.Since(start); took > 500*time.Millisecond {
+		t.Errorf("took %s; a wait past the deadline must fail at once", took)
+	}
+	if len(items) == 0 || !strings.HasPrefix(items[0].ID, "t2/") {
+		t.Errorf("items = %v; the fast host's target must succeed", items)
+	}
+	var failed Failures
+	if !errors.As(err, &failed) {
+		t.Fatalf("err = %v", err)
+	}
+	t.Logf("failures: %v", failed)
+	var second *Failure
+	for i := range failed {
+		if failed[i].Target == "t1" {
+			second = &failed[i]
+		}
+	}
+	if second == nil || !errors.Is(second.Err, errWaitPastDeadline) || !strings.Contains(second.Err.Error(), slow.Listener.Addr().String()) {
+		t.Errorf("failures = %v; the slow host's second target must fail naming the host", failed)
 	}
 }

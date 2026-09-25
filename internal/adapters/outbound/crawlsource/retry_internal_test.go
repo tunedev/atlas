@@ -1,6 +1,8 @@
 package crawlsource
 
 import (
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -136,5 +138,24 @@ func TestAnOversizedBodyIsNotRetried(t *testing.T) {
 	c.cfg.MaxBytes = 50
 	if _, err := get(t, c, srv.URL+"/p"); err == nil || log.count("/p") != 1 {
 		t.Errorf("requests = %d err = %v; an over-limit body fails once", log.count("/p"), err)
+	}
+}
+
+func TestAHugeRetryAfterNeitherOverflowsNorWaitsPastTheDeadline(t *testing.T) {
+	huge := http.Header{"Retry-After": {"99999999999999999"}}
+	if wait := retrying(1).backoff(0, &http.Response{Header: huge}); wait <= 0 {
+		t.Errorf("backoff = %s; a huge Retry-After must not overflow", wait)
+	}
+	srv, at := scripted(t, huge, 429, 200)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/p", nil)
+	start := time.Now()
+	_, err := (&http.Client{Transport: retrying(1)}).Do(req)
+	if !errors.Is(err, errWaitPastDeadline) || len(*at) != 1 {
+		t.Errorf("requests = %d err = %v; a wait past the deadline must fail at once", len(*at), err)
+	}
+	if took := time.Since(start); took > 500*time.Millisecond {
+		t.Errorf("took %s; it must not sleep toward the deadline", took)
 	}
 }
