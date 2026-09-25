@@ -8,7 +8,8 @@ import (
 // Dedupe keeps the first of every group of items that agree on all of
 // fields, compared after normalising: case folded, anything but letters and
 // digits treated as a space, whitespace collapsed. An item that is not an
-// object, or lacks a key field, is kept and never merged, since nothing
+// object, or whose key field is missing or normalises to empty (no letter or
+// digit, such as "--" or "???"), is kept and never merged, since nothing
 // proves it a duplicate. It returns the kept items in order, and how many
 // were merged away.
 func Dedupe(items []any, fields []string) ([]any, int) {
@@ -35,10 +36,14 @@ func dedupeKey(item any, fields []string) (string, bool) {
 	parts := make([]string, len(fields))
 	for i, f := range fields {
 		s, ok := obj[f].(string)
-		if !ok || strings.TrimSpace(s) == "" {
+		if !ok {
 			return "", false
 		}
-		parts[i] = normaliseKey(s)
+		n := normaliseKey(s)
+		if n == "" {
+			return "", false
+		}
+		parts[i] = n
 	}
 	return strings.Join(parts, "\x00"), true
 }

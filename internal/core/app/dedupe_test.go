@@ -33,3 +33,14 @@ func TestDedupeNeverMergesAnItemMissingAKeyField(t *testing.T) {
 		t.Errorf("kept = %v merged = %d; an item with no full key cannot be proven a duplicate", kept, merged)
 	}
 }
+
+func TestDedupeNeverMergesItemsWhosePunctuationOnlyKeyFieldNormalisesToEmpty(t *testing.T) {
+	items := []any{
+		map[string]any{"venue": "Harbour library", "name": "--"},
+		map[string]any{"venue": "Harbour library", "name": "???"},
+	}
+	kept, merged := app.Dedupe(items, []string{"venue", "name"})
+	if len(kept) != 2 || merged != 0 {
+		t.Errorf("kept = %v merged = %d; a key field with no letter or digit normalises to empty and cannot be proven a duplicate", kept, merged)
+	}
+}
