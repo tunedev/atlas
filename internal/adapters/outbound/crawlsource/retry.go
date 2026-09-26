@@ -38,6 +38,7 @@ func (c *Conduct) send(req *http.Request) (*http.Response, error) {
 func (c *Conduct) attempt(req *http.Request) (*http.Response, error) {
 	ctx, cancel := context.WithTimeout(req.Context(), c.cfg.Timeout)
 	defer cancel()
+	c.turns.sent(req.URL.Host)
 	resp, err := c.next.RoundTrip(req.WithContext(ctx))
 	if err != nil {
 		return nil, err

@@ -139,6 +139,7 @@ func (c *Conduct) fetchRobots(ctx context.Context, u *url.URL) (*robotstxt.Robot
 		return nil, fmt.Errorf("crawlsource: %s: %w", robotsURL.String(), err)
 	}
 	req.Header.Set("User-Agent", c.cfg.UserAgent)
+	c.turns.sent(u.Host)
 	resp, err := (&http.Client{Transport: c.next, Timeout: c.cfg.Timeout}).Do(req)
 	if err != nil {
 		if ctx.Err() != nil {

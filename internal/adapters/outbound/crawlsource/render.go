@@ -83,6 +83,7 @@ func (c chrome) render(ctx context.Context, u *url.URL) (string, error) {
 		return "", fmt.Errorf("set user agent: %w", err)
 	}
 	page = page.Timeout(c.cfg.RenderTimeout)
+	c.conduct.turns.sent(u.Host)
 	if err := page.Navigate(u.String()); err != nil {
 		return "", fmt.Errorf("navigate %s: %w", u, err)
 	}

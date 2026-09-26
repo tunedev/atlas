@@ -66,3 +66,13 @@ func sleep(ctx context.Context, d time.Duration) error {
 		return ctx.Err()
 	}
 }
+
+// sent records that a request to host went out now, so the next turn on host
+// counts from the send rather than from the turn it was given.
+func (h *hostTurns) sent(host string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if now := time.Now(); now.After(h.last[host]) {
+		h.last[host] = now
+	}
+}
