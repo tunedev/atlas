@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/temoto/robotstxt"
 )
@@ -124,7 +125,9 @@ func (c *Conduct) permitted(ctx context.Context, u *url.URL) error {
 // any other request and following redirects. A 2xx is parsed and a 4xx other
 // than 429 allows everything; both are kept. A 429, a 5xx, an unexpected
 // status, an unreachable host or an unreadable body disallows everything for
-// this check only, so the next check fetches robots.txt again.
+// this check only, so the next check fetches robots.txt again. A 429 also
+// defers the host's next turn by its Retry-After, capped like any other
+// retry wait; the check is still not cached as permission.
 func (c *Conduct) fetchRobots(ctx context.Context, u *url.URL) (*robotstxt.RobotsData, bool, error) {
 	if err := c.turns.wait(ctx, u.Host); err != nil {
 		return nil, false, err
@@ -142,6 +145,11 @@ func (c *Conduct) fetchRobots(ctx context.Context, u *url.URL) (*robotstxt.Robot
 			return nil, false, ctx.Err()
 		}
 		return disallowAll(), false, nil
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		if wait, ok := retryAfter(resp); ok {
+			c.turns.deferUntil(u.Host, time.Now().Add(wait))
+		}
 	}
 	body, err := readBounded(resp.Body, c.cfg.MaxBytes)
 	if err != nil || !lasting(resp.StatusCode) {

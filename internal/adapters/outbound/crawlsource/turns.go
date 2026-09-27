@@ -67,6 +67,17 @@ func sleep(ctx context.Context, d time.Duration) error {
 	}
 }
 
+// deferUntil pushes host's next turn to no earlier than until, when until is
+// later than the turn already booked. It never pulls a turn earlier, and it
+// books nothing itself: the next call to wait blocks until then.
+func (h *hostTurns) deferUntil(host string, until time.Time) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if until.After(h.last[host]) {
+		h.last[host] = until
+	}
+}
+
 // sent records that a request to host went out now, so the next turn on host
 // counts from the send rather than from the turn it was given.
 func (h *hostTurns) sent(host string) {

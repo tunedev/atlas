@@ -380,6 +380,69 @@ func TestASlowRobotsTxtOnOneHostDoesNotDelayAnother(t *testing.T) {
 	}
 }
 
+func TestARobotsTxt429DefersTheHostsNextTurn(t *testing.T) {
+	srv, log := recordedSite(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "1")
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	c := newConduct(testConfig(), http.DefaultTransport)
+	u, _ := url.Parse(srv.URL + "/open")
+
+	start := time.Now()
+	if err := c.permitted(context.Background(), u); !errors.Is(err, ErrDisallowed) {
+		t.Fatalf("first check err = %v, want ErrDisallowed", err)
+	}
+	if err := c.permitted(context.Background(), u); !errors.Is(err, ErrDisallowed) {
+		t.Fatalf("second check err = %v, want ErrDisallowed", err)
+	}
+	if took := time.Since(start); took < time.Second-5*time.Millisecond {
+		t.Errorf("second robots check happened after %s; a 429 asked for 1s before the host's next turn", took)
+	}
+	if n := log.count("/robots.txt"); n != 2 {
+		t.Errorf("robots.txt fetched %d times, want 2; a 429 must not be cached as permission", n)
+	}
+}
+
+func TestARobotsTxt429WithoutRetryAfterDoesNotDeferTheNextTurn(t *testing.T) {
+	srv, log := robotsSite(t, http.StatusTooManyRequests)
+	c := newConduct(testConfig(), http.DefaultTransport)
+	u, _ := url.Parse(srv.URL + "/open")
+
+	start := time.Now()
+	if err := c.permitted(context.Background(), u); !errors.Is(err, ErrDisallowed) {
+		t.Fatalf("first check err = %v, want ErrDisallowed", err)
+	}
+	if err := c.permitted(context.Background(), u); !errors.Is(err, ErrDisallowed) {
+		t.Fatalf("second check err = %v, want ErrDisallowed", err)
+	}
+	if took := time.Since(start); took > 200*time.Millisecond {
+		t.Errorf("took %s; without Retry-After the next check must not be deferred", took)
+	}
+	if n := log.count("/robots.txt"); n != 2 {
+		t.Errorf("robots.txt fetched %d times, want 2", n)
+	}
+}
+
+func TestARobotsTxt429DeferralIsCappedLikeARetryAfter(t *testing.T) {
+	srv, _ := recordedSite(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "99999999999")
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	c := newConduct(testConfig(), http.DefaultTransport)
+	u, _ := url.Parse(srv.URL + "/open")
+
+	before := time.Now()
+	if err := c.permitted(context.Background(), u); !errors.Is(err, ErrDisallowed) {
+		t.Fatalf("err = %v, want ErrDisallowed", err)
+	}
+	c.turns.mu.Lock()
+	until := c.turns.last[u.Host]
+	c.turns.mu.Unlock()
+	if wait := until.Sub(before); wait < time.Hour || wait > maxRetryAfter*time.Second+time.Second {
+		t.Errorf("deferred by %s; want capped near maxRetryAfter (%ds), not the raw header value", wait, maxRetryAfter)
+	}
+}
+
 func TestConcurrentChecksOnOneHostFetchRobotsOnce(t *testing.T) {
 	srv, log, entered, release := stalledRobots(t)
 	c := newConduct(testConfig(), http.DefaultTransport)
