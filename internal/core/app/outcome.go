@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"maps"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -166,4 +167,35 @@ func spliceKey(body []byte, key string, value json.RawMessage) ([]byte, error) {
 	}
 	out.WriteString("\n}")
 	return out.Bytes(), nil
+}
+
+// AttachOutcomeForSubject attaches o to every judgement recorded for
+// subjectID, since the real-world result belongs to the subject rather than
+// to one judge call. It returns the paths attached to, in order. A subject
+// with no recorded judgement is an error.
+func AttachOutcomeForSubject(ctx context.Context, docs ports.Docs, index ports.Index, subjectID string, o Outcome) ([]string, error) {
+	if subjectID == "" {
+		return nil, errors.New("outcome: subject id is empty")
+	}
+	if err := checkSubjectID(subjectID); err != nil {
+		return nil, fmt.Errorf("outcome: %w", err)
+	}
+	rows, err := index.Find(ctx, ports.Query{Kind: "judgement", Match: map[string]string{"subject_id": subjectID}})
+	if err != nil {
+		return nil, fmt.Errorf("outcome: find %s: %w", subjectID, err)
+	}
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("outcome: no judgement recorded for %q", subjectID)
+	}
+	paths := make([]string, len(rows))
+	for i, r := range rows {
+		paths[i] = r.Path
+	}
+	slices.Sort(paths)
+	for i, p := range paths {
+		if _, err := AttachOutcome(ctx, docs, index, p, o); err != nil {
+			return paths[:i], err
+		}
+	}
+	return paths, nil
 }

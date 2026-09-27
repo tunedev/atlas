@@ -230,3 +230,36 @@ func TestAttachingRefusesWhatIsNotAJudgement(t *testing.T) {
 		t.Errorf("a refused attach wrote to the judgement: %d revisions", len(history))
 	}
 }
+
+func TestAnOutcomeForASubjectReachesEveryJudgementOfIt(t *testing.T) {
+	ctx := context.Background()
+	docs, index := record(t)
+	first := judged(t, docs, index, "harbour-fete", 0.7, day)
+	second := judged(t, docs, index, "harbour-fete", 0.4, day.Add(time.Hour))
+	other := judged(t, docs, index, "hill-race", 0.2, day)
+
+	paths, err := app.AttachOutcomeForSubject(ctx, docs, index, "harbour-fete", wet())
+	if err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	if len(paths) != 2 || paths[0] != first || paths[1] != second {
+		t.Errorf("paths = %v, want [%s %s]", paths, first, second)
+	}
+	for _, p := range []string{first, second} {
+		if r := row(t, index, "harbour-fete", p); r.Fields["outcome"] != "wet" {
+			t.Errorf("%s outcome = %q", p, r.Fields["outcome"])
+		}
+	}
+	if r := row(t, index, "hill-race", other); r.Fields["outcome"] != "pending" {
+		t.Errorf("another subject's judgement changed: %q", r.Fields["outcome"])
+	}
+}
+
+func TestAnOutcomeForASubjectNobodyJudgedIsAnError(t *testing.T) {
+	docs, index := record(t)
+	for _, subject := range []string{"", "nobody", "../escape", "a/b"} {
+		if _, err := app.AttachOutcomeForSubject(context.Background(), docs, index, subject, wet()); err == nil || !strings.HasPrefix(err.Error(), "outcome: ") {
+			t.Errorf("subject %q: err = %v", subject, err)
+		}
+	}
+}
