@@ -248,16 +248,20 @@ func TestConductSpacesRequestsToOneHostButNotAcrossHosts(t *testing.T) {
 }
 
 func TestConductHonoursCrawlDelay(t *testing.T) {
-	srv, log := site(t, map[string]string{"/robots.txt": "User-agent: *\nCrawl-delay: 1\n", "/1": "1", "/2": "2"})
-	c := newConduct(testConfig(), http.DefaultTransport)
+	srv, _ := site(t, map[string]string{"/robots.txt": "User-agent: *\nCrawl-delay: 1\n", "/1": "1", "/2": "2"})
+	out := &sent{at: map[string][]time.Time{}, next: http.DefaultTransport}
+	c := newConduct(testConfig(), out)
 	for _, p := range []string{"/1", "/2"} {
 		if _, err := get(t, c, srv.URL+p); err != nil {
 			t.Fatal(err)
 		}
 	}
-	hits := log.all()
-	if gap := hits[2].At.Sub(hits[1].At); gap < time.Second-5*time.Millisecond {
-		t.Errorf("pages %s apart; robots.txt asked for 1s", gap)
+	left := out.host(srv.URL) // robots.txt, /1, /2
+	if len(left) != 3 {
+		t.Fatalf("%d requests left the Conduct, want 3", len(left))
+	}
+	if gap := left[2].Sub(left[1]); gap < time.Second-5*time.Millisecond {
+		t.Errorf("pages left %s apart; robots.txt asked for 1s", gap)
 	}
 }
 

@@ -161,7 +161,10 @@ func TestConductWaitsItsTurnPerHost(t *testing.T) {
 	if len(hits) != 4 {
 		t.Fatalf("hits = %v", hits)
 	}
-	for i := 1; i < len(hits); i++ {
+	// Page to page only: the first request's arrival also carries opening
+	// the connection, which later requests reuse. The spacing that request
+	// left with is pinned by the internal departure-time tests.
+	for i := 2; i < len(hits); i++ {
 		if gap := hits[i].At.Sub(hits[i-1].At); gap < cfg.Delay-5*time.Millisecond {
 			t.Errorf("%s then %s %s apart; the host's turn is %s", hits[i-1].Path, hits[i].Path, gap, cfg.Delay)
 		}
