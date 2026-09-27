@@ -135,6 +135,29 @@ func (p Prediction) validate() error {
 			return fmt.Errorf("calibrate: %q is both positive and negative", s)
 		}
 	}
+	if err := noDuplicate("option", p.Options); err != nil {
+		return err
+	}
+	if err := noDuplicate("positive", p.Positive); err != nil {
+		return err
+	}
+	if err := noDuplicate("negative", p.Negative); err != nil {
+		return err
+	}
+	return nil
+}
+
+// noDuplicate reports a repeated entry in a Prediction list as an error
+// naming the list and the entry, since a repeat there is the same typo class
+// as a naming mismatch elsewhere in the prediction.
+func noDuplicate(label string, values []string) error {
+	seen := make(map[string]bool, len(values))
+	for _, v := range values {
+		if seen[v] {
+			return fmt.Errorf("calibrate: %s %q is listed twice", label, v)
+		}
+		seen[v] = true
+	}
 	return nil
 }
 

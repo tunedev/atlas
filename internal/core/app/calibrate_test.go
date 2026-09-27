@@ -97,11 +97,13 @@ func TestAMisspeltOptionExcludesAndCountsRatherThanScoringZero(t *testing.T) {
 func TestAPredictionThatCannotMeanAnythingIsRefused(t *testing.T) {
 	docs, index := record(t)
 	for name, p := range map[string]app.Prediction{
-		"no question": {Options: []string{"yes"}, Positive: []string{"wet"}, Negative: []string{"dry"}},
-		"no options":  {QuestionID: "rain", Positive: []string{"wet"}, Negative: []string{"dry"}},
-		"no positive": {QuestionID: "rain", Options: []string{"yes"}, Negative: []string{"dry"}},
-		"no negative": {QuestionID: "rain", Options: []string{"yes"}, Positive: []string{"wet"}},
-		"overlap":     {QuestionID: "rain", Options: []string{"yes"}, Positive: []string{"wet"}, Negative: []string{"dry", "wet"}},
+		"no question":        {Options: []string{"yes"}, Positive: []string{"wet"}, Negative: []string{"dry"}},
+		"no options":         {QuestionID: "rain", Positive: []string{"wet"}, Negative: []string{"dry"}},
+		"no positive":        {QuestionID: "rain", Options: []string{"yes"}, Negative: []string{"dry"}},
+		"no negative":        {QuestionID: "rain", Options: []string{"yes"}, Positive: []string{"wet"}},
+		"overlap":            {QuestionID: "rain", Options: []string{"yes"}, Positive: []string{"wet"}, Negative: []string{"dry", "wet"}},
+		"duplicate option":   {QuestionID: "rain", Options: []string{"yes", "yes"}, Positive: []string{"wet"}, Negative: []string{"dry"}},
+		"duplicate positive": {QuestionID: "rain", Options: []string{"yes"}, Positive: []string{"wet", "wet"}, Negative: []string{"dry"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := app.Calibrate(context.Background(), docs, index, p, app.CalibrateOptions{}); err == nil || !strings.HasPrefix(err.Error(), "calibrate: ") {
