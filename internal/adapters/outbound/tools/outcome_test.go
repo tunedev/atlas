@@ -86,7 +86,11 @@ func TestAReportTooSmallToScoreSaysSo(t *testing.T) {
 }
 
 func TestTheOutcomeToolRefusesAmbiguousOrIncompleteInput(t *testing.T) {
+	ctx := context.Background()
 	docs, index := store(t)
+	if _, err := app.RecordJudgement(ctx, docs, index, "a", rainQ, weatherJudgement("a", 0.5, time.Now())); err != nil {
+		t.Fatal(err)
+	}
 	for name, with := range map[string]map[string]string{
 		"neither target": {"state": "wet"},
 		"both targets":   {"subject_id": "a", "judgement_path": "judgements/a/x.json", "state": "wet"},
@@ -94,9 +98,12 @@ func TestTheOutcomeToolRefusesAmbiguousOrIncompleteInput(t *testing.T) {
 		"bad when":       {"subject_id": "a", "state": "wet", "when": "last tuesday"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := tools.NewOutcome(docs, index).Invoke(context.Background(), with)
+			_, err := tools.NewOutcome(docs, index).Invoke(ctx, with)
 			if err == nil || !strings.HasPrefix(err.Error(), "judge.outcome: ") {
-				t.Errorf("err = %v", err)
+				t.Fatalf("err = %v", err)
+			}
+			if name == "no state" && !strings.Contains(err.Error(), "state") {
+				t.Errorf("err = %v, want it to mention state", err)
 			}
 		})
 	}
