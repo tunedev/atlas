@@ -75,6 +75,7 @@ func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index, source
 		tools.NewClaimsSettle(),
 		tools.NewItemsCite(),
 		tools.NewItemsGather(),
+		tools.NewTextLines(),
 		tools.NewDedupe(),
 		tools.NewCrawlPull(crawler, slog.Default()),
 	)

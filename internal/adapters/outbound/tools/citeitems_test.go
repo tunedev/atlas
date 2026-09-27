@@ -63,3 +63,14 @@ func TestItemsGatherTool(t *testing.T) {
 		}
 	}
 }
+
+func TestTextLinesTool(t *testing.T) {
+	out, err := tools.NewTextLines().Invoke(context.Background(), map[string]string{"text": "Can you trim a wick?\n\nCan you sail?\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := out.(map[string]any)["items"].([]any)
+	if len(items) != 2 || items[1].(map[string]any)["quote"] != "Can you sail?" {
+		t.Errorf("items %v", items)
+	}
+}

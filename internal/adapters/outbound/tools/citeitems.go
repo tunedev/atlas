@@ -51,3 +51,15 @@ func (i *ItemsGather) Invoke(_ context.Context, with map[string]string) (any, er
 	out, dropped := app.GatherItems(items, answered)
 	return map[string]any{"items": out, "dropped": dropped}, nil
 }
+
+// TextLines turns text into one grounded item per non-blank line, so a list
+// a person typed becomes items without a model reading it.
+type TextLines struct{}
+
+func NewTextLines() *TextLines { return &TextLines{} }
+
+func (l *TextLines) Name() string { return "text.lines" }
+
+func (l *TextLines) Invoke(_ context.Context, with map[string]string) (any, error) {
+	return map[string]any{"items": app.LineItems(with["text"])}, nil
+}
