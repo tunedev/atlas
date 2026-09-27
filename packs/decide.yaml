@@ -4,7 +4,7 @@
 #   atlas -pack packs/decide.yaml -var subject_id=greenhouse:gitlab:12345 \
 #     -var choice=apply -var reason="Remote, strong backend focus" \
 #     -var judgement_path=judgements/greenhouse:gitlab:12345/<ts>.json \
-#     -var verdict_question=stretch
+#     -var verdict_question=verdict
 name: decide
 vars:
   subject_id: ""

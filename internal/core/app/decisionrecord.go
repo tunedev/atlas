@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/tunedev/atlas/internal/core/ports"
@@ -35,12 +36,13 @@ type decisionDoc struct {
 
 // RecordDecision writes d under its subject, keyed by time so a later
 // decision never overwrites an earlier one, and indexes it. It returns the
-// path written.
+// path written. When a verdict preceded the choice, the index row's agrees
+// field says whether the choice matched it, so every override is one query.
 func RecordDecision(ctx context.Context, docs ports.Docs, index ports.Index, d Decision) (string, error) {
 	if d.SubjectID == "" {
 		return "", errors.New("decision: subject id is empty")
 	}
-	if err := checkSubjectID(d.SubjectID); err != nil {
+	if err := CheckSubjectID(d.SubjectID); err != nil {
 		return "", fmt.Errorf("decision: %w", err)
 	}
 	if d.Choice == "" {
@@ -60,17 +62,22 @@ func RecordDecision(ctx context.Context, docs ports.Docs, index ports.Index, d D
 		return "", fmt.Errorf("decision: encode: %w", err)
 	}
 
+	fields := map[string]string{
+		"subject_id":          d.SubjectID,
+		"decision":            d.Choice,
+		"verdict_at_decision": d.VerdictAtDecision,
+	}
+	if d.VerdictAtDecision != "" {
+		fields["agrees"] = strconv.FormatBool(d.Choice == d.VerdictAtDecision)
+	}
+
 	rev, err := RecordDocument(ctx, docs, index, Document{
 		Path:    path,
 		Body:    body,
 		Message: "Record decision for " + d.SubjectID,
 		Kind:    "decision",
-		Fields: map[string]string{
-			"subject_id":          d.SubjectID,
-			"decision":            d.Choice,
-			"verdict_at_decision": d.VerdictAtDecision,
-		},
-		When: d.When,
+		Fields:  fields,
+		When:    d.When,
 	})
 	if err != nil {
 		if rev == "" {

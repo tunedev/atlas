@@ -62,9 +62,9 @@ func RecordDocument(ctx context.Context, docs ports.Docs, index ports.Index, d D
 	return rev, nil
 }
 
-// checkSubjectID rejects a subject id that could carry a document outside
+// CheckSubjectID rejects a subject id that could carry a document outside
 // its own directory: one containing a path separator or a ".." segment.
-func checkSubjectID(id string) error {
+func CheckSubjectID(id string) error {
 	if strings.Contains(id, "/") || strings.Contains(id, "..") {
 		return fmt.Errorf("subject id %q is not a plain name", id)
 	}

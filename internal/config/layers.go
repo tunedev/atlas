@@ -136,10 +136,11 @@ func defaults() Config {
 			StaleAfter:  24 * time.Hour,
 		},
 		Judge: JudgeConfig{
-			Temperature: 0,
-			Seed:        1,
-			TopLogProbs: 5,
-			MaxTokens:   256,
+			Temperature:   0,
+			Seed:          1,
+			TopLogProbs:   5,
+			MaxTokens:     256,
+			ContextTokens: 4096,
 		},
 		Agent: AgentConfig{
 			MCPAddr:            "127.0.0.1:0",
@@ -276,6 +277,13 @@ func applyEnv(c *Config) error {
 			return fmt.Errorf("config: ATLAS_JUDGE_MAX_TOKENS: invalid integer %q: %w", v, err)
 		}
 		c.Judge.MaxTokens = n
+	}
+	if v := os.Getenv("ATLAS_JUDGE_CONTEXT_TOKENS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_JUDGE_CONTEXT_TOKENS: invalid integer %q: %w", v, err)
+		}
+		c.Judge.ContextTokens = n
 	}
 	if v := os.Getenv("ATLAS_EXTRACT_TEMPERATURE"); v != "" {
 		f, err := strconv.ParseFloat(v, 64)
@@ -495,6 +503,7 @@ func applyFlags(c *Config, args []string) error {
 	fs.IntVar(&c.Judge.Seed, "judge-seed", c.Judge.Seed, "sampling seed for judge calls")
 	fs.IntVar(&c.Judge.TopLogProbs, "judge-top-logprobs", c.Judge.TopLogProbs, "alternatives per token the judge reads mass from")
 	fs.IntVar(&c.Judge.MaxTokens, "judge-max-tokens", c.Judge.MaxTokens, "max reply tokens for judge calls")
+	fs.IntVar(&c.Judge.ContextTokens, "judge-context-tokens", c.Judge.ContextTokens, "engine context size; a judge prompt reaching it is refused as possibly truncated")
 	fs.Float64Var(&c.Extract.Temperature, "extract-temperature", c.Extract.Temperature, "sampling temperature for extraction")
 	fs.IntVar(&c.Extract.MaxTokens, "extract-max-tokens", c.Extract.MaxTokens, "max reply tokens for extraction")
 	fs.StringVar(&c.Feed.RemoteURL, "feed-remote-url", c.Feed.RemoteURL, "git remote of the public feed")

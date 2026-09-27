@@ -1,53 +1,37 @@
-# Pulls one open posting from the feed, judges it, and tailors application
-# documents to it the way packs/tailor.yaml does: cv.pdf and letter.pdf carry
-# only supported content; review.pdf lists every gap and dropped count.
-# Rendering needs ATLAS_RENDER_TYPST (or -render-typst) set to a typst binary.
+# Scores every open role on one board against the candidate. Each role gets
+# apply, reach or skip, reasons from the same call, and every deal-breaker
+# named as tripped, clear or unknown. A role already judged with the same
+# text, questions, rules and model is reused, not asked again.
+#
+# The deal-breaker named in the profile text above is only informed context
+# for the model; it is checked as a rule, and reported tripped, clear or
+# unknown, only when -var rules=profile/dealbreakers.json is passed.
+#   atlas -pack packs/job-hunt.yaml -var board=gitlab -var rules=profile/dealbreakers.json
 name: job-hunt
 vars:
   board: gitlab
-  store_root: ""
-  evidence_dir: ""
-  questions: ""
-  out_dir: ""
-  templates: "packs/tailor"
-  relevance_threshold: "0.6"
-  min_chars: "25"
+  profile: "Backend engineer. Go, distributed systems, Kubernetes, Postgres, OpenTelemetry. Goals: senior backend role, systems with real scale, staying hands-on. Deal-breakers: no on-call or pager rotation."
+  rules: ""
 
 steps:
-  - id: role
-    tool: source.pull
+  - id: board
+    tool: judge.each
     with:
       prefix: "postings/greenhouse/{{ .vars.board }}"
       match: status=open
-      select: items.0
-
-  - id: spans
-    tool: text.spans
-    with:
-      paths: |
-        {{ .vars.store_root }}/profile/source.txt
-        {{ if .vars.evidence_dir }}{{ .vars.evidence_dir }}{{ end }}
-      min_chars: "{{ .vars.min_chars }}"
-
-  - id: history
-    tool: file.read
-    with:
-      path: "{{ .vars.store_root }}/profile/history.json"
-
-  - id: judged
-    tool: judge.ask
-    with:
-      subject_id: "{{ .steps.role.id }}"
+      subject_id: '[[ replace .item.id "/" ":" ]]'
       subject: |
-        Candidate: {{ .steps.spans.source }}
+        Candidate: {{ .vars.profile }}
 
-        Role: {{ .steps.role.title }} at {{ .steps.role.company }}
+        Role: [[ .item.title ]] at [[ .item.company ]]
 
-        {{ .steps.role.description_text }}
+        [[ .item.description_text ]]
+      verdict: verdict
       questions: |
-        - id: stretch
-          type: noul
-          ask: Is this role a stretch for the candidate?
+        - id: verdict
+          type: choice
+          options: [apply, reach, skip]
+          ask: Should the candidate apply, treat it as a reach, or skip it?
         - id: seniority
           type: score
           levels: [junior, mid, senior, principal]
@@ -56,202 +40,6 @@ steps:
           type: choice
           options: [backend, frontend, platform, data, other]
           ask: What is the main focus of this role?
-
-  - id: verdict
-    tool: model.complete
-    with:
-      expect: json
-      system: |
-        You judge whether a job advertisement suits a candidate.
-        Reply with JSON only: {"decision":"apply|stretch|skip","reasons":["...","..."]}
-        decision must be exactly one of apply, stretch, or skip.
-        reasons must be short and specific to this role and this candidate.
-      user: |
-        Candidate: {{ .steps.spans.source }}
-
-        Role: {{ .steps.role.title }} at {{ .steps.role.company }}
-        Location: {{ .steps.role.location }}
-
-        {{ .steps.role.description_text }}
-
-  - id: asked
-    tool: extract.run
-    with:
-      text: |
-        Task: list every requirement the posting states, each as a verbatim quote copied from
-        the posting.
-
-        Posting:
-        Role: {{ .steps.role.title }} at {{ .steps.role.company }}
-
-        {{ .steps.role.description_text }}
-      schema: |
-        {"type":"object","required":["requirements"],"additionalProperties":false,
-         "properties":{"requirements":{"type":"array","items":{"type":"object",
-           "required":["quote"],"additionalProperties":false,
-           "properties":{"quote":{"type":"string"}}}}}}
-
-  - id: asked_ground
-    tool: quote.ground
-    with:
-      fields: "{{ json .steps.asked.fields }}"
-      source: |
-        Role: {{ .steps.role.title }} at {{ .steps.role.company }}
-
-        {{ .steps.role.description_text }}
-
-  - id: requirements
-    tool: extract.run
-    with:
-      text: |
-        Task: for each numbered requirement below, cite the numbers of the candidate's evidence
-        spans that directly show the candidate meets it. Cite nothing if no span shows it. Never
-        guess. Name every requirement's number exactly once, even when its spans list is empty.
-
-        Candidate's evidence spans:
-        {{ .steps.spans.listing }}
-        Requirements:
-        {{ range $i, $r := .steps.asked_ground.fields.requirements }}[{{ $i }}] {{ $r.quote }}
-        {{ end }}
-      schema: |
-        {"type":"object","required":["cited"],"additionalProperties":false,
-         "properties":{"cited":{"type":"array","items":{"type":"object",
-           "required":["item","spans"],"additionalProperties":false,
-           "properties":{"item":{"type":"integer"},"spans":{"type":"array","items":{"type":"integer"}}}}}}}
-
-  - id: cite_items
-    tool: items.cite
-    with:
-      items: "{{ json .steps.asked_ground.fields.requirements }}"
-      cited: "{{ json .steps.requirements.fields.cited }}"
-
-  - id: bullets
-    tool: extract.run
-    with:
-      text: |
-        Task: choose at most 8 of the candidate's evidence spans that best fit this posting,
-        most relevant first. Cite each by its number only.
-
-        Candidate's evidence spans:
-        {{ .steps.spans.listing }}
-        Posting:
-        Role: {{ .steps.role.title }} at {{ .steps.role.company }}
-
-        {{ .steps.role.description_text }}
-      schema: |
-        {"type":"object","required":["bullets"],"additionalProperties":false,
-         "properties":{"bullets":{"type":"array","maxItems":8,"items":{"type":"object",
-           "required":["spans"],"additionalProperties":false,
-           "properties":{"spans":{"type":"array","minItems":1,"maxItems":1,"items":{"type":"integer"}}}}}}}
-
-  - id: questions
-    tool: text.lines
-    with:
-      text: "{{ .vars.questions }}"
-
-  - id: letter
-    tool: extract.run
-    with:
-      text: |
-        Task: write a short letter of application of about six sentences. Every sentence about
-        the candidate must cite the numbers of the evidence spans that support it. Do not write
-        a sentence the spans do not support.
-        {{ if .steps.questions.items }}Also answer each numbered question below in one to three sentences,
-        citing spans the same way. Name every question's number exactly once in answered, with an
-        empty sentences list when no span supports an answer.{{ else }}No questions are asked.
-        Return an empty answered list.{{ end }}
-
-        Candidate's evidence spans:
-        {{ .steps.spans.listing }}
-        Posting:
-        Role: {{ .steps.role.title }} at {{ .steps.role.company }}
-
-        {{ .steps.role.description_text }}
-        {{ if .steps.questions.items }}Questions:
-        {{ range $i, $q := .steps.questions.items }}[{{ $i }}] {{ $q.quote }}
-        {{ end }}{{ end }}
-      schema: |
-        {"type":"object","required":["letter","answered"],"additionalProperties":false,
-         "properties":{
-          "letter":{"type":"array","items":{"type":"object","required":["text","spans"],"additionalProperties":false,
-            "properties":{"text":{"type":"string"},"spans":{"type":"array","items":{"type":"integer"}}}}},
-          "answered":{"type":"array","items":{"type":"object","required":["item","sentences"],"additionalProperties":false,
-            "properties":{"item":{"type":"integer"},"sentences":{"type":"array","items":{"type":"object",
-              "required":["text","spans"],"additionalProperties":false,
-              "properties":{"text":{"type":"string"},"spans":{"type":"array","items":{"type":"integer"}}}}}}}}}}
-
-  - id: answers
-    tool: items.gather
-    with:
-      items: "{{ json .steps.questions.items }}"
-      answered: "{{ json .steps.letter.fields.answered }}"
-
-  - id: resolve
-    tool: span.resolve
-    with:
-      fields: |
-        {"requirements": {{ json .steps.cite_items.items }},
-         "bullets": {{ json .steps.bullets.fields.bullets }},
-         "letter": {"sentences": {{ json .steps.letter.fields.letter }},
-                    "answers": {{ json .steps.answers.items }}}}
-      spans: "{{ json .steps.spans.spans }}"
-
-  - id: ground
-    tool: quote.ground
-    with:
-      fields: "{{ json .steps.resolve.fields }}"
-      source: "{{ .steps.spans.source }}"
-
-  - id: judge
-    tool: citations.judge
-    with:
-      fields: "{{ json .steps.ground.fields }}"
-      threshold: "{{ .vars.relevance_threshold }}"
-      subject_id: "{{ .steps.role.id }}"
-
-  - id: settle
-    tool: claims.settle
-    with:
-      fields: "{{ json .steps.judge.fields }}"
-
-  - id: save
-    tool: docs.put
-    with:
-      path: "applications/{{ .steps.role.id }}/tailored.json"
-      body: "{{ json .steps.settle.fields }}"
-      kind: tailored
-      expect: json
-      message: "Tailor for {{ .steps.role.id }}"
-      fields: |
-        gaps: "{{ .steps.settle.gaps }}"
-        dropped_requirements: "{{ .steps.cite_items.dropped }}"
-
-  # cv.pdf and letter.pdf are sendable: they carry only kept content, and a
-  # render fails if any gap text reaches them. review.pdf lists every gap.
-  - id: cv
-    tool: render.run
-    with:
-      template: "{{ .vars.templates }}/cv.typ"
-      data: '{"history": {{ .steps.history.body }}, "tailored": {{ json .steps.settle.fields }}}'
-      output: "{{ .vars.out_dir }}/cv.pdf"
-      expect: "{{ json .steps.settle.kept.bullets }}"
-      absent: "{{ json .steps.settle.gaps_text.requirements }}"
-
-  - id: letter_pdf
-    tool: render.run
-    with:
-      template: "{{ .vars.templates }}/letter.typ"
-      data: '{"tailored": {{ json .steps.settle.fields }}}'
-      output: "{{ .vars.out_dir }}/letter.pdf"
-      expect: "{{ json .steps.settle.kept.letter }}"
-      absent: "{{ json .steps.settle.gaps_text.letter }}"
-
-  - id: review
-    tool: render.run
-    with:
-      template: "{{ .vars.templates }}/review.typ"
-      data: |
-        {"tailored": {{ json .steps.settle.fields }},
-         "dropped": {"requirements": {{ .steps.cite_items.dropped }}}}
-      output: "{{ .vars.out_dir }}/review.pdf"
-      expect: "{{ json .steps.settle.gaps_all }}"
+      rules: "{{ .vars.rules }}"
+      rule_fields: |
+        salary-floor: compensation.min

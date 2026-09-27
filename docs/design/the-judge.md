@@ -67,6 +67,13 @@ provider's own `Name()`) and the `Sampling` that produced it, and every
 `Answer` records the raw `Alternatives` its mass was read from — none of
 this can be added retroactively to a judgement already made.
 
+`JudgeConfig.ContextTokens`, when above zero, is the engine's measured context window. `Ask`
+reads each completion's own token usage and refuses one whose prompt reached or passed that
+window, returning an error ("prompt may be truncated") instead of a judgement: a prompt the
+engine had to cut is not a subject it actually saw. Only `app.Judge` sees a completion's usage,
+so this is the one place the check can live, and it protects `judge.ask` and `judge.each`
+alike.
+
 ## One call, one schema, every answer at once
 
 `Judge.Ask` builds one `ports.Prompt` for every question in `qs`: a system
@@ -78,6 +85,25 @@ question's options by an enum, `additionalProperties: false`. One call
 answers every question, so answers about the same subject cannot contradict
 each other, and the schema is what makes an out-of-schema answer impossible
 rather than merely unlikely.
+
+Questions are answered in declared order. `AnswerSchema` emits `properties` and `required` in
+the order `qs` lists them, and `openaiprov` sends that schema on to the engine verbatim, so the
+engine's own grammar walks the fields in the same order — each answer can then depend only on
+the questions already answered, never the ones still to come. Put the question whose answer
+must not be swayed by the others first, typically the verdict. Measured on the GitLab board with
+`qwen2.5-coder:7b`: with the pack's questions built into a schema whose keys were sorted
+alphabetically (so the verdict was answered last, after seniority, focus and the on-call rule),
+mean p(skip) across five non-engineering roles was 0.11; with the same four questions but the
+schema in declared order, verdict first, it rose to 0.35; asking the verdict alone, in its own
+call, rose it further to 0.38.
+
+Each question line also names its options, `id: ask (one of: a, b, c)`, and a noul with no
+options of its own names `yes, no`. This is not decoration. The alternatives an answer's mass
+is read from are the engine's distribution before the schema's grammar applies, so an engine
+never told the options answers in its own words. Measured on 40 real subjects with
+`qwen2.5-coder:7b`, a five-option choice question read coverage 0.00 on all 40 with its
+options only in the schema, and 0.81 with the same options named in the question line
+(`docs/specs/2026-09-27-epic-7-fit.md`).
 
 `internal/adapters/outbound/openaiprov/judge_live_test.go` proves this
 against a real engine (story 3.3): the subject text itself carries an
@@ -125,26 +151,25 @@ real tokenizer often produces, is still matched), then
 2. a **non-empty prefix** match against a form counts, provided the trimmed
    text prefixes exactly one option's forms.
 
-`AnswerSchema` (below) rejects, ahead of time, two option-set shapes that
-would let step 1 resolve confidently to the wrong option before step 2 ever
-saw an ambiguity: two different options sharing an identical surface form,
-and a whole option or form that is itself a proper prefix of another's. That
-leaves prefix ambiguity to arise only from a genuinely truncated token,
-which is a real failure to surface, not a data shape to special-case.
+`AnswerSchema` (below) rejects, ahead of time, three option-set shapes that
+would let step 1 or step 2 resolve confidently to the wrong option: two
+different options sharing an identical surface form, a whole option or form
+that is a proper prefix of another's, and — the general case of the other
+two — two different options whose forms start with the same character.
+Naming a question's options in its prompt (`promptUserMessage`, above) makes
+a live engine more likely to emit exactly such a shared-initial truncation
+as a low-probability alternative, which is what makes the third check load-
+bearing rather than decorative: a single-character token is always a valid
+prefix of every form sharing it, so any two options sharing a first
+character can be made ambiguous by some truncation regardless of how the
+rest of their text differs. Rejecting the option set at validation time
+turns that failure into a deterministic, parse-time error instead of a
+live-only one that depends on which alternative an engine happens to emit.
 
-A trimmed text that prefixes two or more different options' forms is an
-error: `judge: <question id>: "<text>" is ambiguous between <a> and <b>
-(alternative "<text>", p=<probability>)`, or `(emitted token "<text>",
-p=<probability>)` when the ambiguity was found in the fallback read of the
-token's own text rather than in one of its alternatives. Dropping an
-ambiguous alternative silently was rejected: on a low-probability
-alternative that would distort the distribution without saying so, and the
-whole call is one round trip, so discarding one question's answer to save
-the others is not available either — the error must instead be diagnosable
-enough to act on, hence naming the source and the probability. The same
-double-count guard `MassAtToken` applies for every caller: the answer
-token's own probability is folded in only when its own text is not already
-among its alternatives.
+`optionMatch`'s prefix-ambiguity branch is unreachable through `Judge.Ask` for any question
+that passes `AnswerSchema`, and stays in place as a defensive check rather than dead code to
+delete. The same double-count guard `MassAtToken` applies for every caller: the answer token's
+own probability is folded in only when its own text is not already among its alternatives.
 
 ## The judgement record
 
@@ -156,31 +181,88 @@ describes. The document holds the subject text, the model name, the
 provider name, the sampling that produced the call, every question asked,
 every answer with its distribution, confidence, coverage, and the raw
 alternatives it was read from, and an `outcome` field carried as `any` and
-marshalled as JSON `null`
-— present, not omitted, so the key reads `null` until a later increment
-(checking a probability against a real outcome, epic 11) fills it in. The
+marshalled as JSON `null` until `judge.outcome` fills it — see below. The
 index row mirrors the subject, model and provider as flat string fields,
-plus `"outcome": "pending"`, since the row cannot hold a nested
-distribution.
+plus an `outcome` field that reads `"pending"` until then, since the row
+cannot hold a nested distribution.
 
-`tools.Judge` (`judge.ask`) is the one caller: it parses a pack's YAML
-questions block into `[]ports.Question`, calls `Judge.Ask`, then
-`RecordJudgement`, and returns each answer keyed by question id (`chosen`,
-`p`, `distribution`, `confidence`, `coverage`, `expected` for a score) plus
-the path written, under the key `"path"` — reserved, so a pack cannot name a
-question `path` and collide with it.
+`judge.each` (below) adds two keys to the document, `fingerprint` and `rules` (the rule results
+checked against the same subject), both omitted when absent, and three fields to the index row,
+`fingerprint`, `verdict` (the verdict question's chosen answer), and `tripped` (the tripped
+rules' ids, comma-separated); `judge.ask` writes none of the five.
+
+`tools.Judge` (`judge.ask`) and `tools.JudgeEach` (`judge.each`, below) are the two callers.
+`judge.ask` parses a pack's YAML questions block into `[]ports.Question`, calls `Judge.Ask`,
+then `RecordJudgement`, and returns each answer keyed by question id (`chosen`, `p`,
+`distribution`, `confidence`, `coverage`, `expected` for a score) plus the path written, under
+the key `"path"` — reserved, so a pack cannot name a question `path` and collide with it.
+`judge.each` calls `Judge.Ask` once per item and records through `RecordAssessedJudgement`,
+which adds the fingerprint, verdict and rule results `RecordJudgement` alone does not carry.
+
+## Judging many subjects: judge.each
+
+`tools.JudgeEach` (`judge.each`) scores every item a `ports.Source` selects, one `Judge.Ask`
+call per item, one item at a time: concurrency measured no faster on this engine, and
+sustained parallel load once wedged it. For each item it renders `subject_id` and `subject`
+from per-item templates, then fingerprints exactly what the call sends the judge
+(`app.JudgeRequest`: the system message, the user message, and the schema) together with the
+loaded rules, each mapped rule field's resolved value, the verdict question's id, and the model
+name (`app.Fingerprint`). An item whose subject id and fingerprint are both already recorded is
+reused: its stored judgement is re-assessed, not re-asked. A run's rules (optional, a `Docs`
+path) split in two: comparable rules are checked in code against a mapped field of the item's
+own document; judged rules are asked as an extra yes/no question in the same call, worded by
+the rule's own `ask` — measured on real roles, a question derived from `Statement` alone never
+tripped on a true positive (0 of 20) against 15 of 20 for asking the condition directly, so
+`ParseRules` rejects a judged rule with no usable `ask`. Either kind reports `tripped`, `clear`,
+or `unknown` (a missing field, never a false trip) — rules flag a verdict, they never override
+it. A subject at risk of truncation is refused by the judge itself (`ContextTokens`, above),
+and that item becomes an error row rather than aborting the run.
+
+See `docs/specs/2026-09-27-epic-7-fit.md` for the live measurements: reuse cost, and the
+several-roles-per-call scaling test.
+
+## Filling the outcome slot
+
+`app.AttachOutcome(ctx, docs, index, judgementPath, o)` fills a judgement's
+`outcome` key as a later revision of the same document, not a new one. It
+reads the document, splices `o` into the `outcome` key byte for byte
+(`spliceKey`), leaving every other key, value and key order untouched, and
+copies the existing index row's fields, changing only `outcome`. History
+keeps every earlier revision; `Get` and `Find` resolve to the latest.
+Attaching the same outcome twice is a byte-identical write, so no new
+revision is made — a correction is a third revision, and the latest wins.
+`AttachOutcomeForSubject` finds every judgement recorded for a subject and
+calls `AttachOutcome` on each, since a re-judged subject's real-world result
+belongs to all of its sibling judgements, not to one judge call.
+
+`app.Calibrate` (and `CalibrateByEngine`, which also groups by provider and
+model, alongside a pooled figure) scores one `Prediction` — a question id,
+the answer options whose summed distribution mass is the predicted
+probability, and the outcome states that sort into one of three
+dispositions: positive, negative, or inconclusive (evidence of nothing,
+such as a ghosted application) — against every judgement that asked the
+question and has an outcome. A judgement is excluded, and the exclusion
+counted rather than silently dropped, when: its outcome is still null
+(pending); its scored answer's `Coverage.Represented` is zero (zero
+coverage — the probability never measured real competition among the
+options); its outcome's state is in the prediction's inconclusive list, by
+pack declaration (inconclusive); its outcome's state is in none of the
+prediction's positive, negative or inconclusive lists (unclassified); or
+its question does not declare every option the prediction names (option
+mismatch). A judgement that never asked the scored question is not part of
+the sample at all, and is not counted as an exclusion either — it is a
+different measurement, not a missing point. `MinSample` (30) gates the
+headline Brier score and `MinBinSample` (10) gates each of the ten
+fixed-decile reliability bins: below either, the count is still reported
+and the number is `nil`. A calibration report is derived on every run and
+never persisted to git.
+
+`judge.outcome` and `judge.calibrate` (the tools that expose
+`AttachOutcome`/`AttachOutcomeForSubject` and `CalibrateByEngine`) only
+parse `with`, call the core, and render the result; every rule above lives
+in `internal/core/app`.
 
 ## Known gaps
-
-- Two options that merely share a leading character can fail a call. The
-  option-set validation rejects an option that is a proper prefix of another,
-  but an engine may emit any prefix of a value as its first token, including a
-  single character. When that prefix matches two options, the read cannot tell
-  them apart and the whole call errors, taking every other answer in it with
-  it. Measured: `senior` and `staff` in one option set, against an alternative
-  `s`. Validation does not catch this, because neither option is a prefix of
-  the other; a pack author avoids it by giving a question's options distinct
-  initial characters.
 
 - A distribution of exactly 1.0 used to be indistinguishable from a
   manufactured one. It no longer is: every `Answer` now carries `Confidence`
@@ -206,11 +288,14 @@ question `path` and collide with it.
   two-of-five distribution likewise now reports `Coverage: {2, 5}` rather
   than looking as resolved as a five-of-five one.
 
-  What remains open: the numbers are recorded, in both the judgement
-  document and the tool result, and nothing yet acts on them. No caller
-  rejects a thin-coverage answer or treats a low `Confidence` differently —
-  that judgment call belongs to whatever reads the record later (epic 11),
-  now that it has the numbers to make it with.
+  The numbers are recorded, in both the judgement document and the tool
+  result, and one caller now reads `Coverage`: `app.Calibrate`
+  (`judge.calibrate`) excludes an answer whose `Coverage.Represented` is zero
+  from a calibration run and counts it as `zero_coverage`, since a
+  probability that never measured real competition among the options should
+  not be scored as if it had. Nothing gates or rejects on coverage or
+  confidence at judgement time itself — `judge.ask` records both numbers and
+  writes whatever answer the schema produced regardless of either one.
 
   A purpose-built classifier (`receptron/laya`, a decision head over a
   ModernBERT encoder) was measured against this exact failure and does not
@@ -241,3 +326,9 @@ question `path` and collide with it.
   with more than one answer field; the answer-token rule's "first content
   token of the field's value" is defined for a single scalar value; it does
   not yet have a definition for a value that is itself an array or object.
+- An index rebuild (`app.Rebuild`) stamps a row's `When` from the document's
+  newest revision, while `AttachOutcome` keeps the judgement's own time. A
+  judgement row rebuilt after an outcome was attached would therefore show
+  the attach time, not the judgement time the row otherwise carries. No
+  judgement extractor exists yet, so `Rebuild` does not reach judgement rows
+  today.

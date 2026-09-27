@@ -177,11 +177,10 @@ consumes structured data natively and values cannot become markup.
 
 ## The job-hunt pack
 
-`packs/job-hunt.yaml`'s `documents` step is removed and replaced by the tailoring steps. Its
-one-line `profile` var goes; the pack reads `profile/source.txt` and the evidence corpus from the
-record. A new `packs/tailor.yaml` runs the same steps on their own against a posting given as a
-var or file, so tailoring does not need a live feed (the feed repository currently holds no
-postings).
+`packs/job-hunt.yaml` no longer drafts documents: it scores every open role on a board through
+`judge.each` (Epic 7), and a pack has no loop to tailor each of them. Tailoring is its own pack,
+`packs/tailor.yaml`, run once per chosen role against that role's posting given as a var. It
+reads `profile/source.txt` and the evidence corpus from the record, so it needs no live feed.
 
 ## The vocabulary guard
 

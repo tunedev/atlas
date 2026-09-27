@@ -1,5 +1,7 @@
 package openaiprov
 
+import "encoding/json"
+
 // chatRequest is the OpenAI-compatible chat completions request body.
 type chatRequest struct {
 	Model          string          `json:"model"`
@@ -23,9 +25,9 @@ type responseFormat struct {
 }
 
 type namedSchema struct {
-	Name   string         `json:"name"`
-	Strict bool           `json:"strict"`
-	Schema map[string]any `json:"schema"`
+	Name   string          `json:"name"`
+	Strict bool            `json:"strict"`
+	Schema json.RawMessage `json:"schema"`
 }
 
 // chatResponse is the OpenAI-compatible chat completions response body.

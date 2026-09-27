@@ -1,7 +1,6 @@
 package crawlsource
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -71,19 +70,19 @@ func (v revalidator) save(u string, resp *http.Response, body []byte) error {
 	return os.WriteFile(v.path(u), raw, 0o600)
 }
 
-// revalidationsKey is the context key of a revalidation counter.
-type revalidationsKey struct{}
-
-// countingRevalidations returns ctx carrying a fresh counter of the requests
-// made under it that were answered "not modified" and served from the cache.
-func countingRevalidations(ctx context.Context) (context.Context, *atomic.Int64) {
-	n := new(atomic.Int64)
-	return context.WithValue(ctx, revalidationsKey{}, n), n
+// revalidationCounter is an http.RoundTripper wrapping one Conduct, counting
+// the requests made through it that were answered "not modified" and served
+// from the cache. One is built per Pull, so two Pulls sharing a Conduct each
+// keep their own count rather than racing on one.
+type revalidationCounter struct {
+	conduct *Conduct
+	count   atomic.Int64
 }
 
-// countRevalidation adds one to ctx's revalidation counter, if it carries one.
-func countRevalidation(ctx context.Context) {
-	if n, ok := ctx.Value(revalidationsKey{}).(*atomic.Int64); ok {
-		n.Add(1)
+func (r *revalidationCounter) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, revalidated, err := r.conduct.roundTrip(req)
+	if revalidated {
+		r.count.Add(1)
 	}
+	return resp, err
 }

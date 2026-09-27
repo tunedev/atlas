@@ -65,12 +65,25 @@ const maxRetryAfter = 24 * 60 * 60
 
 // backoff is how long to wait before retrying after attempt.
 func (c *Conduct) backoff(attempt int, resp *http.Response) time.Duration {
-	if resp != nil {
-		if secs, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && secs >= 0 {
-			return time.Duration(min(secs, maxRetryAfter)) * time.Second
-		}
+	if wait, ok := retryAfter(resp); ok {
+		return wait
 	}
 	return rand.N(doubled(c.cfg.Delay, min(attempt, maxBackoffShift)))
+}
+
+// retryAfter reads resp's Retry-After header as delta-seconds, capped at
+// maxRetryAfter so a huge value cannot overflow into a negative wait. It
+// reports false when resp is nil or the header is absent or not a
+// non-negative integer; the HTTP-date form is not parsed.
+func retryAfter(resp *http.Response) (time.Duration, bool) {
+	if resp == nil {
+		return 0, false
+	}
+	secs, err := strconv.Atoi(resp.Header.Get("Retry-After"))
+	if err != nil || secs < 0 {
+		return 0, false
+	}
+	return time.Duration(min(secs, maxRetryAfter)) * time.Second, true
 }
 
 // doubled is d doubled n times, saturating at the longest Duration instead
