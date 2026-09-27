@@ -147,12 +147,12 @@ func New(cfg Config, targets []Target) (*Source, error) {
 func (s *Source) Pull(ctx context.Context) ([]ports.Item, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.cfg.PullTimeout)
 	defer cancel()
-	ctx, revalidated := countingRevalidations(ctx)
+	revalidated := &revalidationCounter{conduct: s.conduct}
 
 	var items []ports.Item
 	var failed Failures
 	for _, t := range s.targets {
-		got, err := s.crawl(ctx, t)
+		got, err := s.crawl(ctx, t, revalidated)
 		if err != nil {
 			failed = append(failed, Failure{Target: t.ID, URL: t.URL, Kind: kindOf(err), Err: err})
 			continue
@@ -162,7 +162,7 @@ func (s *Source) Pull(ctx context.Context) ([]ports.Item, error) {
 
 	s.mu.Lock()
 	s.last = time.Now().UTC()
-	s.report = Report{Revalidated: int(revalidated.Load())}
+	s.report = Report{Revalidated: int(revalidated.count.Load())}
 	s.mu.Unlock()
 
 	switch {
@@ -191,8 +191,8 @@ func (s *Source) LastReport() Report {
 	return s.report
 }
 
-func (s *Source) crawl(ctx context.Context, t Target) ([]ports.Item, error) {
-	page, pageURL, err := s.fetch(ctx, t)
+func (s *Source) crawl(ctx context.Context, t Target, revalidated *revalidationCounter) ([]ports.Item, error) {
+	page, pageURL, err := s.fetch(ctx, t, revalidated)
 	if err != nil {
 		return nil, err
 	}
@@ -205,18 +205,19 @@ func (s *Source) crawl(ctx context.Context, t Target) ([]ports.Item, error) {
 
 // fetch reads t's page and returns it with the URL it was read from, which
 // after a redirect is the URL the redirect ended on.
-func (s *Source) fetch(ctx context.Context, t Target) (*goquery.Selection, *url.URL, error) {
+func (s *Source) fetch(ctx context.Context, t Target, revalidated *revalidationCounter) (*goquery.Selection, *url.URL, error) {
 	if t.Render {
 		if !s.cfg.Render {
 			return nil, nil, fmt.Errorf("%s: %w", t.URL, errRenderingOff)
 		}
 		return s.rendered(ctx, t)
 	}
-	return s.fetched(ctx, t)
+	return s.fetched(ctx, t, revalidated)
 }
 
-// fetched reads t's page with Colly, through the Conduct.
-func (s *Source) fetched(ctx context.Context, t Target) (*goquery.Selection, *url.URL, error) {
+// fetched reads t's page with Colly, through revalidated, which counts this
+// Pull's own cache revalidations as it wraps the Conduct.
+func (s *Source) fetched(ctx context.Context, t Target, revalidated *revalidationCounter) (*goquery.Selection, *url.URL, error) {
 	c := colly.NewCollector(colly.StdlibContext(ctx), colly.AllowURLRevisit())
 	// NewCollector applies COLLY_* environment settings; these pin every one.
 	c.UserAgent = s.cfg.UserAgent
@@ -231,7 +232,7 @@ func (s *Source) fetched(ctx context.Context, t Target) (*goquery.Selection, *ur
 	c.MaxBodySize = 0        // the Conduct bounds the body, failing rather than truncating
 	c.DisableCookies()
 	c.SetRequestTimeout(0) // the Conduct times each attempt; PullTimeout bounds the crawl
-	c.WithTransport(s.conduct)
+	c.WithTransport(revalidated)
 
 	var page *goquery.Selection
 	var pageURL *url.URL

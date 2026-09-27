@@ -1,0 +1,24 @@
+# Attaches what actually happened to a judged subject: every judgement of
+# the subject, or one judgement by path. State is whatever the pack scoring
+# it declares, e.g. for a job hunt: offer, rejected, withdrawn, ghosted,
+# not_applied.
+# Omitting `when` records the current time, so re-running without it makes a
+# new revision every time; give `when` explicitly to make a re-run a no-op.
+#   atlas -pack packs/judge-outcome.yaml -var subject_id=<id> -var state=rejected -var when=2026-11-20
+name: judge-outcome
+vars:
+  subject_id: ""
+  judgement_path: ""
+  state: ""
+  when: ""
+  note: ""
+
+steps:
+  - id: outcome
+    tool: judge.outcome
+    with:
+      subject_id: "{{ .vars.subject_id }}"
+      judgement_path: "{{ .vars.judgement_path }}"
+      state: "{{ .vars.state }}"
+      when: "{{ .vars.when }}"
+      note: "{{ .vars.note }}"

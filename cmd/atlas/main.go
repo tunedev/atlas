@@ -72,6 +72,9 @@ func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index, source
 		tools.NewJudgeEach(source, judge, docs, index, cfg.Model.Name, cfg.Feed.StaleAfter, slog.Default()),
 		tools.NewDedupe(),
 		tools.NewCrawlPull(crawler, slog.Default()),
+		tools.NewOutcome(docs, index),
+		tools.NewCalibrate(docs, index),
+		tools.NewAgreement(index),
 	)
 }
 
