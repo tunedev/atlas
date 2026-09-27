@@ -14,8 +14,9 @@ import (
 // send makes req, retrying up to cfg.Retries times after a network error, a
 // 429 or a 5xx. It waits what a Retry-After asks, or else an exponential
 // backoff from cfg.Delay with full jitter, and every retry takes its host's
-// turn again. A wait that would end past req's deadline fails at once. The last response, its body read and bounded, or the last error
-// is returned as it came.
+// turn again. A wait that would end past req's deadline fails at once. The
+// last response, its body read and bounded, or the last error is returned
+// as it came.
 func (c *Conduct) send(req *http.Request) (*http.Response, error) {
 	for attempt := 0; ; attempt++ {
 		resp, err := c.attempt(req)
