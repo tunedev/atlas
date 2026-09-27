@@ -322,3 +322,68 @@ func TestAFailedRobotsTxtIsFetchedAgainForTheNextTarget(t *testing.T) {
 		t.Errorf("/a requested %d times, /b %d times; want 0 and 1", log.count("/a"), log.count("/b"))
 	}
 }
+
+// stalledRobots serves a robots.txt that answers only once release is
+// called, signalling entered on each request for it.
+func stalledRobots(t *testing.T) (srv *httptest.Server, log *siteLog, entered chan struct{}, release func()) {
+	t.Helper()
+	log = &siteLog{}
+	entered = make(chan struct{}, 8)
+	released := make(chan struct{})
+	release = sync.OnceFunc(func() { close(released) })
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.record(r)
+		if r.URL.Path == "/robots.txt" {
+			entered <- struct{}{}
+			<-released
+		}
+		io.WriteString(w, "User-agent: *\nAllow: /\n")
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(release)
+	return srv, log, entered, release
+}
+
+func TestASlowRobotsTxtOnOneHostDoesNotDelayAnother(t *testing.T) {
+	slow, _, entered, release := stalledRobots(t)
+	fast, _ := site(t, map[string]string{"/robots.txt": "User-agent: *\nAllow: /\n"})
+	c := newConduct(testConfig(), http.DefaultTransport)
+	slowURL, _ := url.Parse(slow.URL + "/a")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		c.permitted(context.Background(), slowURL)
+	}()
+	defer func() { release(); <-done }()
+	<-entered
+
+	fastURL, _ := url.Parse(fast.URL + "/b")
+	start := time.Now()
+	if err := c.permitted(context.Background(), fastURL); err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Errorf("host B's check took %s while host A's robots.txt stalled", took)
+	}
+}
+
+func TestConcurrentChecksOnOneHostFetchRobotsOnce(t *testing.T) {
+	srv, log, entered, release := stalledRobots(t)
+	c := newConduct(testConfig(), http.DefaultTransport)
+	u, _ := url.Parse(srv.URL + "/a")
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Go(func() {
+			if err := c.permitted(context.Background(), u); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	<-entered
+	time.Sleep(50 * time.Millisecond)
+	release()
+	wg.Wait()
+	if n := log.count("/robots.txt"); n != 1 {
+		t.Errorf("robots.txt fetched %d times, want once", n)
+	}
+}
