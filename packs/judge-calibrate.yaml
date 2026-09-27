@@ -2,16 +2,18 @@
 # pooled and per engine, and reports how often decisions agreed with the
 # verdict. Nothing is classified by default: name the question, the answer
 # options whose mass predicts a positive outcome, and which outcome states
-# count as positive and negative. A job-hunt example, leaving ghosted,
-# withdrawn and not_applied unscored:
+# count as positive, negative and inconclusive. Silence is not a verdict, so
+# a job-hunt pack lists ghosted as inconclusive rather than negative:
 #   atlas -pack packs/judge-calibrate.yaml -var question=<verdict question> \
-#     -var options=<option> -var positive=offer -var negative=rejected
+#     -var options=<option> -var positive=offer -var negative=rejected \
+#     -var inconclusive=ghosted,withdrawn,not_applied
 name: judge-calibrate
 vars:
   question: ""
   options: ""
   positive: ""
   negative: ""
+  inconclusive: ""
 
 steps:
   - id: calibration
@@ -21,6 +23,7 @@ steps:
       options: "{{ .vars.options }}"
       positive: "{{ .vars.positive }}"
       negative: "{{ .vars.negative }}"
+      inconclusive: "{{ .vars.inconclusive }}"
 
   - id: agreement
     tool: decision.agreement

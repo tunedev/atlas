@@ -70,6 +70,33 @@ func TestTheLoopClosesThroughTheTools(t *testing.T) {
 	}
 }
 
+func TestCalibrateReportsInconclusiveExclusionsSeparately(t *testing.T) {
+	ctx := context.Background()
+	docs, index := store(t)
+	if _, err := app.RecordJudgement(ctx, docs, index, "foggy", rainQ, weatherJudgement("foggy", 0.8, time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tools.NewOutcome(docs, index).Invoke(ctx, map[string]string{"subject_id": "foggy", "state": "fog"}); err != nil {
+		t.Fatalf("judge.outcome: %v", err)
+	}
+
+	out, err := tools.NewCalibrate(docs, index).Invoke(ctx, map[string]string{
+		"question": "rain", "options": "yes", "positive": "wet", "negative": "dry", "inconclusive": "fog",
+	})
+	if err != nil {
+		t.Fatalf("judge.calibrate: %v", err)
+	}
+	pooled := out.(map[string]any)["pooled"].(map[string]any)
+	excluded := pooled["excluded"].(map[string]any)
+	if excluded["inconclusive"] != 1 {
+		t.Errorf("excluded = %v, want inconclusive: 1", excluded)
+	}
+	prediction := out.(map[string]any)["prediction"].(map[string]any)
+	if got, ok := prediction["inconclusive"].([]string); !ok || len(got) != 1 || got[0] != "fog" {
+		t.Errorf("prediction.inconclusive = %v", prediction["inconclusive"])
+	}
+}
+
 func TestAReportTooSmallToScoreSaysSo(t *testing.T) {
 	ctx := context.Background()
 	docs, index := store(t)

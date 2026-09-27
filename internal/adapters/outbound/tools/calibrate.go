@@ -24,10 +24,11 @@ func (t *Calibrate) Name() string { return "judge.calibrate" }
 
 func (t *Calibrate) Invoke(ctx context.Context, with map[string]string) (any, error) {
 	p := app.Prediction{
-		QuestionID: strings.TrimSpace(with["question"]),
-		Options:    list(with["options"]),
-		Positive:   list(with["positive"]),
-		Negative:   list(with["negative"]),
+		QuestionID:   strings.TrimSpace(with["question"]),
+		Options:      list(with["options"]),
+		Positive:     list(with["positive"]),
+		Negative:     list(with["negative"]),
+		Inconclusive: list(with["inconclusive"]),
 	}
 	pooled, byEngine, err := app.CalibrateByEngine(ctx, t.docs, t.index, p)
 	if err != nil {
@@ -40,7 +41,7 @@ func (t *Calibrate) Invoke(ctx context.Context, with map[string]string) (any, er
 		engines[i] = r
 	}
 	return map[string]any{
-		"prediction": map[string]any{"question": p.QuestionID, "options": p.Options, "positive": p.Positive, "negative": p.Negative},
+		"prediction": map[string]any{"question": p.QuestionID, "options": p.Options, "positive": p.Positive, "negative": p.Negative, "inconclusive": p.Inconclusive},
 		"pooled":     report(pooled),
 		"by_engine":  engines,
 	}, nil
@@ -70,6 +71,7 @@ func report(c app.Calibration) map[string]any {
 		"excluded": map[string]any{
 			"pending":         c.Excluded.Pending,
 			"zero_coverage":   c.Excluded.ZeroCoverage,
+			"inconclusive":    c.Excluded.Inconclusive,
 			"unclassified":    c.Excluded.Unclassified,
 			"option_mismatch": c.Excluded.OptionMismatch,
 		},
