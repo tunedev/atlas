@@ -296,11 +296,10 @@ func runDecl(t *testing.T) (*token.FileSet, *ast.FuncDecl) {
 	return nil, nil
 }
 
-// callPositions returns where run() calls pkg.name, or name when pkg is
-// empty.
-func callPositions(fn *ast.FuncDecl, pkg, name string) []token.Pos {
+// callPositions returns where n calls pkg.name, or name when pkg is empty.
+func callPositions(n ast.Node, pkg, name string) []token.Pos {
 	var at []token.Pos
-	ast.Inspect(fn, func(n ast.Node) bool {
+	ast.Inspect(n, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
@@ -323,10 +322,35 @@ func callPositions(fn *ast.FuncDecl, pkg, name string) []token.Pos {
 // Every surface shares the registry run() builds; a surface branch that
 // built its own would stand up a second provider and a second tool set.
 func TestBuildRegistryIsCalledOnce(t *testing.T) {
-	_, run := runDecl(t)
-	if n := len(callPositions(run, "", "buildRegistry")); n != 1 {
-		t.Errorf("run() calls buildRegistry %d times; want exactly once, shared by every surface", n)
+	n := 0
+	for _, f := range mainFiles(t) {
+		n += len(callPositions(f, "", "buildRegistry"))
 	}
+	if n != 1 {
+		t.Errorf("package main calls buildRegistry %d times; want exactly once, shared by every surface", n)
+	}
+}
+
+// mainFiles parses every non-test Go file in package main.
+func mainFiles(t *testing.T) []*ast.File {
+	t.Helper()
+	names, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	var files []*ast.File
+	for _, name := range names {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		files = append(files, f)
+	}
+	return files
 }
 
 // The lock is held before anything opens the store, so a second process is
