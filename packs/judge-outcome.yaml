@@ -2,6 +2,8 @@
 # the subject, or one judgement by path. State is whatever the pack scoring
 # it declares, e.g. for a job hunt: offer, rejected, withdrawn, ghosted,
 # not_applied.
+# Omitting `when` records the current time, so re-running without it makes a
+# new revision every time; give `when` explicitly to make a re-run a no-op.
 #   atlas -pack packs/judge-outcome.yaml -var subject_id=<id> -var state=rejected -var when=2026-11-20
 name: judge-outcome
 vars:
