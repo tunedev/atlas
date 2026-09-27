@@ -23,8 +23,8 @@ const (
 
 // Rule is one condition a subject must not meet. A comparable rule is
 // checked in code against a field of the subject's document; a judged rule
-// is asked of the Judge as a yes/no question, using Ask when it is set, and
-// trips when p(yes) reaches Threshold.
+// is asked of the Judge as the yes/no question in Ask, and trips when p(yes)
+// reaches Threshold.
 type Rule struct {
 	ID        string  `json:"id"`
 	Statement string  `json:"statement"`
@@ -69,6 +69,9 @@ func ParseRules(body []byte) ([]Rule, error) {
 				return nil, fmt.Errorf("rules: %s: unknown operator %q", r.ID, r.Op)
 			}
 		case RuleJudged:
+			if strings.TrimSpace(r.Ask) == "" {
+				return nil, fmt.Errorf("rules: %s: a judged rule needs ask, the yes/no question whose yes means it is broken", r.ID)
+			}
 			if r.Threshold < 0 || r.Threshold > 1 {
 				return nil, fmt.Errorf("rules: %s: threshold %v is outside [0, 1]", r.ID, r.Threshold)
 			}
@@ -93,14 +96,10 @@ func validOp(op string) bool {
 // RuleQuestionID is the question id a judged rule is asked under.
 func RuleQuestionID(ruleID string) string { return ruleQuestionPrefix + ruleID }
 
-// RuleQuestion is the yes/no question a judged rule is asked as: the rule's
-// own Ask when it has one, otherwise one derived from its statement.
+// RuleQuestion is the yes/no question a judged rule is asked as, worded by
+// the rule's own Ask.
 func RuleQuestion(r Rule) ports.Question {
-	ask := r.Ask
-	if ask == "" {
-		ask = fmt.Sprintf("Does this break the rule %q?", r.Statement)
-	}
-	return ports.Question{ID: RuleQuestionID(r.ID), Kind: ports.KindNoul, Ask: ask}
+	return ports.Question{ID: RuleQuestionID(r.ID), Kind: ports.KindNoul, Ask: r.Ask}
 }
 
 // CheckRules checks every rule against one subject: comparable rules

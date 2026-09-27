@@ -11,7 +11,7 @@ import (
 const shelfRules = `{"rules": [
   {"id": "min-pages", "statement": "At least 100 pages.", "kind": "comparable", "op": ">=", "value": 100},
   {"id": "language", "statement": "Written in English.", "kind": "comparable", "op": "==", "value": "en"},
-  {"id": "no-spoilers", "statement": "No spoilers in the blurb.", "kind": "judged", "threshold": 0.6},
+  {"id": "no-spoilers", "statement": "No spoilers in the blurb.", "kind": "judged", "threshold": 0.6, "ask": "Does the blurb reveal the ending?"},
   {"id": "no-sequels", "statement": "Not a sequel.", "kind": "judged", "ask": "Is this book a sequel?"}
 ]}`
 
@@ -42,12 +42,14 @@ func TestParseRulesDefaultsAThresholdAndRejectsBadRules(t *testing.T) {
 		t.Errorf("absent threshold = %v, want 0.5", rules[3].Threshold)
 	}
 	for name, body := range map[string]string{
-		"no id":         `{"rules": [{"kind": "judged", "statement": "x"}]}`,
-		"unknown kind":  `{"rules": [{"id": "a", "kind": "guessed"}]}`,
-		"bad operator":  `{"rules": [{"id": "a", "kind": "comparable", "op": "~", "value": 1}]}`,
-		"repeated id":   `{"rules": [{"id": "a", "kind": "judged"}, {"id": "a", "kind": "judged"}]}`,
-		"threshold > 1": `{"rules": [{"id": "a", "kind": "judged", "threshold": 1.5}]}`,
-		"not json":      `rules: []`,
+		"no id":                 `{"rules": [{"kind": "judged", "statement": "x"}]}`,
+		"unknown kind":          `{"rules": [{"id": "a", "kind": "guessed"}]}`,
+		"bad operator":          `{"rules": [{"id": "a", "kind": "comparable", "op": "~", "value": 1}]}`,
+		"repeated id":           `{"rules": [{"id": "a", "kind": "judged"}, {"id": "a", "kind": "judged"}]}`,
+		"threshold > 1":         `{"rules": [{"id": "a", "kind": "judged", "ask": "Is x true?", "threshold": 1.5}]}`,
+		"judged without ask":    `{"rules": [{"id": "a", "kind": "judged"}]}`,
+		"judged with blank ask": `{"rules": [{"id": "a", "kind": "judged", "ask": "   "}]}`,
+		"not json":              `rules: []`,
 	} {
 		if _, err := app.ParseRules([]byte(body)); err == nil {
 			t.Errorf("%s: accepted", name)
@@ -129,14 +131,14 @@ func TestAJudgedRuleWithoutItsAnswerIsAnError(t *testing.T) {
 	}
 }
 
-func TestARuleQuestionUsesAskOrDerivesFromTheStatement(t *testing.T) {
+func TestARuleQuestionUsesTheRulesAsk(t *testing.T) {
 	rules := parsed(t)
-	derived, explicit := app.RuleQuestion(rules[2]), app.RuleQuestion(rules[3])
-	if derived.ID != "rule_no-spoilers" || derived.Kind != ports.KindNoul || derived.Ask != `Does this break the rule "No spoilers in the blurb."?` {
-		t.Errorf("derived = %+v", derived)
+	spoilers, sequels := app.RuleQuestion(rules[2]), app.RuleQuestion(rules[3])
+	if spoilers.ID != "rule_no-spoilers" || spoilers.Kind != ports.KindNoul || spoilers.Ask != "Does the blurb reveal the ending?" {
+		t.Errorf("no-spoilers question = %+v", spoilers)
 	}
-	if explicit.Ask != "Is this book a sequel?" {
-		t.Errorf("explicit ask = %q", explicit.Ask)
+	if sequels.ID != "rule_no-sequels" || sequels.Kind != ports.KindNoul || sequels.Ask != "Is this book a sequel?" {
+		t.Errorf("no-sequels question = %+v", sequels)
 	}
 }
 
