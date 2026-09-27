@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,6 +34,9 @@ func TestAcquireWritesThePidAndReleaseRemovesIt(t *testing.T) {
 	}
 	if got := holder(t, path); got != strconv.Itoa(os.Getpid()) {
 		t.Errorf("lock holds %q, want this process's pid", got)
+	}
+	if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
+		t.Errorf("directory holds %d entries after Acquire, want the lock alone", len(entries))
 	}
 	if err := l.Release(); err != nil {
 		t.Fatalf("Release: %v", err)
@@ -146,4 +151,42 @@ func TestReleaseLeavesALockThatIsNoLongerOurs(t *testing.T) {
 	if got := holder(t, path); got != "1" {
 		t.Errorf("Release removed a lock another process holds; it now reads %q", got)
 	}
+}
+
+// Racers stand in for separate processes, each under the pid of its own live
+// helper, all taking one lock at once: exactly one may hold it.
+func TestRacingAcquiresHaveExactlyOneWinner(t *testing.T) {
+	const racers, trials = 4, 200
+	pids := make([]int, racers)
+	for i := range pids {
+		pids[i] = liveOtherPid(t)
+	}
+	path := lockPath(t)
+	for trial := range trials {
+		if n := raceOnce(path, pids); n != 1 {
+			t.Fatalf("trial %d: %d racers hold the lock, want exactly 1", trial, n)
+		}
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// raceOnce has every pid acquire path at the same moment and returns how many
+// succeeded.
+func raceOnce(path string, pids []int) int {
+	var won atomic.Int32
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for _, pid := range pids {
+		wg.Go(func() {
+			<-start
+			if _, err := pidlock.AcquireAs(path, pid); err == nil {
+				won.Add(1)
+			}
+		})
+	}
+	close(start)
+	wg.Wait()
+	return int(won.Load())
 }

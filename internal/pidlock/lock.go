@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -24,7 +25,11 @@ type Lock struct {
 // a lock holding this process's own pid is stale, since a process restarted
 // under the same pid (a container's pid 1) is what leaves one.
 func Acquire(path string) (*Lock, error) {
-	pid := os.Getpid()
+	return acquire(path, os.Getpid())
+}
+
+// acquire takes the lock at path on behalf of pid.
+func acquire(path string, pid int) (*Lock, error) {
 	for range 2 {
 		err := create(path, pid)
 		if err == nil {
@@ -55,19 +60,31 @@ func (l *Lock) Release() error {
 	return nil
 }
 
-// create writes pid to path, failing if path already exists.
+// create puts a lock holding pid at path, failing if path already exists.
+// The pid is written to a temp file first and then linked into place, so a
+// lock is never visible without its pid.
 func create(path string, pid int) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	tmp, err := writeTemp(filepath.Dir(path), filepath.Base(path), pid)
 	if err != nil {
 		return err
+	}
+	defer func() { _ = os.Remove(tmp) }()
+	return os.Link(tmp, path)
+}
+
+// writeTemp writes pid to a new temp file in dir and returns its path.
+func writeTemp(dir, base string, pid int) (string, error) {
+	f, err := os.CreateTemp(dir, base+".*.tmp")
+	if err != nil {
+		return "", err
 	}
 	_, werr := f.WriteString(strconv.Itoa(pid) + "\n")
 	cerr := f.Close()
 	if err := errors.Join(werr, cerr); err != nil {
-		_ = os.Remove(path)
-		return err
+		_ = os.Remove(f.Name())
+		return "", err
 	}
-	return nil
+	return f.Name(), nil
 }
 
 // readPid reads the pid a lock holds. It reports false when the file is
