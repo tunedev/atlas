@@ -56,7 +56,7 @@ surfaced it correctly.
 ```
 record text --text.spans--> numbered spans --extract.run (cite ids)--> citations
   --span.resolve--> quotes --quote.ground--> existence --judge.ask--> relevance
-  --gap rule--> checked document --docs.put--> record --render.run--> PDF (build artifact)
+  --gap rule--> checked document --docs.put--> record --render.run--> sendable PDFs + review sheet
 ```
 
 Every Go-tree name is generic. "CV", "letter", "posting", "employer" appear only in the pack's
@@ -69,9 +69,12 @@ YAML, its schema blocks and its Typst templates, as Epic 6 established.
    what a prompt carries. Sources are `profile/source.txt` and every file under
    `profile/evidence/`.
 2. **`extract.run`** (existing, unchanged). The pack's schema makes every citation field an
-   array of span ids. One call returns: the posting's requirements, each with ids; the CV
-   bullets, as ordered ids (the bullets are the spans' own text, never reworded); the letter as
-   sentences, each with ids; the posting's questions, each answered as sentences with ids.
+   array of span ids. The requirements are quoted from the posting alone and grounded against
+   it, then cited by number (`items.cite` builds one claim per requirement); the questions are
+   quoted from the questions var alone and grounded against it, then answered by number as
+   sentences with ids (`items.gather` gives each question its sentences, and an unanswered one
+   an empty sentence). The CV bullets are ordered ids (the bullets are the spans' own text,
+   never reworded); the letter is sentences, each with ids. No questions, no answers.
 3. **`span.resolve`** (new tool, pure). Replaces each cited id with an object
    `{"id","quote"}` carrying the span's verbatim text. An id that does not exist resolves to an
    empty quote.
@@ -82,16 +85,18 @@ YAML, its schema blocks and its Typst templates, as Epic 6 established.
    citation survives only if it is grounded and its mass on `yes` is at least the pack's
    `relevance_threshold`. Batching one claim's spans into one call keeps the cost to one model
    call per claim, not per span. The judgement is recorded as `judge.ask` always records it.
-6. **The gap rule** (new tool, pure: `claims.settle`). A claim with no surviving citation is a
-   gap:
-   - a posting requirement → listed as "Not shown by the record: <requirement>" (the text is
-     the posting's, so it asserts nothing about the user);
-   - a CV bullet → dropped;
-   - a letter or answer sentence → removed from the text and listed as a gap with the reason
-     it was cut;
-   - an answer left with no sentences → "Not shown by the record".
-   The output is the checked document: kept claims with their surviving citations, and the gap
-   list.
+6. **The gap rule** (new tool, pure: `claims.settle`). Every object with a `text` key is a
+   statement; one with no surviving citation, no citations list, or only whitespace for text is
+   a gap, and settle always sets the gap flag. Gaps never reach a sendable document:
+   - a posting requirement → listed on the review sheet under "Requirements not shown by the
+     record" (the text is the posting's, so it asserts nothing about the user);
+   - a CV bullet → dropped, and counted on the review sheet;
+   - a letter or answer sentence → left out of the letter, and listed on the review sheet as
+     removed for lack of evidence;
+   - a question with no kept sentence → left out of the letter, and listed on the review sheet
+     under "Questions not answered by the record".
+   The output is the checked document (kept claims with their surviving citations), the kept
+   text per top-level key, and the gap texts per top-level key and in one list.
 7. **`docs.put`** (existing) commits the checked document as
    `applications/<subject_id>/tailored.json`, kind `tailored`.
 8. **`render.run`** (new tool) — see **The output format**.
@@ -131,9 +136,10 @@ consumes structured data natively and values cannot become markup.
 
 | Artifact | Where | Kind |
 |---|---|---|
-| `applications/<subject_id>/tailored.json` | The record (git) | The checked document: every claim with its cited ids and quotes, and the gap list |
-| `packs/tailor/*.typ` | The pack | Templates; the only place use-case layout lives |
-| Rendered PDFs | A configured output directory, not git | Build artifacts, regenerable from `tailored.json` |
+| `applications/<subject_id>/tailored.json` | The record (git) | The checked document: every claim with its cited ids and quotes and its gap flag; index fields hold the gap count and the dropped counts |
+| `packs/tailor/*.typ` | The pack | Templates (`cv.typ`, `letter.typ`, `review.typ`); the only place use-case layout lives |
+| `cv.pdf`, `letter.pdf` | A configured output directory, not git | Sendable build artifacts, regenerable from `tailored.json`: kept content only, never a gap |
+| `review.pdf` | The same directory, not git | For the sender only: every gap, unanswered question and dropped count |
 
 ### The render step
 
@@ -151,7 +157,8 @@ consumes structured data natively and values cannot become markup.
   step) and an output path; writes the PDF; then verifies it: extracts the PDF's text with the
   existing `file.text` path (tabula), and runs `app.Ground` with that text as the source over the
   kept quotes. A kept quote missing from the rendered text is an error, not a warning — the
-  artifact must say what the record says. Normalisation additionally joins a word broken at a
+  artifact must say what the record says. An optional `absent` list works the other way: the
+  packs pass the gap texts, and a render that prints any of them fails and publishes nothing. Normalisation additionally joins a word broken at a
   line-end hyphen. The spike measured this with `pdftotext`; the plan must re-measure it with
   tabula before relying on it, since the two extract text differently.
 
@@ -161,8 +168,8 @@ consumes structured data natively and values cannot become markup.
 |---|---|
 | 9.1 A CV variant per role | Headings from grounded history entries; bullets are cited spans, chosen and ordered for the posting |
 | 9.2 A letter that cites evidence | Every kept sentence cites spans that exist and survived the relevance check; the citations are in `tailored.json` |
-| 9.3 An unsupported claim is a visible gap | The gap rule: a claim with no surviving citation is listed as a gap and never rendered as prose |
-| 9.4 Answers to the posting's own questions | Same schema list and same checks as the letter; an unsupported answer is "Not shown by the record" |
+| 9.3 An unsupported claim is a visible gap | The gap rule: a claim with no surviving citation is listed on the review sheet and never rendered in a sendable document |
+| 9.4 Answers to the posting's own questions | Questions quoted from the questions var, answered with the letter's checks; an unanswered question is listed on the review sheet |
 | 9.5 The output format decision | Typst, for the reason above |
 
 ## The job-hunt pack
@@ -188,7 +195,7 @@ uses for sessions.
 | `claims.settle` | Each claim type with no surviving citation becomes the right kind of gap; a kept claim keeps only surviving citations | No |
 | **The regression this epic exists for** | A canned extraction citing an invented employer's span id, an out-of-range id and an irrelevant span, with a stub judge rejecting the irrelevant one: all end as gaps; no invented text reaches `tailored.json` or the render input | No |
 | Typst adapter | Hostile data renders literally; timeout honoured; missing binary fails at startup; `--root` confines reads. Skipped when `typst` is absent, like the render tests skip without Chrome | `typst` |
-| Render verification | A PDF missing a kept quote is an error; a hyphen-wrapped quote passes | `typst` |
+| Render verification | A PDF missing a kept quote, or printing a gap text, is an error; a hyphen-wrapped quote passes | `typst` |
 | Live | One run of `packs/tailor.yaml` on a fabricated two-employer CV and a sample posting, through `qwen2.5-coder:7b` and Typst; the increment note records counts. No real CV content is committed | Model and `typst` |
 
 ## Deliberately not in this increment
