@@ -45,7 +45,7 @@ func TestParseRulesDefaultsAThresholdAndRejectsBadRules(t *testing.T) {
 		"no id":                 `{"rules": [{"kind": "judged", "statement": "x"}]}`,
 		"unknown kind":          `{"rules": [{"id": "a", "kind": "guessed"}]}`,
 		"bad operator":          `{"rules": [{"id": "a", "kind": "comparable", "op": "~", "value": 1}]}`,
-		"repeated id":           `{"rules": [{"id": "a", "kind": "judged"}, {"id": "a", "kind": "judged"}]}`,
+		"repeated id":           `{"rules": [{"id": "a", "kind": "judged", "ask": "Is x true?"}, {"id": "a", "kind": "judged", "ask": "Is x true?"}]}`,
 		"threshold > 1":         `{"rules": [{"id": "a", "kind": "judged", "ask": "Is x true?", "threshold": 1.5}]}`,
 		"judged without ask":    `{"rules": [{"id": "a", "kind": "judged"}]}`,
 		"judged with blank ask": `{"rules": [{"id": "a", "kind": "judged", "ask": "   "}]}`,
