@@ -1,7 +1,9 @@
 package arch_test
 
 import (
+	"io/fs"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -23,6 +25,7 @@ const (
 // package under inbound/ is checked, including ones added after this test
 // was written.
 func TestInboundAdaptersStayIsolated(t *testing.T) {
+	witnessInternalTree(t)
 	pkgs := inboundPackages(t)
 	for _, want := range []string{inboundRoot + "packfile", inboundRoot + "mcpserve"} {
 		if !slices.Contains(pkgs, want) {
@@ -71,6 +74,7 @@ func TestIsolationRuleSeparatesSurfaces(t *testing.T) {
 // internal/adapters/inbound/ cannot hide from TestInboundAdaptersStayIsolated:
 // every package under internal/ must sit in one of the tree's known homes.
 func TestEveryInternalPackageHasAKnownHome(t *testing.T) {
+	witnessInternalTree(t)
 	knownHomes := []string{
 		"github.com/tunedev/atlas/internal/core",
 		inboundRoot,
@@ -127,6 +131,17 @@ func hasKnownHome(pkg string, homes []string) bool {
 		}
 	}
 	return false
+}
+
+// witnessInternalTree walks internal/ so Go's testlog records the walk: a
+// package added under internal/ then invalidates the cached result of any
+// test that calls this, instead of returning a stale PASS for a go-list-driven
+// check the test cache cannot otherwise see.
+func witnessInternalTree(t *testing.T) {
+	t.Helper()
+	if err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error { return err }); err != nil {
+		t.Fatalf("witness walk failed: %v", err)
+	}
 }
 
 // inboundPackages lists every package under internal/adapters/inbound.
