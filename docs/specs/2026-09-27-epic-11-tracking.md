@@ -364,7 +364,7 @@ than bucketing by window width would be.
 
 ## What the user sees
 
-Atlas has no UI (Epic 12 is last, deliberately). Calibration surfaces the way every other tool
+Atlas has no UI (Epic 13 is last, deliberately). Calibration surfaces the way every other tool
 result does today: a pack step. A `judge.calibrate` tool (composition-root-registered beside
 `judge.ask`, `internal/core/app/decisionrecord.go`'s decision tools, and the rest) takes a
 `Prediction` the same way `judge.ask` takes questions — parsed from the step's `with` block —
@@ -450,7 +450,7 @@ follows for the judge itself.
 | Widening `TopLogProbs`, rephrasing `choice` options, or the `laya` classifier | Carried over, unresolved, from `docs/notes/2026-09-24-epic-3-closing.md`'s three candidate routes; this epic consumes `Coverage`, it does not fix what produces a low one |
 | A second engine's numbers compared automatically | `CalibrateOptions` supports grouping by provider/model; nothing here runs a second engine against the same subjects to compare, which is unmeasured today per the closing note |
 | Rejecting or gating on a low `Confidence`/`Coverage` at judgement time | A policy decision (Epic 7's deal-breakers, Epic 10's allow/ask/deny), not tracking's job — this epic measures, it does not act |
-| A UI | Epic 12, last, deliberately |
+| A UI | Epic 13, last, deliberately |
 | Persisting the calibration report as a git document | Fully derivable from the record on every run; persisting it risks staleness relative to newly attached outcomes, the same reason the two indices themselves are disposable |
 
 ## Open for the human
