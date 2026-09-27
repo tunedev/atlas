@@ -1,22 +1,22 @@
-name: job-hunt
+# Tailors application documents to one posting from the record. Every
+# statement about the candidate cites spans of the candidate's own text;
+# anything uncited or unsupported is listed as a gap, never written as fact.
+#   ATLAS_RENDER_TYPST=typst atlas -pack packs/tailor.yaml \
+#     -var store_root="$HOME/.atlas/workspace" -var subject_id=acme-backend \
+#     -var out_dir="$HOME/applications/acme" -var posting="$(cat posting.txt)"
+name: tailor
 vars:
-  board: gitlab
   store_root: ""
   evidence_dir: ""
+  posting: ""
   questions: ""
+  subject_id: ""
   out_dir: ""
   templates: "packs/tailor"
   relevance_threshold: "0.6"
   min_chars: "25"
 
 steps:
-  - id: role
-    tool: source.pull
-    with:
-      prefix: "postings/greenhouse/{{ .vars.board }}"
-      match: status=open
-      select: items.0
-
   - id: spans
     tool: text.spans
     with:
@@ -30,46 +30,6 @@ steps:
     with:
       path: "{{ .vars.store_root }}/profile/history.json"
 
-  - id: judged
-    tool: judge.ask
-    with:
-      subject_id: "{{ .steps.role.id }}"
-      subject: |
-        Candidate: {{ .steps.spans.source }}
-
-        Role: {{ .steps.role.title }} at {{ .steps.role.company }}
-
-        {{ .steps.role.description_text }}
-      questions: |
-        - id: stretch
-          type: noul
-          ask: Is this role a stretch for the candidate?
-        - id: seniority
-          type: score
-          levels: [junior, mid, senior, principal]
-          ask: How senior is this role?
-        - id: focus
-          type: choice
-          options: [backend, frontend, platform, data, other]
-          ask: What is the main focus of this role?
-
-  - id: verdict
-    tool: model.complete
-    with:
-      expect: json
-      system: |
-        You judge whether a job advertisement suits a candidate.
-        Reply with JSON only: {"decision":"apply|stretch|skip","reasons":["...","..."]}
-        decision must be exactly one of apply, stretch, or skip.
-        reasons must be short and specific to this role and this candidate.
-      user: |
-        Candidate: {{ .steps.spans.source }}
-
-        Role: {{ .steps.role.title }} at {{ .steps.role.company }}
-        Location: {{ .steps.role.location }}
-
-        {{ .steps.role.description_text }}
-
   - id: requirements
     tool: extract.run
     with:
@@ -81,9 +41,7 @@ steps:
         Candidate's evidence spans:
         {{ .steps.spans.listing }}
         Posting:
-        Role: {{ .steps.role.title }} at {{ .steps.role.company }}
-
-        {{ .steps.role.description_text }}
+        {{ .vars.posting }}
       schema: |
         {"type":"object","required":["requirements"],"additionalProperties":false,
          "properties":{"requirements":{"type":"array","items":{"type":"object",
@@ -100,9 +58,7 @@ steps:
         Candidate's evidence spans:
         {{ .steps.spans.listing }}
         Posting:
-        Role: {{ .steps.role.title }} at {{ .steps.role.company }}
-
-        {{ .steps.role.description_text }}
+        {{ .vars.posting }}
       schema: |
         {"type":"object","required":["bullets"],"additionalProperties":false,
          "properties":{"bullets":{"type":"array","maxItems":8,"items":{"type":"object",
@@ -120,9 +76,7 @@ steps:
         Candidate's evidence spans:
         {{ .steps.spans.listing }}
         Posting:
-        Role: {{ .steps.role.title }} at {{ .steps.role.company }}
-
-        {{ .steps.role.description_text }}
+        {{ .vars.posting }}
         Questions:
         {{ .vars.questions }}
       schema: |
@@ -156,7 +110,7 @@ steps:
     with:
       fields: "{{ json .steps.ground.fields }}"
       threshold: "{{ .vars.relevance_threshold }}"
-      subject_id: "{{ .steps.role.id }}"
+      subject_id: "{{ .vars.subject_id }}"
 
   - id: settle
     tool: claims.settle
@@ -166,11 +120,11 @@ steps:
   - id: save
     tool: docs.put
     with:
-      path: "applications/{{ .steps.role.id }}/tailored.json"
+      path: "applications/{{ .vars.subject_id }}/tailored.json"
       body: "{{ json .steps.settle.fields }}"
       kind: tailored
       expect: json
-      message: "Tailor for {{ .steps.role.id }}"
+      message: "Tailor for {{ .vars.subject_id }}"
       fields: |
         gaps: "{{ .steps.settle.gaps }}"
 

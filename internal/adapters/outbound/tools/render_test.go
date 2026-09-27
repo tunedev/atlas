@@ -1,6 +1,7 @@
 package tools_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -180,7 +181,9 @@ func TestPackTemplateFixturesRender(t *testing.T) {
 			raw, err := os.ReadFile(path)
 			must(t, err)
 			var fx packFixture
-			must(t, json.Unmarshal(raw, &fx))
+			dec := json.NewDecoder(bytes.NewReader(raw))
+			dec.DisallowUnknownFields()
+			must(t, dec.Decode(&fx))
 
 			packDir := filepath.Dir(filepath.Dir(path)) // testdata/..
 			out := filepath.Join(t.TempDir(), "out.pdf")
@@ -210,5 +213,18 @@ func TestPackTemplateFixturesRender(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestPackFixtureRejectsAnUnknownField proves a misspelled key, such as
+// "befor" for "before", fails fixture decoding loudly rather than being
+// silently dropped.
+func TestPackFixtureRejectsAnUnknownField(t *testing.T) {
+	var fx packFixture
+	raw := []byte(`{"template":"t.typ","expect":["x"],"befor":["y"]}`)
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&fx); err == nil {
+		t.Error("want an error for the unknown field \"befor\"")
 	}
 }
