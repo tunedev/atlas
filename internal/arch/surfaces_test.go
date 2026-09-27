@@ -32,13 +32,12 @@ var (
 )
 
 // TestInboundAdaptersStayIsolated holds the seam every surface plugs into:
-// an inbound adapter reaches the core, the standard library and third-party
-// packages, never another inbound adapter, never an outbound one, and never
-// internal/config or internal/telemetry. Those two, like outbound adapters,
-// are wired once, at the composition root, so a surface that imported one
-// would stand up its own copy of something every surface shares. Every
-// package under inbound/ is checked, including ones added after this test
-// was written.
+// inside the module, an inbound adapter reaches only the core and its own
+// subtree. Everything else in the module, present or future, is wired once
+// at the composition root, so a surface that imported it would stand up its
+// own copy of something every surface shares. The standard library and
+// third-party packages are allowed. Every package under inbound/ is checked,
+// including ones added after this test was written.
 func TestInboundAdaptersStayIsolated(t *testing.T) {
 	witnessModuleTree(t)
 	pkgs := inboundPackages(t)
@@ -50,7 +49,7 @@ func TestInboundAdaptersStayIsolated(t *testing.T) {
 	for _, pkg := range pkgs {
 		deps := strings.Fields(string(runGoListDeps(t, pkg)))
 		for _, dep := range isolationViolations(pkg, deps) {
-			t.Errorf("%s depends on %s; an inbound adapter may reach the core, never another surface, an outbound adapter, or composition-root infrastructure (config, telemetry)", pkg, dep)
+			t.Errorf("%s depends on %s; inside the module an inbound adapter may reach only %s and its own subtree", pkg, dep, coreRoot)
 		}
 	}
 }
@@ -70,7 +69,10 @@ func TestIsolationRuleSeparatesSurfaces(t *testing.T) {
 		{outboundRoot + "openaiprov/wire", true}, // an outbound subpackage
 		{configRoot, true},                       // composition-root config, forbidden
 		{telemetryRoot, true},                    // composition-root telemetry, forbidden
-		{configRoot + "x", false},                // a name-prefix neighbour, allowed
+		{modulePath + "/internal/pidlock", true}, // composition-root locking, forbidden
+		{modulePath + "/internal/shared", true},  // an unknown future module package, forbidden
+		{configRoot + "x", true},                 // a name-prefix neighbour, forbidden like any module package
+		{modulePath + "/internal/corex", true},   // a name-prefix neighbour of the core
 		{web, false},                             // itself
 		{web + "/tmpl", false},                   // its own subpackage
 		{"github.com/tunedev/atlas/internal/core/app", false},
@@ -133,18 +135,13 @@ func TestKnownHomesAreExactWhereTheyShouldBe(t *testing.T) {
 }
 
 // isolationViolations returns the dependencies of pkg that break the seam:
-// any inbound package that is not pkg or below it, any outbound package, and
-// internal/config or internal/telemetry (or anything below them) — the
-// composition-root infrastructure cmd/atlas wires exactly once.
+// any package in the module that is neither in the core nor pkg or below it.
 func isolationViolations(pkg string, deps []string) []string {
 	var bad []string
 	for _, dep := range deps {
-		own := dep == pkg || strings.HasPrefix(dep, pkg+"/")
-		switch {
-		case own:
-		case strings.HasPrefix(dep, inboundRoot), strings.HasPrefix(dep, outboundRoot):
-			bad = append(bad, dep)
-		case isExactOrBelow(dep, configRoot), isExactOrBelow(dep, telemetryRoot):
+		inModule := isExactOrBelow(dep, modulePath)
+		allowed := strings.HasPrefix(dep, coreRoot) || isExactOrBelow(dep, pkg)
+		if inModule && !allowed {
 			bad = append(bad, dep)
 		}
 	}
