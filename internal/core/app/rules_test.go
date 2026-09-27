@@ -142,6 +142,26 @@ func TestARuleQuestionUsesTheRulesAsk(t *testing.T) {
 	}
 }
 
+func TestRuleInputsCollectsMappedFieldsOnly(t *testing.T) {
+	doc := map[string]any{"pages": 412.0}
+	fields := map[string]string{"min-pages": "pages", "in-print": "print.status"}
+	inputs := app.RuleInputs(doc, fields)
+
+	mapped, ok := inputs["min-pages"].(map[string]any)
+	if !ok || mapped["field"] != "pages" || mapped["value"] != 412.0 {
+		t.Errorf("min-pages = %+v, want field pages, value 412", inputs["min-pages"])
+	}
+
+	missing, ok := inputs["in-print"].(map[string]any)
+	if !ok || missing["field"] != "print.status" || missing["value"] != nil {
+		t.Errorf("in-print = %+v, want field print.status, value nil", inputs["in-print"])
+	}
+
+	if _, present := inputs["no-spoilers"]; present {
+		t.Errorf("an unmapped rule id must be absent: %+v", inputs)
+	}
+}
+
 func mustCheck(t *testing.T, rules []app.Rule, doc any, fields map[string]string, answers []ports.Answer) []app.RuleResult {
 	t.Helper()
 	got, err := app.CheckRules(rules, doc, fields, answers)

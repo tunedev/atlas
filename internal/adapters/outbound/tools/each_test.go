@@ -102,8 +102,8 @@ func newEach(t *testing.T, items []ports.Item, judge ports.Judge) (*tools.JudgeE
 
 func TestJudgeEachJudgesEverySelectedItemInIDOrder(t *testing.T) {
 	items := []ports.Item{
-		book("a", "Dune", 412, "open"), book("b", "Emma", 300, "lent"),
-		book("c", "Ulysses", 730, "open"), {ID: "elsewhere/x", Body: []byte(`not json`)},
+		book("c", "Ulysses", 730, "open"), book("b", "Emma", 300, "lent"),
+		{ID: "elsewhere/x", Body: []byte(`not json`)}, book("a", "Dune", 412, "open"),
 	}
 	judge := &shelfJudge{}
 	tool, _, _ := newEach(t, items, judge)
@@ -173,12 +173,43 @@ func TestEveryItemFailingIsAnError(t *testing.T) {
 
 func TestASubjectIDThatCannotBeRecordedIsThatItemsError(t *testing.T) {
 	judge := &shelfJudge{}
-	tool, _, _ := newEach(t, []ports.Item{book("a", "Dune", 412, "open"), book("c", "Ulysses", 730, "open")}, judge)
+	tool, _, _ := newEach(t, []ports.Item{book("a", "Dune", 412, "open"), book("b", "Bad/Title", 300, "open")}, judge)
 	with := eachWith()
-	with["subject_id"] = "[[ .item.title ]]/x"
-	_, err := tool.Invoke(context.Background(), with)
-	if err == nil || judge.calls != 0 {
-		t.Errorf("err = %v, calls = %d; want every item rejected before asking", err, judge.calls)
+	with["subject_id"] = "[[ .item.title ]]"
+	got := invokeEach(t, tool, with)
+	if len(got.rows) != 2 {
+		t.Fatalf("rows = %v", got.rows)
+	}
+	good, bad := got.rows[0], got.rows[1]
+	if good["subject_id"] != "Dune" || good["verdict"] != "keep" {
+		t.Errorf("good row = %v", good)
+	}
+	if bad["subject_id"] != "Bad/Title" || !strings.Contains(bad["error"].(string), "not a plain name") {
+		t.Errorf("bad row = %v", bad)
+	}
+	if judge.calls != 1 {
+		t.Errorf("calls = %d, want 1: only the good item should be asked", judge.calls)
+	}
+	if got.meta["judged"] != 1 || got.meta["errors"] != 1 {
+		t.Errorf("meta = %v", got.meta)
+	}
+}
+
+func TestTwoItemsWithIdenticalSubjectsAreBothJudged(t *testing.T) {
+	judge := &shelfJudge{}
+	tool, _, _ := newEach(t, []ports.Item{book("a", "Same Title", 412, "open"), book("b", "Same Title", 412, "open")}, judge)
+	with := eachWith()
+	with["subject"] = "Book: same subject text regardless of item"
+	got := invokeEach(t, tool, with)
+	if judge.calls != 2 {
+		t.Fatalf("calls = %d, want 2: identical subjects on different items must both be asked", judge.calls)
+	}
+	for _, r := range got.rows {
+		id := r["subject_id"].(string)
+		path := r["judgement_path"].(string)
+		if !strings.Contains(path, id) {
+			t.Errorf("row %v: judgement_path %q does not belong to subject_id %q", r, path, id)
+		}
 	}
 }
 
@@ -215,6 +246,64 @@ func TestRulesAreCheckedNamedFirstAndIndexed(t *testing.T) {
 	}
 }
 
+func ruleState(t *testing.T, row map[string]any, id string) string {
+	t.Helper()
+	for _, r := range row["rules"].([]any) {
+		rule := r.(map[string]any)
+		if rule["id"] == id {
+			return rule["state"].(string)
+		}
+	}
+	t.Fatalf("no rule %q in row %v", id, row)
+	return ""
+}
+
+func TestChangingAMappedFieldValueRejudgesTheItem(t *testing.T) {
+	judge := &shelfJudge{}
+	docs, index := store(t)
+	items := []ports.Item{book("a", "Dune", 412, "open")}
+	src := fakeSource{items: items, refreshed: time.Now()}
+	if _, err := docs.Put(context.Background(), "profile/shelf-rules.json", []byte(shelfRulesDoc), "rules"); err != nil {
+		t.Fatalf("put rules: %v", err)
+	}
+	with := eachWith()
+	with["rules"] = "profile/shelf-rules.json"
+	with["rule_fields"] = "min-pages: pages\n"
+
+	first := invokeEach(t, tools.NewJudgeEach(src, judge, docs, index, "m", 24*time.Hour, slog.Default()), with)
+	if state := ruleState(t, first.rows[0], "min-pages"); state != "tripped" {
+		t.Fatalf("initial min-pages state = %q, want tripped (412 < 500)", state)
+	}
+
+	src.items[0] = book("a", "Dune", 600, "open")
+	second := invokeEach(t, tools.NewJudgeEach(src, judge, docs, index, "m", 24*time.Hour, slog.Default()), with)
+	if judge.calls != 2 {
+		t.Errorf("calls = %d, want 2: a changed mapped value must re-judge", judge.calls)
+	}
+	if state := ruleState(t, second.rows[0], "min-pages"); state != "clear" {
+		t.Errorf("min-pages state after change = %q, want clear (600 >= 500)", state)
+	}
+}
+
+func TestChangingRuleFieldsAloneRejudgesTheItem(t *testing.T) {
+	judge := &shelfJudge{}
+	docs, index := store(t)
+	src := fakeSource{items: []ports.Item{book("a", "Dune", 412, "open")}, refreshed: time.Now()}
+	if _, err := docs.Put(context.Background(), "profile/shelf-rules.json", []byte(shelfRulesDoc), "rules"); err != nil {
+		t.Fatalf("put rules: %v", err)
+	}
+	with := eachWith()
+	with["rules"] = "profile/shelf-rules.json"
+	with["rule_fields"] = "min-pages: pages\n"
+	invokeEach(t, tools.NewJudgeEach(src, judge, docs, index, "m", 24*time.Hour, slog.Default()), with)
+
+	with["rule_fields"] = "min-pages: pages\nin-print: print.status\n"
+	invokeEach(t, tools.NewJudgeEach(src, judge, docs, index, "m", 24*time.Hour, slog.Default()), with)
+	if judge.calls != 2 {
+		t.Errorf("calls = %d, want 2: changing rule_fields alone must re-judge", judge.calls)
+	}
+}
+
 func TestBadConfigurationFailsBeforeAnyItemIsAsked(t *testing.T) {
 	judge := &shelfJudge{}
 	tool, docs, _ := newEach(t, []ports.Item{book("a", "Dune", 412, "open")}, judge)
@@ -237,6 +326,17 @@ func TestBadConfigurationFailsBeforeAnyItemIsAsked(t *testing.T) {
 	}
 	if judge.calls != 0 {
 		t.Errorf("calls = %d: configuration errors must stop the run before asking", judge.calls)
+	}
+}
+
+func TestZeroSelectedItemsSucceedsWithEmptyRows(t *testing.T) {
+	tool, _, _ := newEach(t, []ports.Item{book("a", "Dune", 412, "lent"), book("b", "Emma", 300, "lent")}, &shelfJudge{})
+	got := invokeEach(t, tool, eachWith())
+	if len(got.rows) != 0 {
+		t.Errorf("rows = %v, want empty", got.rows)
+	}
+	if got.meta["count"] != 0 || got.meta["judged"] != 0 || got.meta["reused"] != 0 || got.meta["errors"] != 0 {
+		t.Errorf("meta = %v, want all zero", got.meta)
 	}
 }
 

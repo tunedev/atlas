@@ -11,16 +11,18 @@ import (
 
 // Fingerprint identifies everything a judgement of subject depended on:
 // the rendered subject, the questions as asked, the rules they were checked
-// against, and the model. Equal fingerprints mean the same thing was asked
-// of the same model, so the earlier answer stands.
-func Fingerprint(subject string, qs []ports.Question, rules []Rule, model string) (string, error) {
+// against, the rule inputs those rules read (see RuleInputs), and the
+// model. Equal fingerprints mean the same thing was asked of the same
+// model against the same inputs, so the earlier answer stands.
+func Fingerprint(subject string, qs []ports.Question, rules []Rule, inputs map[string]any, model string) (string, error) {
 	h := sha256.New()
 	err := json.NewEncoder(h).Encode(struct {
 		Subject   string
 		Questions []ports.Question
 		Rules     []Rule
+		Inputs    map[string]any
 		Model     string
-	}{subject, qs, rules, model})
+	}{subject, qs, rules, inputs, model})
 	if err != nil {
 		return "", fmt.Errorf("fingerprint: %w", err)
 	}

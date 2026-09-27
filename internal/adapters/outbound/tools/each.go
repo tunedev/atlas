@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -14,10 +15,11 @@ import (
 	"github.com/tunedev/atlas/internal/core/ports"
 )
 
-// JudgeEach judges every item a pack selects from a ports.Source, one
-// Judge call per item, one item at a time. Each judgement is recorded with
-// its verdict, the rules checked against its item, and a fingerprint of what
-// it was asked. An item whose fingerprint is already recorded is reused and
+// JudgeEach judges every item a pack selects from a ports.Source, sorted by
+// item id, one Judge call per item, one item at a time. Each judgement is
+// recorded with its verdict, the rules checked against its item, and a
+// fingerprint of what it was asked and against what rule inputs. An item
+// whose subject id and fingerprint are both already recorded is reused and
 // not asked again.
 //
 // with carries prefix and match (as source.pull), subject_id and subject
@@ -26,8 +28,12 @@ import (
 // judge.ask), and optionally rules (a Docs path to a rules document) and
 // rule_fields (YAML: rule id to a dotted field path in the item).
 //
-// One item failing becomes that item's error row. The run fails only when
-// every selected item failed, or when a judgement cannot be recorded.
+// An item whose subject cannot be rendered or judged, or whose rendered
+// subject id is unusable, becomes that item's error row rather than
+// aborting the run. The run itself fails on a bad configuration (with
+// checked before any item is asked), a selected item's body that will not
+// decode as JSON, a failure to find, read or record a judgement, a failed
+// LastRefreshed, or every selected item failing.
 type JudgeEach struct {
 	source     ports.Source
 	judge      ports.Judge
@@ -68,6 +74,11 @@ func (t *JudgeEach) Invoke(ctx context.Context, with map[string]string) (any, er
 	if err != nil {
 		return nil, fmt.Errorf("judge.each: %w", err)
 	}
+	meta, err := freshness(ctx, t.source, t.staleAfter, t.log)
+	if err != nil {
+		return nil, fmt.Errorf("judge.each: %w", err)
+	}
+	slices.SortFunc(items, func(a, b ports.Item) int { return strings.Compare(a.ID, b.ID) })
 
 	rows := []any{}
 	var judged, reused, failed int
@@ -104,10 +115,6 @@ func (t *JudgeEach) Invoke(ctx context.Context, with map[string]string) (any, er
 		return nil, fmt.Errorf("judge.each: every item failed; first: %s", firstErr)
 	}
 
-	meta, err := freshness(ctx, t.source, t.staleAfter, t.log)
-	if err != nil {
-		return nil, fmt.Errorf("judge.each: %w", err)
-	}
 	meta["count"], meta["judged"], meta["reused"], meta["errors"] = len(rows), judged, reused, failed
 	return map[string]any{"rows": rows, "_meta": meta}, nil
 }
@@ -183,7 +190,7 @@ func (t *JudgeEach) one(ctx context.Context, s eachSpec, itemID string, doc any)
 	if err != nil {
 		return errorRow(subjectID, err), false, nil
 	}
-	fp, err := app.Fingerprint(subject, s.questions, s.rules, t.model)
+	fp, err := app.Fingerprint(subject, s.questions, s.rules, app.RuleInputs(doc, s.fields), t.model)
 	if err != nil {
 		return errorRow(subjectID, err), false, nil
 	}
@@ -212,11 +219,13 @@ func (t *JudgeEach) one(ctx context.Context, s eachSpec, itemID string, doc any)
 	return assessedRow(subjectID, path, a, false), false, nil
 }
 
-// reuse finds a judgement already recorded under fp and rebuilds its row
-// from the stored answers and rule results, through the same Assess a
-// fresh judgement goes through.
+// reuse finds a judgement already recorded for subjectID under fp and
+// rebuilds its row from the stored answers and rule results, through the
+// same Assess a fresh judgement goes through. Matching subjectID as well as
+// fp keeps two different items that render the same subject text from
+// sharing one judgement.
 func (t *JudgeEach) reuse(ctx context.Context, s eachSpec, subjectID, fp string) (map[string]any, bool, error) {
-	recs, err := t.index.Find(ctx, ports.Query{Kind: "judgement", Match: map[string]string{"fingerprint": fp}, Limit: 1})
+	recs, err := t.index.Find(ctx, ports.Query{Kind: "judgement", Match: map[string]string{"fingerprint": fp, "subject_id": subjectID}, Limit: 1})
 	if err != nil {
 		return nil, false, fmt.Errorf("find %s: %w", subjectID, err)
 	}

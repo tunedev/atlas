@@ -158,6 +158,23 @@ func checkJudged(r Rule, a ports.Answer) RuleResult {
 	return RuleResult{ID: r.ID, State: RuleClear, Evidence: fmt.Sprintf("p(yes) %.2f < %.2f", p, r.Threshold)}
 }
 
+// RuleInputs collects, for every rule id mapped in fields, the field path
+// and its value as resolved from doc: {"field": path, "value": v}, with v
+// nil when the field is absent. A rule id with no mapping in fields is
+// absent from the result. It feeds Fingerprint, so a judgement is never
+// reused across a changed mapping or a changed field value.
+func RuleInputs(doc any, fields map[string]string) map[string]any {
+	inputs := make(map[string]any, len(fields))
+	for id, path := range fields {
+		v, ok := lookupPath(doc, path)
+		if !ok {
+			v = nil
+		}
+		inputs[id] = map[string]any{"field": path, "value": v}
+	}
+	return inputs
+}
+
 // lookupPath follows a dotted path through nested objects. A null, a
 // non-object on the way, or an absent key is not found.
 func lookupPath(doc any, path string) (any, bool) {
