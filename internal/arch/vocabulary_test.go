@@ -20,6 +20,7 @@ func TestGoTreeIsFreeOfUseCaseVocabulary(t *testing.T) {
 		"job-hunt", "jobhunt", "recruiter", "hackernews", "hacker news",
 		"salary", "dealbreaker", "deal-breaker", "deal_breaker", "employer",
 		"on-call", "on_call", "curriculum vitae", "résumé",
+		"applicant", "hiring manager",
 	}
 	// Words short enough to occur inside unrelated identifiers are matched
 	// only as whole words.

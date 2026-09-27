@@ -23,6 +23,7 @@ type Config struct {
 	Agent      AgentConfig
 	Permission PermissionConfig
 	Extract    ExtractConfig
+	Render     RenderConfig
 }
 
 type PackConfig struct {
@@ -110,6 +111,14 @@ type AgentConfig struct {
 	MCPHeaderTimeout   time.Duration
 	MaxMessageBytes    int
 	MaxToolResultBytes int
+}
+
+// RenderConfig locates the typst binary documents are rendered with.
+// Rendering is on only when TypstPath is set.
+type RenderConfig struct {
+	TypstPath string
+	Timeout   time.Duration
+	MaxBytes  int64
 }
 
 // PermissionConfig holds the rules that decide an agent's tool calls, first
@@ -249,6 +258,14 @@ func (c Config) validate() error {
 	if c.Agent.Command != "" {
 		if err := c.Agent.validate(); err != nil {
 			return err
+		}
+	}
+	if c.Render.TypstPath != "" {
+		if c.Render.Timeout <= 0 {
+			return fmt.Errorf("config: render timeout must be positive, got %s", c.Render.Timeout)
+		}
+		if c.Render.MaxBytes <= 0 {
+			return fmt.Errorf("config: render max bytes must be positive, got %d", c.Render.MaxBytes)
 		}
 	}
 	return nil
