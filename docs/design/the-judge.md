@@ -185,13 +185,16 @@ belongs to all of its sibling judgements, not to one judge call.
 `app.Calibrate` (and `CalibrateByEngine`, which also groups by provider and
 model, alongside a pooled figure) scores one `Prediction` — a question id,
 the answer options whose summed distribution mass is the predicted
-probability, and the outcome states that count as that prediction coming
-true or false — against every judgement that asked the question and has an
-outcome. A judgement is excluded, and the exclusion counted rather than
-silently dropped, when: its outcome is still null (pending); its scored
-answer's `Coverage.Represented` is zero (zero coverage — the probability
-never measured real competition among the options); its outcome's state is
-in neither the prediction's positive nor negative list (unclassified); or
+probability, and the outcome states that sort into one of three
+dispositions: positive, negative, or inconclusive (evidence of nothing,
+such as a ghosted application) — against every judgement that asked the
+question and has an outcome. A judgement is excluded, and the exclusion
+counted rather than silently dropped, when: its outcome is still null
+(pending); its scored answer's `Coverage.Represented` is zero (zero
+coverage — the probability never measured real competition among the
+options); its outcome's state is in the prediction's inconclusive list, by
+pack declaration (inconclusive); its outcome's state is in none of the
+prediction's positive, negative or inconclusive lists (unclassified); or
 its question does not declare every option the prediction names (option
 mismatch). A judgement that never asked the scored question is not part of
 the sample at all, and is not counted as an exclusion either — it is a
