@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strconv"
+	"sync"
 	"testing"
 
 	"github.com/tunedev/atlas/internal/core/app"
@@ -194,5 +196,51 @@ func TestAMissingToolReportsStartedThenFailed(t *testing.T) {
 	_, _ = app.NewRunner(fakeRegistry{}).WithProgress(recordProgress(&events)).Run(context.Background(), bp)
 	if len(events) != 2 || events[0].Status != domain.StepStarted || events[1].Status != domain.StepFailed || events[1].Err == nil {
 		t.Errorf("events = %+v, want started then failed with an error", events)
+	}
+}
+
+// constTool holds no state, so any number of runs may share it.
+type constTool struct{}
+
+func (constTool) Name() string { return "c" }
+
+func (constTool) Invoke(context.Context, map[string]string) (any, error) {
+	return map[string]any{}, nil
+}
+
+func TestASharedRunnerKeepsEachCallersProgressApart(t *testing.T) {
+	base := app.NewRunner(fakeRegistry{"c": constTool{}})
+	const callers = 16
+	got := make([][]domain.StepEvent, callers)
+	var wg sync.WaitGroup
+	for i := range callers {
+		wg.Go(func() {
+			bp := domain.Blueprint{Name: "p", Steps: []domain.Step{{ID: strconv.Itoa(i), Tool: "c"}}}
+			_, _ = base.WithProgress(recordProgress(&got[i])).Run(context.Background(), bp)
+		})
+	}
+	wg.Wait()
+	for i, events := range got {
+		id := strconv.Itoa(i)
+		want := []domain.StepEvent{
+			{StepID: id, Tool: "c", Status: domain.StepStarted},
+			{StepID: id, Tool: "c", Status: domain.StepDone},
+		}
+		if !slices.Equal(events, want) {
+			t.Errorf("caller %d saw %+v, want only its own run's events", i, events)
+		}
+	}
+}
+
+func TestWithProgressLeavesTheBaseRunnerUnchanged(t *testing.T) {
+	base := app.NewRunner(fakeRegistry{"c": constTool{}})
+	var derived []domain.StepEvent
+	_ = base.WithProgress(recordProgress(&derived))
+	bp := domain.Blueprint{Name: "p", Steps: []domain.Step{{ID: "one", Tool: "c"}}}
+	if _, err := base.Run(context.Background(), bp); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(derived) != 0 {
+		t.Errorf("the base Runner reported %+v to a callback set on a derived one", derived)
 	}
 }

@@ -37,20 +37,23 @@ func NewRunner(r ports.Registry) *Runner {
 	return &Runner{registry: r, tracer: noop.NewTracerProvider().Tracer(""), progress: func(domain.StepEvent) {}}
 }
 
-// WithTracer replaces the Runner's tracer, returning the same Runner for
-// chaining at construction time.
+// WithTracer returns a copy of the Runner that traces with t. The receiver
+// is unchanged, so a shared Runner stays safe to derive from concurrently.
 func (r *Runner) WithTracer(t trace.Tracer) *Runner {
-	r.tracer = t
-	return r
+	c := *r
+	c.tracer = t
+	return &c
 }
 
-// WithProgress replaces the Runner's progress callback, returning the same
-// Runner for chaining at construction time. The callback runs synchronously,
-// in the order steps execute, on Run's own goroutine: each step Run attempts
-// reports StepStarted, then StepDone or StepFailed.
+// WithProgress returns a copy of the Runner that reports to f. The receiver
+// is unchanged, so each caller of a shared Runner derives its own. The
+// callback runs synchronously, in the order steps execute, on Run's own
+// goroutine: each step Run attempts reports StepStarted, then StepDone or
+// StepFailed.
 func (r *Runner) WithProgress(f func(domain.StepEvent)) *Runner {
-	r.progress = f
-	return r
+	c := *r
+	c.progress = f
+	return &c
 }
 
 // Run executes every step in order and stops at the first failure. The
