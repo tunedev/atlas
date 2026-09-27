@@ -13,10 +13,15 @@ import (
 
 func converter(t *testing.T, timeout time.Duration) *typstconv.Converter {
 	t.Helper()
+	return converterWithLimit(t, timeout, 1<<24)
+}
+
+func converterWithLimit(t *testing.T, timeout time.Duration, maxBytes int64) *typstconv.Converter {
+	t.Helper()
 	if _, err := exec.LookPath("typst"); err != nil {
 		t.Skip("typst is not on PATH")
 	}
-	c, err := typstconv.New(typstconv.Config{Bin: "typst", Timeout: timeout, MaxBytes: 1 << 24})
+	c, err := typstconv.New(typstconv.Config{Bin: "typst", Timeout: timeout, MaxBytes: maxBytes})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,6 +57,23 @@ func TestConvertHonoursTheTimeout(t *testing.T) {
 	err := converter(t, time.Nanosecond).Convert(context.Background(), &out, strings.NewReader("= slow"))
 	if err == nil || out.Len() != 0 {
 		t.Errorf("err %v; want the timeout", err)
+	}
+}
+
+func TestAPackageImportIsRefused(t *testing.T) {
+	var out bytes.Buffer
+	err := converter(t, time.Minute).Convert(context.Background(), &out, strings.NewReader(`#import "@preview/tablex:0.0.8": tablex`))
+	if err == nil || out.Len() != 0 || !strings.Contains(err.Error(), "failed to download package") {
+		t.Errorf("err %v, wrote %d bytes; want a refused download and nothing written", err, out.Len())
+	}
+}
+
+func TestAnOversizeOutputNamesTheLimit(t *testing.T) {
+	var out bytes.Buffer
+	src := strings.Repeat("= A lighthouse log\nKept the light through the storm.\n#pagebreak()\n", 200)
+	err := converterWithLimit(t, time.Minute, 1024).Convert(context.Background(), &out, strings.NewReader(src))
+	if err == nil || out.Len() != 0 || !strings.Contains(err.Error(), "exceeds 1024 bytes") {
+		t.Errorf("err %v, wrote %d bytes; want the limit named and nothing written", err, out.Len())
 	}
 }
 
