@@ -22,6 +22,6 @@ func (s *ClaimsSettle) Invoke(_ context.Context, with map[string]string) (any, e
 	if err := json.Unmarshal([]byte(with["fields"]), &tree); err != nil {
 		return nil, fmt.Errorf("claims.settle: fields: %w", err)
 	}
-	settled, kept, gaps := app.Settle(tree)
-	return map[string]any{"fields": settled, "kept": kept, "gaps": gaps}, nil
+	settled := app.Settle(tree)
+	return map[string]any{"fields": settled.Tree, "kept": settled.Kept, "gaps": settled.Gaps, "gaps_text": settled.GapsText, "gaps_all": settled.GapsAll}, nil
 }

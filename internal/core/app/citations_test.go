@@ -73,8 +73,8 @@ func TestSettleKeepsOnlyCheckedCitationsAndMarksGaps(t *testing.T) {
 	  {"citations":[{"id":1,"quote":"Refitted the lamp lens","status":"grounded"}]},
 	  {"citations":[{"id":7,"quote":"","status":"needs_review"}]}]
 	}`)
-	settled, kept, gaps := app.Settle(tree)
-	got := encode(t, settled)
+	s := app.Settle(tree)
+	got, kept, gaps := encode(t, s.Tree), s.Kept, s.Gaps
 	for _, want := range []string{
 		`{"citations":[{"id":0,"quote":"Logged every passing ship","relevant":true,"status":"grounded"}],"gap":false,"text":"keeps a ship log"}`,
 		`{"citations":[],"gap":true,"text":"sails the ship"}`,
@@ -93,10 +93,54 @@ func TestSettleKeepsOnlyCheckedCitationsAndMarksGaps(t *testing.T) {
 		t.Errorf("gaps = %d; want 6", gaps)
 	}
 	wantKept := map[string][]string{"claims": {"keeps a ship log"}, "picked": {"Refitted the lamp lens"}}
-	if _, empty, _ := app.Settle(decode(t, `{"none":[{"citations":[]}]}`)); !reflect.DeepEqual(empty, map[string][]string{"none": {}}) {
+	if empty := app.Settle(decode(t, `{"none":[{"citations":[]}]}`)).Kept; !reflect.DeepEqual(empty, map[string][]string{"none": {}}) {
 		t.Errorf("a key with nothing kept must still be present, empty: %v", empty)
 	}
 	if !reflect.DeepEqual(kept, wantKept) {
 		t.Errorf("kept = %v; want %v", kept, wantKept)
+	}
+}
+
+func TestSettleTreatsEveryTextObjectAsAStatement(t *testing.T) {
+	grounded := `{"id":0,"quote":"Logged every passing ship","status":"grounded","relevant":true}`
+	tree := decode(t, `{"claims":[
+	  {"text":"x","gap":false},
+	  {"text":"   ","citations":[`+grounded+`]},
+	  {"text":"  keeps a ship log  ","citations":[`+grounded+`],"gap":true}]}`)
+	s := app.Settle(tree)
+	got := encode(t, s.Tree)
+	for _, want := range []string{
+		`{"citations":[],"gap":true,"text":"x"}`,
+		`{"citations":[],"gap":true,"text":""}`,
+		`"gap":false,"text":"keeps a ship log"}`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("settled lacks %s:\n%s", want, got)
+		}
+	}
+	if s.Gaps != 2 {
+		t.Errorf("gaps = %d; want 2", s.Gaps)
+	}
+	if want := []string{"keeps a ship log"}; !reflect.DeepEqual(s.Kept["claims"], want) {
+		t.Errorf("kept = %v; want %v", s.Kept["claims"], want)
+	}
+}
+
+func TestSettleListsTheTextOfEveryGapPerKeyAndInAll(t *testing.T) {
+	tree := decode(t, `{
+	 "asked":[{"text":"sails a tall ship","citations":[]},{"text":"keeps a log","citations":[{"quote":"Logged","status":"grounded","relevant":true}]}],
+	 "picked":[{"citations":[]}],
+	 "said":[{"text":"I captained a ship.","citations":[]},{"text":"","citations":[]}]}`)
+	s := app.Settle(tree)
+	wantText := map[string][]string{
+		"asked":  {"sails a tall ship"},
+		"picked": {},
+		"said":   {"I captained a ship."},
+	}
+	if !reflect.DeepEqual(s.GapsText, wantText) {
+		t.Errorf("gaps text = %v; want %v", s.GapsText, wantText)
+	}
+	if want := []string{"sails a tall ship", "I captained a ship."}; !reflect.DeepEqual(s.GapsAll, want) {
+		t.Errorf("gaps all = %v; want %v", s.GapsAll, want)
 	}
 }

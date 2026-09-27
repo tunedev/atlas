@@ -1,6 +1,9 @@
 package app
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
 // spansKey and citationsKey are the structural convention a schema uses for
 // citing spans by id, and the resolved citations that replace them.
@@ -69,82 +72,104 @@ func sortedKeys(m map[string]any) []string {
 	return keys
 }
 
-// statement reports whether obj has a text field and what that text is.
-// If text is present and non-empty, it returns (text, true). If text is
-// present but empty or not a string, it returns ("", true) marking the
-// object as a statement with no valid text (a gap). If text is absent,
-// it returns ("", false) marking the object as not a statement.
+// statement reports whether obj is a statement (it has a "text" key) and
+// its trimmed text. A text that is not a string, or is only whitespace, is
+// "": a statement with no text, which is always a gap.
 func statement(obj map[string]any) (string, bool) {
-	_, has := obj["text"]
+	raw, has := obj["text"]
 	if !has {
 		return "", false
 	}
-	text, ok := obj["text"].(string)
-	if !ok || text == "" {
-		return "", true
-	}
-	return text, true
+	text, _ := raw.(string)
+	return strings.TrimSpace(text), true
 }
 
-// Settle decides, for every object with citations, which citations survive
-// and whether the object is a gap. A citation survives if it is grounded
-// and, on a statement with valid text, judged relevant: a statement with
-// invalid text is always a gap, never shown. Objects without a text field
-// keep citations on grounding alone. kept lists, per top-level key and in
-// order, what a renderer shows for each object that is not a gap: its text,
-// or its surviving quotes when it has none. Every top-level key is present
-// in kept, empty when nothing under it survived. tree is modified in place.
-func Settle(tree any) (any, map[string][]string, int) {
-	kept := map[string][]string{}
-	gaps := 0
+// Settled is what Settle decides about a document.
+type Settled struct {
+	// Tree is the document, every citation-bearing object and statement
+	// carrying its surviving citations and its gap flag.
+	Tree any
+	// Kept lists, per top-level key and in order, what a renderer shows for
+	// each object that is not a gap: its text, or its surviving quotes when
+	// it has none.
+	Kept map[string][]string
+	// GapsText lists, per top-level key and in order, the text of every
+	// statement that is a gap and has text.
+	GapsText map[string][]string
+	// GapsAll is every GapsText list joined, top-level keys in sorted order.
+	GapsAll []string
+	// Gaps counts every object that is a gap.
+	Gaps int
+}
+
+// Settle decides, for every statement and every object with citations,
+// which citations survive and whether the object is a gap. A statement is
+// any object with a "text" key: it is a gap unless its trimmed text is
+// non-empty and it has a citation that is grounded and judged relevant; one
+// with no citations list is a gap. Settle always sets a statement's gap flag
+// and writes back its trimmed text. An object with citations but no text
+// keeps citations on grounding alone. Kept and GapsText hold every top-level
+// key, empty when nothing under it applies. tree is modified in place.
+func Settle(tree any) Settled {
+	s := Settled{Tree: tree, Kept: map[string][]string{}, GapsText: map[string][]string{}, GapsAll: []string{}}
 	top, ok := tree.(map[string]any)
 	if !ok {
-		return tree, kept, 0
+		return s
 	}
 	for _, key := range sortedKeys(top) {
-		kept[key] = []string{}
+		s.Kept[key] = []string{}
+		s.GapsText[key] = []string{}
 		eachObject(top[key], func(obj map[string]any) {
-			raw, ok := obj[citationsKey].([]any)
-			if !ok {
-				return
-			}
 			text, isStatement := statement(obj)
-			if isStatement && text == "" {
-				obj[citationsKey] = []any{}
-				obj["gap"] = true
-				gaps++
+			raw, hasCitations := obj[citationsKey].([]any)
+			if !isStatement && !hasCitations {
 				return
 			}
-			var survivors []any
-			var quotes []string
-			for _, r := range raw {
-				c, ok := r.(map[string]any)
-				if !ok || c["status"] != "grounded" {
-					continue
-				}
-				if isStatement && c["relevant"] != true {
-					continue
-				}
-				survivors = append(survivors, c)
-				if q, ok := c["quote"].(string); ok {
-					quotes = append(quotes, q)
+			if isStatement {
+				if _, isString := obj["text"].(string); isString {
+					obj["text"] = text
 				}
 			}
-			if survivors == nil {
-				survivors = []any{}
+			survivors, quotes := surviving(raw, isStatement)
+			if isStatement && text == "" {
+				survivors, quotes = []any{}, nil
 			}
 			obj[citationsKey] = survivors
 			obj["gap"] = len(survivors) == 0
-			if len(survivors) == 0 {
-				gaps++
-				return
+			switch {
+			case len(survivors) == 0:
+				s.Gaps++
+				if text != "" {
+					s.GapsText[key] = append(s.GapsText[key], text)
+					s.GapsAll = append(s.GapsAll, text)
+				}
+			case text != "":
+				s.Kept[key] = append(s.Kept[key], text)
+			default:
+				s.Kept[key] = append(s.Kept[key], quotes...)
 			}
-			if text != "" {
-				kept[key] = append(kept[key], text)
-				return
-			}
-			kept[key] = append(kept[key], quotes...)
 		})
 	}
-	return tree, kept, gaps
+	return s
+}
+
+// surviving returns the citations in raw that are grounded and, for a
+// statement, judged relevant, with their quotes. It never returns nil.
+func surviving(raw []any, isStatement bool) ([]any, []string) {
+	survivors := []any{}
+	var quotes []string
+	for _, r := range raw {
+		c, ok := r.(map[string]any)
+		if !ok || c["status"] != "grounded" {
+			continue
+		}
+		if isStatement && c["relevant"] != true {
+			continue
+		}
+		survivors = append(survivors, c)
+		if q, ok := c["quote"].(string); ok {
+			quotes = append(quotes, q)
+		}
+	}
+	return survivors, quotes
 }
