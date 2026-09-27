@@ -6,5 +6,5 @@
     }
   },
   "expect": ["I sail the coastal routes."],
-  "absent": ["Not shown by the record", "Removed for lack of evidence", "Questions"]
+  "absent": ["Not shown by the record", "Removed for lack of evidence", "Answers to the questions asked"]
 }

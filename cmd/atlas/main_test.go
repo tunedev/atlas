@@ -72,7 +72,7 @@ func TestBuildRegistryRegistersTheJudgeTool(t *testing.T) {
 func TestBuildRegistryRegistersTheTailoringTools(t *testing.T) {
 	docs, index := testStore(t)
 	r := buildRegistry(config.Config{}, docs, index, feedsource.New(feedsource.Config{}))
-	for _, name := range []string{"text.spans", "span.resolve", "citations.judge", "claims.settle"} {
+	for _, name := range []string{"text.spans", "span.resolve", "citations.judge", "claims.settle", "items.cite"} {
 		if _, ok := r.Lookup(name); !ok {
 			t.Errorf("registry has no %s", name)
 		}

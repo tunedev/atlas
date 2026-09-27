@@ -72,6 +72,7 @@ func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index, source
 		tools.NewSpanResolve(),
 		tools.NewCitationsJudge(judge, docs, index),
 		tools.NewClaimsSettle(),
+		tools.NewItemsCite(),
 	)
 }
 

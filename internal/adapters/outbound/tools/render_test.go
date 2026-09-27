@@ -165,6 +165,17 @@ type packFixture struct {
 	Absent   []string        `json:"absent"`
 }
 
+// decodeFixture decodes a pack template fixture strictly: an unknown field
+// (a typo such as "befor" for "before") fails loudly instead of being
+// silently dropped.
+func decodeFixture(raw []byte) (packFixture, error) {
+	var fx packFixture
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	err := dec.Decode(&fx)
+	return fx, err
+}
+
 // TestPackTemplateFixturesRender renders every pack's testdata fixture
 // through render.run and checks its expect and absent strings. It knows
 // nothing about any pack's templates or vocabulary; a pack that adds a
@@ -180,10 +191,8 @@ func TestPackTemplateFixturesRender(t *testing.T) {
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			raw, err := os.ReadFile(path)
 			must(t, err)
-			var fx packFixture
-			dec := json.NewDecoder(bytes.NewReader(raw))
-			dec.DisallowUnknownFields()
-			must(t, dec.Decode(&fx))
+			fx, err := decodeFixture(raw)
+			must(t, err)
 
 			packDir := filepath.Dir(filepath.Dir(path)) // testdata/..
 			out := filepath.Join(t.TempDir(), "out.pdf")
@@ -220,11 +229,7 @@ func TestPackTemplateFixturesRender(t *testing.T) {
 // "befor" for "before", fails fixture decoding loudly rather than being
 // silently dropped.
 func TestPackFixtureRejectsAnUnknownField(t *testing.T) {
-	var fx packFixture
-	raw := []byte(`{"template":"t.typ","expect":["x"],"befor":["y"]}`)
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&fx); err == nil {
+	if _, err := decodeFixture([]byte(`{"template":"t.typ","expect":["x"],"befor":["y"]}`)); err == nil {
 		t.Error("want an error for the unknown field \"befor\"")
 	}
 }

@@ -9,7 +9,7 @@
 
 #let answers = t.at("answers", default: ())
 #if answers.len() > 0 [
-  == Questions
+  == Answers to the questions asked
   #for a in answers [
     === #a.question
     #let kept = a.sentences.filter(s => not s.gap)

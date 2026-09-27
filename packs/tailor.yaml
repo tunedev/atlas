@@ -1,6 +1,8 @@
 # Tailors application documents to one posting from the record. Every
 # statement about the candidate cites spans of the candidate's own text;
 # anything uncited or unsupported is listed as a gap, never written as fact.
+# Which requirements exist comes from the posting alone (the asked step), so
+# a requirement the model cannot support becomes a gap instead of vanishing.
 #   ATLAS_RENDER_TYPST=typst atlas -pack packs/tailor.yaml \
 #     -var store_root="$HOME/.atlas/workspace" -var subject_id=acme-backend \
 #     -var out_dir="$HOME/applications/acme" -var posting="$(cat posting.txt)"
@@ -30,23 +32,51 @@ steps:
     with:
       path: "{{ .vars.store_root }}/profile/history.json"
 
-  - id: requirements
+  - id: asked
     tool: extract.run
     with:
       text: |
-        Task: list each requirement the posting states. For each, cite the numbers of the
-        candidate's evidence spans that directly show the candidate meets it. Cite nothing
-        if no span shows it. Never guess.
+        Task: list every requirement the posting states, each as a verbatim quote copied from
+        the posting.
 
-        Candidate's evidence spans:
-        {{ .steps.spans.listing }}
         Posting:
         {{ .vars.posting }}
       schema: |
         {"type":"object","required":["requirements"],"additionalProperties":false,
          "properties":{"requirements":{"type":"array","items":{"type":"object",
-           "required":["text","spans"],"additionalProperties":false,
-           "properties":{"text":{"type":"string"},"spans":{"type":"array","items":{"type":"integer"}}}}}}}
+           "required":["quote"],"additionalProperties":false,
+           "properties":{"quote":{"type":"string"}}}}}}
+
+  - id: asked_ground
+    tool: quote.ground
+    with:
+      fields: "{{ json .steps.asked.fields }}"
+      source: "{{ .vars.posting }}"
+
+  - id: requirements
+    tool: extract.run
+    with:
+      text: |
+        Task: for each numbered requirement below, cite the numbers of the candidate's evidence
+        spans that directly show the candidate meets it. Cite nothing if no span shows it. Never
+        guess. Name every requirement's number exactly once, even when its spans list is empty.
+
+        Candidate's evidence spans:
+        {{ .steps.spans.listing }}
+        Requirements:
+        {{ range $i, $r := .steps.asked_ground.fields.requirements }}[{{ $i }}] {{ $r.quote }}
+        {{ end }}
+      schema: |
+        {"type":"object","required":["cited"],"additionalProperties":false,
+         "properties":{"cited":{"type":"array","items":{"type":"object",
+           "required":["item","spans"],"additionalProperties":false,
+           "properties":{"item":{"type":"integer"},"spans":{"type":"array","items":{"type":"integer"}}}}}}}
+
+  - id: cite_items
+    tool: items.cite
+    with:
+      items: "{{ json .steps.asked_ground.fields.requirements }}"
+      cited: "{{ json .steps.requirements.fields.cited }}"
 
   - id: bullets
     tool: extract.run
@@ -69,16 +99,23 @@ steps:
     tool: extract.run
     with:
       text: |
-        Task: write a short letter of application of about six sentences, and answer each of
-        the posting's questions. Every sentence about the candidate must cite the numbers of
-        the evidence spans that support it. Do not write a sentence the spans do not support.
+        Task: write a short letter of application of about six sentences. Every sentence about
+        the candidate must cite the numbers of the evidence spans that support it. Do not write
+        a sentence the spans do not support.
+        {{ if .vars.questions }}
+        Also answer each of the posting's questions below, citing spans the same way.
+        {{ else }}
+        No questions are listed below. Return an empty answers list.
+        {{ end }}
 
         Candidate's evidence spans:
         {{ .steps.spans.listing }}
         Posting:
         {{ .vars.posting }}
+        {{ if .vars.questions }}
         Questions:
         {{ .vars.questions }}
+        {{ end }}
       schema: |
         {"type":"object","required":["letter","answers"],"additionalProperties":false,
          "properties":{
@@ -93,7 +130,7 @@ steps:
     tool: span.resolve
     with:
       fields: |
-        {"requirements": {{ json .steps.requirements.fields.requirements }},
+        {"requirements": {{ json .steps.cite_items.items }},
          "bullets": {{ json .steps.bullets.fields.bullets }},
          "letter": {{ json .steps.letter.fields.letter }},
          "answers": {{ json .steps.letter.fields.answers }}}
@@ -145,5 +182,5 @@ steps:
       output: "{{ .vars.out_dir }}/letter.pdf"
       expect: "{{ json .steps.settle.kept.letter }}"
       before: |
-        Questions
+        Answers to the questions asked
         Removed for lack of evidence
