@@ -1,12 +1,14 @@
 package pidlock_test
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tunedev/atlas/internal/pidlock"
 )
@@ -39,19 +41,61 @@ func TestAcquireWritesThePidAndReleaseRemovesIt(t *testing.T) {
 	}
 }
 
+// blockEnv makes TestHelperBlock block, so a re-run of this test binary
+// stands in for another live process.
+const blockEnv = "PIDLOCK_HELPER_BLOCK"
+
+func TestHelperBlock(t *testing.T) {
+	if os.Getenv(blockEnv) != "1" {
+		t.Skip("helper process only")
+	}
+	time.Sleep(time.Minute)
+}
+
+// liveOtherPid starts a process that stays running until the test ends.
+func liveOtherPid(t *testing.T) int {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperBlock$")
+	cmd.Env = append(os.Environ(), blockEnv+"=1")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start helper: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	return cmd.Process.Pid
+}
+
 func TestALiveHolderIsRefusedByPid(t *testing.T) {
 	path := lockPath(t)
-	live := strconv.Itoa(os.Getpid())
+	live := strconv.Itoa(liveOtherPid(t))
 	if err := os.WriteFile(path, []byte(live+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	_, err := pidlock.Acquire(path)
-	if err == nil || !strings.Contains(err.Error(), live) {
-		t.Fatalf("err = %v, want a refusal naming pid %s", err, live)
+	want := fmt.Sprintf("pidlock: %s is held by running process %s; if %s is not atlas, delete %s", path, live, live, path)
+	if err == nil || err.Error() != want {
+		t.Fatalf("err = %v, want %q", err, want)
 	}
 	if got := holder(t, path); got != live {
 		t.Errorf("a refused Acquire changed the lock to %q", got)
 	}
+}
+
+// A restarted container runs as the same pid it had before, so a lock
+// holding this process's own pid was left by an earlier life of it.
+func TestALockHoldingOurOwnPidIsReclaimed(t *testing.T) {
+	path := lockPath(t)
+	own := strconv.Itoa(os.Getpid())
+	if err := os.WriteFile(path, []byte(own+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	l, err := pidlock.Acquire(path)
+	if err != nil {
+		t.Fatalf("Acquire over a lock holding our own pid: %v", err)
+	}
+	_ = l.Release()
 }
 
 func TestADeadHoldersLockIsReclaimed(t *testing.T) {

@@ -1,7 +1,7 @@
 // Package pidlock keeps one process at a time working in a directory. A lock
 // is a file holding its owner's pid. A lock whose owner is no longer running,
-// or whose content is not a pid, is stale and is taken over rather than left
-// for a person to delete.
+// whose owner is this process's own pid, or whose content is not a pid, is
+// stale and is taken over rather than left for a person to delete.
 package pidlock
 
 import (
@@ -20,8 +20,9 @@ type Lock struct {
 }
 
 // Acquire takes the lock at path for this process. It fails, naming the pid,
-// when a running process holds it, including this one. A stale lock is
-// removed and taken.
+// when another running process holds it. A stale lock is removed and taken;
+// a lock holding this process's own pid is stale, since a process restarted
+// under the same pid (a container's pid 1) is what leaves one.
 func Acquire(path string) (*Lock, error) {
 	pid := os.Getpid()
 	for range 2 {
@@ -32,8 +33,8 @@ func Acquire(path string) (*Lock, error) {
 		if !errors.Is(err, fs.ErrExist) {
 			return nil, fmt.Errorf("pidlock: %w", err)
 		}
-		if holder, ok := readPid(path); ok && alive(holder) {
-			return nil, fmt.Errorf("pidlock: %s is held by running process %d", path, holder)
+		if holder, ok := readPid(path); ok && holder != pid && alive(holder) {
+			return nil, fmt.Errorf("pidlock: %s is held by running process %d; if %d is not atlas, delete %s", path, holder, holder, path)
 		}
 		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return nil, fmt.Errorf("pidlock: remove stale lock %s: %w", path, err)
