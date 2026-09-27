@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"go.opentelemetry.io/otel"
@@ -28,9 +30,24 @@ import (
 	"github.com/tunedev/atlas/internal/adapters/outbound/typstconv"
 	"github.com/tunedev/atlas/internal/config"
 	"github.com/tunedev/atlas/internal/core/app"
+	"github.com/tunedev/atlas/internal/core/domain"
 	"github.com/tunedev/atlas/internal/core/ports"
+	"github.com/tunedev/atlas/internal/pidlock"
 	"github.com/tunedev/atlas/internal/telemetry"
 )
+
+// storeLockName is the lock file, inside Store.Root, that keeps one atlas
+// process at a time working in a store.
+const storeLockName = ".atlas.lock"
+
+// progressPrinter writes one line to w as each step starts and finishes, so
+// a long step reads as running rather than hung. A failure's cause is left
+// to the error run() returns.
+func progressPrinter(w io.Writer) func(domain.StepEvent) {
+	return func(e domain.StepEvent) {
+		fmt.Fprintf(w, "atlas: step %s (%s) %s\n", e.StepID, e.Tool, e.Status)
+	}
+}
 
 func main() {
 	if err := run(); err != nil {
@@ -188,6 +205,22 @@ func run() error {
 		return err
 	}
 
+	// One process at a time works in a store; the lock is taken before
+	// anything opens it, and a lock left by a process that has exited is
+	// reclaimed.
+	if err := os.MkdirAll(cfg.Store.Root, 0o755); err != nil {
+		return fmt.Errorf("store root: %w", err)
+	}
+	lock, err := pidlock.Acquire(filepath.Join(cfg.Store.Root, storeLockName))
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := lock.Release(); err != nil {
+			fmt.Fprintf(os.Stderr, "atlas: %v\n", err)
+		}
+	}()
+
 	shutdown, err := telemetry.Init(ctx, cfg)
 	if err != nil {
 		return err
@@ -272,7 +305,7 @@ func run() error {
 	// SDK no-op otherwise. Obtaining it before Init runs would capture the
 	// no-op provider that is installed at startup.
 	tracer := otel.Tracer("github.com/tunedev/atlas")
-	runner := app.NewRunner(registry).WithTracer(tracer)
+	runner := app.NewRunner(registry).WithTracer(tracer).WithProgress(progressPrinter(os.Stderr))
 
 	state, err := runner.Run(ctx, blueprint)
 	if err != nil {
