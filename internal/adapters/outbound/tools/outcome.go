@@ -34,13 +34,16 @@ func (t *Outcome) Invoke(ctx context.Context, with map[string]string) (any, erro
 	}
 	o := app.Outcome{State: with["state"], When: when, Note: with["note"]}
 
-	attached := []string{path}
+	var attached []string
 	if subject != "" {
 		attached, err = app.AttachOutcomeForSubject(ctx, t.docs, t.index, subject, o)
-	} else {
-		_, err = app.AttachOutcome(ctx, t.docs, t.index, path, o)
+	} else if _, err = app.AttachOutcome(ctx, t.docs, t.index, path, o); err == nil {
+		attached = []string{path}
 	}
 	if err != nil {
+		if len(attached) > 0 {
+			return nil, fmt.Errorf("judge.outcome: attached to %v before failing: %w", attached, err)
+		}
 		return nil, fmt.Errorf("judge.outcome: %w", err)
 	}
 	return map[string]any{"attached": attached, "state": o.State}, nil

@@ -109,6 +109,52 @@ func TestTheOutcomeToolRefusesAmbiguousOrIncompleteInput(t *testing.T) {
 	}
 }
 
+// TestTheOutcomeToolNamesWhatAttachedBeforeAPartialFailure corrupts the
+// second of two judgements of the same subject so AttachOutcomeForSubject
+// fails partway through, and checks the tool's error names the path that
+// did attach.
+func TestTheOutcomeToolNamesWhatAttachedBeforeAPartialFailure(t *testing.T) {
+	ctx := context.Background()
+	docs, index := store(t)
+	base := time.Date(2026, 9, 27, 9, 0, 0, 0, time.UTC)
+	first, err := app.RecordJudgement(ctx, docs, index, "a", rainQ, weatherJudgement("a", 0.5, base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := app.RecordJudgement(ctx, docs, index, "a", rainQ, weatherJudgement("a", 0.5, base.Add(time.Minute)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := docs.Put(ctx, second, []byte("not json"), "corrupt"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = tools.NewOutcome(docs, index).Invoke(ctx, map[string]string{"subject_id": "a", "state": "wet"})
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	want := fmt.Sprintf("judge.outcome: attached to [%s] before failing: ", first)
+	if !strings.HasPrefix(err.Error(), want) {
+		t.Errorf("err = %q, want prefix %q", err.Error(), want)
+	}
+	rows, err := index.Find(ctx, ports.Query{Kind: "judgement", Match: map[string]string{"subject_id": "a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, r := range rows {
+		if r.Path == first {
+			found = true
+			if r.Fields["outcome"] != "wet" {
+				t.Errorf("first outcome = %q, want wet", r.Fields["outcome"])
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no row for %s", first)
+	}
+}
+
 func TestTheAgreementToolReportsACount(t *testing.T) {
 	docs, index := store(t)
 	ctx := context.Background()
