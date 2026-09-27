@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -97,6 +98,27 @@ const twoClaimsGroundedFields = `{"claims":[
  {"text":"keeps a ship log","citations":[{"id":0,"quote":"Logged every passing ship","status":"grounded"}]},
  {"text":"refits the lamp","citations":[{"id":1,"quote":"Refitted the lamp lens","status":"grounded"}]}
 ]}`
+
+// An item's sentence is judged as an answer to its item: the subject is the
+// item's text, then the sentence. A sentence with no item is judged alone.
+func TestCitationsJudgeAsksAboutAnItemsSentenceWithItsItem(t *testing.T) {
+	docs, index := store(t)
+	j := &relevanceJudge{yes: []string{"ship"}}
+	grounded := `[{"id":0,"quote":"Logged every passing ship","status":"grounded"}]`
+	_, err := tools.NewCitationsJudge(j, docs, index).Invoke(context.Background(), map[string]string{
+		"fields": `{"said":{
+		  "sentences":[{"text":"I kept the log.","citations":` + grounded + `}],
+		  "answers":[{"item":"Can you keep a log?","sentences":[{"text":"Yes, nightly.","citations":` + grounded + `}]}]}}`,
+		"threshold": "0.6", "subject_id": "keeper",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"Can you keep a log?\nYes, nightly.", "I kept the log."}
+	if !reflect.DeepEqual(j.subjects, want) {
+		t.Errorf("subjects %q; want %q", j.subjects, want)
+	}
+}
 
 func TestJudgeErrorFailsTheStepAndMarksNothingRelevant(t *testing.T) {
 	docs, index := store(t)

@@ -75,8 +75,17 @@ func (c *CitationsJudge) Invoke(ctx context.Context, with map[string]string) (an
 
 // walkClaims calls fn for every object with a non-empty string "text" and a
 // "citations" list, in a fixed order, after marking every citation not
-// relevant; questionsFor and markRelevance then set the ones judged.
+// relevant; questionsFor and markRelevance then set the ones judged. fn gets
+// the claim's subject: its text, or, for a claim in a list under an object
+// with a non-empty string "item", that item, a newline, then its text, so an
+// answer is judged as an answer to its item.
 func walkClaims(v any, fn func(string, []map[string]any)) {
+	walkUnder(v, "", fn)
+}
+
+// walkUnder walks v, where item is the "item" of the object whose list
+// holds v, or "".
+func walkUnder(v any, item string, fn func(string, []map[string]any)) {
 	switch val := v.(type) {
 	case map[string]any:
 		text, _ := val["text"].(string)
@@ -88,21 +97,34 @@ func walkClaims(v any, fn func(string, []map[string]any)) {
 					cites = append(cites, m)
 				}
 			}
-			fn(text, cites)
+			fn(subjectOf(item, text), cites)
 		}
+		own, _ := val["item"].(string)
 		keys := make([]string, 0, len(val))
 		for k := range val {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			walkClaims(val[k], fn)
+			if _, isList := val[k].([]any); isList {
+				walkUnder(val[k], own, fn)
+				continue
+			}
+			walkUnder(val[k], "", fn)
 		}
 	case []any:
 		for _, e := range val {
-			walkClaims(e, fn)
+			walkUnder(e, item, fn)
 		}
 	}
+}
+
+// subjectOf is text, preceded by item and a newline when item is non-empty.
+func subjectOf(item, text string) string {
+	if item == "" {
+		return text
+	}
+	return item + "\n" + text
 }
 
 // questionsFor builds one noul question per grounded citation, returning the
