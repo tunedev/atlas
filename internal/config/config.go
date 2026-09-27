@@ -116,7 +116,8 @@ type CrawlConfig struct {
 // crawler may be configured with.
 const minCrawlDelay = time.Second
 
-// identified reports whether a user agent names a contact.
+// identified reports whether a user agent looks like it names a contact: it
+// carries a URL or an "@". It is a nudge toward naming one, not proof of one.
 func identified(ua string) bool {
 	return strings.Contains(ua, "http://") || strings.Contains(ua, "https://") || strings.Contains(ua, "@")
 }

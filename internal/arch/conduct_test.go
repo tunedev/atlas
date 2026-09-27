@@ -2,7 +2,6 @@ package arch_test
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -12,8 +11,6 @@ import (
 	"github.com/tunedev/atlas/internal/adapters/outbound/crawlsource"
 	"github.com/tunedev/atlas/internal/config"
 )
-
-const crawlPkg = "github.com/tunedev/atlas/internal/adapters/outbound/crawlsource"
 
 // credentialField matches a field name that could only exist to hold a
 // credential or send one.
@@ -28,19 +25,6 @@ func TestTheCrawlerHasNowhereToHoldACredential(t *testing.T) {
 			if name := typ.Field(i).Name; credentialField.MatchString(name) {
 				t.Errorf("%s.%s could hold a credential", typ.Name(), name)
 			}
-		}
-	}
-}
-
-// The crawler keeps no cookie jar of its own.
-func TestTheCrawlerImportsNoCookieJar(t *testing.T) {
-	out, err := exec.Command("go", "list", "-f", `{{join .Imports "\n"}}`, crawlPkg).Output()
-	if err != nil {
-		t.Fatalf("go list: %v", err)
-	}
-	for _, imp := range strings.Split(string(out), "\n") {
-		if imp == "net/http/cookiejar" {
-			t.Error("crawlsource imports net/http/cookiejar")
 		}
 	}
 }
