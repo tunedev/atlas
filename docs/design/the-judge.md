@@ -79,6 +79,14 @@ answers every question, so answers about the same subject cannot contradict
 each other, and the schema is what makes an out-of-schema answer impossible
 rather than merely unlikely.
 
+Each question line also names its options, `id: ask (one of: a, b, c)`, and a noul with no
+options of its own names `yes, no`. This is not decoration. The alternatives an answer's mass
+is read from are the engine's distribution before the schema's grammar applies, so an engine
+never told the options answers in its own words. Measured on 40 real subjects with
+`qwen2.5-coder:7b`, a five-option choice question read coverage 0.00 on all 40 with its
+options only in the schema, and 0.81 with the same options named in the question line
+(`docs/specs/2026-09-27-epic-7-fit.md`).
+
 `internal/adapters/outbound/openaiprov/judge_live_test.go` proves this
 against a real engine (story 3.3): the subject text itself carries an
 embedded instruction ordering the model to answer one question with a word

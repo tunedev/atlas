@@ -658,3 +658,18 @@ func TestCoverageReportsFullRepresentation(t *testing.T) {
 		t.Errorf("declared = %d, want 5", focus.Coverage.Declared)
 	}
 }
+
+func TestThePromptNamesEveryQuestionsOptions(t *testing.T) {
+	p := &recordingProvider{completion: twoAnswers()}
+	if _, err := app.NewJudge(p, testJudgeConfig()).Ask(context.Background(), "a novel", judgeQuestions()); err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+	for _, want := range []string{
+		"readable: Is it readable? (one of: yes, no)",
+		"length: How long is it? (one of: short, medium, long)",
+	} {
+		if !strings.Contains(p.last.User, want) {
+			t.Errorf("prompt lacks %q:\n%s", want, p.last.User)
+		}
+	}
+}

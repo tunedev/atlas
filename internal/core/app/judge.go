@@ -92,17 +92,18 @@ func (j *Judge) promptFor(subject string, qs []ports.Question, schema []byte) po
 	}
 }
 
-// promptUserMessage names the subject, then every question's id and text.
+// promptUserMessage names the subject, then every question's id, text and
+// options. The options must be in the text: the alternatives an answer's
+// mass is read from are the engine's distribution before the schema's
+// grammar applies, so an engine never told the options answers in its own
+// words and none of them is represented.
 func promptUserMessage(subject string, qs []ports.Question) string {
 	var sb strings.Builder
 	sb.WriteString("Subject: ")
 	sb.WriteString(subject)
 	sb.WriteString("\n\n")
 	for _, q := range qs {
-		sb.WriteString(q.ID)
-		sb.WriteString(": ")
-		sb.WriteString(q.Ask)
-		sb.WriteString("\n")
+		fmt.Fprintf(&sb, "%s: %s (one of: %s)\n", q.ID, q.Ask, strings.Join(OptionsFor(q), ", "))
 	}
 	return sb.String()
 }
