@@ -187,6 +187,24 @@ questions block into `[]ports.Question`, calls `Judge.Ask`, then
 the path written, under the key `"path"` — reserved, so a pack cannot name a
 question `path` and collide with it.
 
+## Judging many subjects: judge.each
+
+`tools.JudgeEach` (`judge.each`) scores every item a `ports.Source` selects, one `Judge.Ask`
+call per item, one item at a time: concurrency measured no faster on this engine, and
+sustained parallel load once wedged it. For each item it renders `subject_id` and `subject`
+from per-item templates, then fingerprints the rendered subject together with the question
+set, the loaded rules, each mapped rule field's resolved value, and the model name
+(`app.Fingerprint`). An item whose subject id and fingerprint are both already recorded is
+reused: its stored judgement is re-assessed, not re-asked. A run's rules (optional, a `Docs`
+path) split in two: comparable rules are checked in code against a mapped field of the item's
+own document; judged rules are asked as an extra yes/no question in the same call. Either kind
+reports `tripped`, `clear`, or `unknown` (a missing field, never a false trip) — rules flag a
+verdict, they never override it. A subject at risk of truncation is refused by the judge
+itself (above), and that item becomes an error row rather than aborting the run.
+
+See `docs/specs/2026-09-27-epic-7-fit.md` for the live measurements: reuse cost, and the
+several-roles-per-call scaling test.
+
 ## Known gaps
 
 - Two options that merely share a leading character can fail a call. The

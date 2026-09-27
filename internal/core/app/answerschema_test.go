@@ -2,9 +2,13 @@ package app_test
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
+	"github.com/tunedev/atlas/internal/adapters/inbound/packfile"
 	"github.com/tunedev/atlas/internal/core/app"
 	"github.com/tunedev/atlas/internal/core/ports"
 )
@@ -149,23 +153,72 @@ func TestShippedPackOptionSetsPassValidation(t *testing.T) {
 	}
 }
 
-// TestAShippedPackScoreWithSharedInitialsIsNowRejected documents a real
-// defect the new guard surfaces in a shipped pack's own "seniority"
-// question: levels [junior, mid, senior, staff], where "senior" and "staff"
-// share the initial "s". Fixing the pack itself is a separate task (owned
-// elsewhere); this records that the guard correctly rejects the levels as
-// they are written today.
-func TestAShippedPackScoreWithSharedInitialsIsNowRejected(t *testing.T) {
-	qs := []ports.Question{
-		{ID: "seniority", Kind: ports.KindScore, Ask: "?", Options: []string{"junior", "mid", "senior", "staff"}},
+// TestEveryShippedJudgeEachPackPassesValidation loads every pack under
+// packs/, decodes the questions block of each judge.each step exactly as the
+// pack YAML shapes it (id, type, ask, options, levels), and asserts
+// app.AnswerSchema accepts the whole set. It fails if a shipped pack's
+// option set shares an initial, which is exactly how a shipped pack's
+// "seniority" levels once failed before its rewrite for this task.
+func TestEveryShippedJudgeEachPackPassesValidation(t *testing.T) {
+	paths, err := filepath.Glob("../../../packs/*.yaml")
+	if err != nil {
+		t.Fatalf("glob packs: %v", err)
 	}
-	_, err := app.AnswerSchema(qs)
-	if err == nil {
-		t.Fatal("a shipped pack's seniority levels, where senior and staff share an initial, produced a schema")
+	if len(paths) == 0 {
+		t.Fatal("no shipped packs found")
 	}
-	if !strings.Contains(err.Error(), "senior") || !strings.Contains(err.Error(), "staff") {
-		t.Errorf("error does not name both colliding levels: %v", err)
+	checked := 0
+	for _, path := range paths {
+		b, err := packfile.Load(path)
+		if err != nil {
+			t.Fatalf("load %s: %v", path, err)
+		}
+		for _, s := range b.Steps {
+			if s.Tool != "judge.each" {
+				continue
+			}
+			qs := decodePackQuestions(t, s.With["questions"])
+			if len(qs) == 0 {
+				t.Fatalf("%s step %q declares no questions", path, s.ID)
+			}
+			if _, err := app.AnswerSchema(qs); err != nil {
+				t.Errorf("%s step %q: a shipped pack's own questions were rejected: %v", path, s.ID, err)
+			}
+			checked++
+		}
 	}
+	if checked == 0 {
+		t.Fatal("no shipped pack has a judge.each step; this test proves nothing")
+	}
+}
+
+// packQuestion is one question as a pack's YAML questions block shapes it.
+type packQuestion struct {
+	ID      string   `yaml:"id"`
+	Type    string   `yaml:"type"`
+	Ask     string   `yaml:"ask"`
+	Options []string `yaml:"options"`
+	Levels  []string `yaml:"levels"`
+}
+
+// decodePackQuestions decodes a pack's raw questions block into
+// ports.Question, mirroring how tools.Judge's own unexported parser reads
+// the same YAML shape (options and levels both become a question's Options).
+func decodePackQuestions(t *testing.T, raw string) []ports.Question {
+	t.Helper()
+	var specs []packQuestion
+	if err := yaml.Unmarshal([]byte(raw), &specs); err != nil {
+		t.Fatalf("decode questions block: %v", err)
+	}
+	qs := make([]ports.Question, len(specs))
+	for i, s := range specs {
+		options := s.Options
+		if len(s.Levels) > 0 {
+			options = s.Levels
+		}
+		qs[i] = ports.Question{ID: s.ID, Kind: ports.Kind(s.Type), Ask: s.Ask, Options: options}
+	}
+	return qs
 }
 
 // TestNoulDefaultsPassValidation proves the guard does not reject a noul's
