@@ -182,3 +182,30 @@ func TestARenderResolvesLinksAgainstThePageItLandedOnLive(t *testing.T) {
 		t.Errorf("link = %s, want %s", got, want)
 	}
 }
+
+// TestARenderNeverSendsACookieBackLive is skipped unless ATLAS_LIVE_BROWSER
+// is set and a browser is installed.
+func TestARenderNeverSendsACookieBackLive(t *testing.T) {
+	liveBrowser(t)
+	srv, log := recordedSite(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/start":
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "s1", Path: "/"})
+			http.Redirect(w, r, "/events", http.StatusFound)
+		case "/events":
+			io.WriteString(w, `<html><body><ul><li class="event"><a href="/events/1">more</a></li></ul>`+
+				`<img src="/pixel.gif"><script>fetch("/xhr")</script></body></html>`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	renderOne(t, srv.URL+"/start")
+	if log.count("/events") != 1 {
+		t.Fatalf("/events requested %d times, want 1", log.count("/events"))
+	}
+	for _, h := range log.all() {
+		if h.Cookie != "" {
+			t.Errorf("%s carried Cookie %q", h.Path, h.Cookie)
+		}
+	}
+}

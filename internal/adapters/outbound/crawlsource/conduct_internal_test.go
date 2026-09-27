@@ -61,9 +61,7 @@ func (l *siteLog) count(path string) int {
 // listed answers 404.
 func site(t *testing.T, routes map[string]string) (*httptest.Server, *siteLog) {
 	t.Helper()
-	log := &siteLog{}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.record(r)
+	return recordedSite(t, func(w http.ResponseWriter, r *http.Request) {
 		body, ok := routes[r.URL.Path]
 		if !ok {
 			http.NotFound(w, r)
@@ -71,6 +69,16 @@ func site(t *testing.T, routes map[string]string) (*httptest.Server, *siteLog) {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		io.WriteString(w, body)
+	})
+}
+
+// recordedSite serves h and records every request.
+func recordedSite(t *testing.T, h http.HandlerFunc) (*httptest.Server, *siteLog) {
+	t.Helper()
+	log := &siteLog{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.record(r)
+		h(w, r)
 	}))
 	t.Cleanup(srv.Close)
 	return srv, log

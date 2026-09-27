@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -29,10 +30,12 @@ type browser interface {
 // chrome renders a page in a browser already installed on this machine,
 // found by lookPath. It never downloads one: every launcher is given Bin,
 // which turns Rod's download off. Each render uses a fresh temporary
-// profile, so no cookie of the user's reaches a site, and overrides the
-// browser's user agent with the crawler's. Only the page's own navigation
-// passes the Conduct, and the URL it ends on is checked against robots.txt;
-// what the page then loads, the browser fetches itself.
+// profile that blocks every cookie, so neither a cookie of the user's nor
+// one the site sets is sent, and overrides the browser's user agent with the
+// crawler's. Only the page's own navigation passes the Conduct. The URL a
+// redirect ends on is checked against robots.txt after the browser has
+// requested it, so a disallowed landing page fails the render but has been
+// fetched once; what the page then loads, the browser fetches itself.
 type chrome struct {
 	cfg      Config
 	conduct  *Conduct
@@ -56,6 +59,9 @@ func (c chrome) render(ctx context.Context, u *url.URL) (string, *url.URL, error
 		return "", nil, fmt.Errorf("make a profile: %w", err)
 	}
 	defer os.RemoveAll(profile)
+	if err := blockCookies(profile); err != nil {
+		return "", nil, fmt.Errorf("make a profile: %w", err)
+	}
 	l := launcher.New().Bin(bin).UserDataDir(profile).Headless(true).Context(ctx)
 	control, err := l.Launch()
 	if err != nil {
@@ -110,6 +116,20 @@ func (c chrome) render(ctx context.Context, u *url.URL) (string, *url.URL, error
 		return "", nil, err
 	}
 	return html, final, nil
+}
+
+// cookiesBlocked is a Chrome profile's Preferences with every site's cookies
+// blocked: content setting 2 is "block".
+const cookiesBlocked = `{"profile":{"default_content_setting_values":{"cookies":2}}}`
+
+// blockCookies writes a Preferences file into the Chrome profile at dir that
+// blocks every cookie, so a site's cookie is neither stored nor sent back.
+func blockCookies(dir string) error {
+	def := filepath.Join(dir, "Default")
+	if err := os.MkdirAll(def, 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(def, "Preferences"), []byte(cookiesBlocked), 0o600)
 }
 
 // boundHTML returns html, or fails when it is longer than max bytes.
