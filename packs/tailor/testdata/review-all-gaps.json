@@ -1,0 +1,33 @@
+{
+  "template": "review.typ",
+  "data": {
+    "tailored": {
+      "requirements": [
+        {"text": "sails ships", "citations": [], "gap": true},
+        {"text": "keeps a log", "citations": [{"quote": "Logged"}], "gap": false}
+      ],
+      "bullets": [{"citations": [], "gap": true}],
+      "letter": {
+        "sentences": [
+          {"text": "I sail ships.", "citations": [], "gap": true},
+          {"text": "I kept the log.", "citations": [{"quote": "Logged"}], "gap": false}
+        ],
+        "answers": [
+          {"item": "Can you sail?", "sentences": [{"text": "Yes, for ten years.", "citations": [], "gap": true}]},
+          {"item": "Can you read a chart?", "sentences": [{"text": "", "citations": [], "gap": true}]},
+          {"item": "Can you trim a wick?", "sentences": [{"text": "I trimmed the wicks nightly.", "citations": [{"quote": "trimmed"}], "gap": false}]}
+        ]
+      }
+    },
+    "dropped": {"requirements": 2}
+  },
+  "expect": [
+    "Requirements not shown by the record", "sails ships",
+    "Letter sentences removed for lack of evidence", "I sail ships.",
+    "Questions not answered by the record", "Can you sail?", "Can you read a chart?",
+    "Answer sentences removed for lack of evidence", "Yes, for ten years.",
+    "Requirements dropped as not verbatim in the posting: 2",
+    "Bullets dropped for lack of evidence: 1"
+  ],
+  "absent": ["Questions dropped", "keeps a log", "I kept the log.", "Can you trim a wick?", "I trimmed the wicks nightly."]
+}

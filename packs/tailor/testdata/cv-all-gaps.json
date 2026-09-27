@@ -1,0 +1,12 @@
+{
+  "template": "cv.typ",
+  "data": {
+    "history": {"entries": []},
+    "tailored": {
+      "requirements": [{"text": "sails ships", "citations": [], "gap": true}],
+      "bullets": [{"citations": [], "gap": true}]
+    }
+  },
+  "expect": ["Experience", "Selected work"],
+  "absent": ["sails ships", "Not shown by the record"]
+}

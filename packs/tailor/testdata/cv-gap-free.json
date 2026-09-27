@@ -1,0 +1,17 @@
+{
+  "template": "cv.typ",
+  "data": {
+    "history": {
+      "entries": [
+        {"title": "Keeper", "employer": "Lighthouse Board", "start": "2019", "end": null, "ongoing": true, "status": "grounded"},
+        {"title": "Deckhand", "employer": "Harbour Ferries", "start": "2015", "end": "2018", "status": "grounded"}
+      ]
+    },
+    "tailored": {
+      "requirements": [{"text": "sails ships", "citations": [{"quote": "Sailed"}], "gap": false}],
+      "bullets": [{"citations": [{"quote": "Kept the light burning through the storm"}], "gap": false}]
+    }
+  },
+  "expect": ["Keeper, Lighthouse Board", "2019 – present", "Deckhand, Harbour Ferries", "2015 – 2018", "Kept the light burning through the storm"],
+  "absent": ["sails ships"]
+}

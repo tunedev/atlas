@@ -108,6 +108,13 @@ func normaliseText(s string) string {
 	return strings.Join(strings.Fields(strings.ToLower(s)), " ")
 }
 
+// Normalise exposes the same lowercasing and whitespace collapsing Ground
+// and Annotate compare quotes against, for a caller that must locate a
+// substring in the identical normalised space Ground searches.
+func Normalise(s string) string {
+	return normaliseText(s)
+}
+
 // escapePointer escapes a key as one RFC 6901 JSON Pointer segment.
 func escapePointer(k string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(k, "~", "~0"), "/", "~1")

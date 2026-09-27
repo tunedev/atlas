@@ -663,3 +663,15 @@ func TestAgentEnvDropsAtlasVariables(t *testing.T) {
 		t.Errorf("env %v", got)
 	}
 }
+
+func TestRenderIsOffByDefaultAndValidatedWhenOn(t *testing.T) {
+	cfg, err := config.Load([]string{"-pack", "p.yaml"})
+	if err != nil || cfg.Render.TypstPath != "" {
+		t.Fatalf("default render %+v, %v", cfg.Render, err)
+	}
+	t.Setenv("ATLAS_RENDER_TYPST", "typst")
+	t.Setenv("ATLAS_RENDER_TIMEOUT", "0s")
+	if _, err := config.Load([]string{"-pack", "p.yaml"}); err == nil {
+		t.Error("a zero render timeout was accepted while rendering is on")
+	}
+}

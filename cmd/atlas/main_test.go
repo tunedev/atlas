@@ -88,6 +88,27 @@ func TestBuildRegistryRegistersTheJudgeTool(t *testing.T) {
 	}
 }
 
+func TestBuildRegistryRegistersTheTailoringTools(t *testing.T) {
+	docs, index := testStore(t)
+	r := buildRegistry(config.Config{}, docs, index, feedsource.New(feedsource.Config{}), testCrawler(t))
+	for _, name := range []string{"text.spans", "span.resolve", "citations.judge", "claims.settle", "items.cite", "items.gather", "text.lines"} {
+		if _, ok := r.Lookup(name); !ok {
+			t.Errorf("registry has no %s", name)
+		}
+	}
+}
+
+func TestRenderConfiguredButAbsentFailsAtStartup(t *testing.T) {
+	cfg := config.Config{}
+	cfg.Render.TypstPath = filepath.Join(t.TempDir(), "no-such-typst")
+	cfg.Render.Timeout = time.Second
+	cfg.Render.MaxBytes = 1 << 20
+	_, err := startRender(cfg)
+	if err == nil || !strings.Contains(err.Error(), "no-such-typst") {
+		t.Errorf("err = %v", err)
+	}
+}
+
 // A hardcoded timeout and a configured one behave identically against a fast
 // endpoint, so the property is checked structurally: buildRegistry and
 // startAgent must pass configured values through and never a literal of
@@ -98,7 +119,7 @@ func TestCompositionPassesNoLiterals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse main.go: %v", err)
 	}
-	for _, name := range []string{"buildRegistry", "startAgent"} {
+	for _, name := range []string{"buildRegistry", "startAgent", "startRender"} {
 		found := false
 		for _, decl := range f.Decls {
 			fn, ok := decl.(*ast.FuncDecl)

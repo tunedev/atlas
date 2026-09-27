@@ -158,6 +158,10 @@ func defaults() Config {
 			Temperature: 0,
 			MaxTokens:   4096,
 		},
+		Render: RenderConfig{
+			Timeout:  60 * time.Second,
+			MaxBytes: 20 * 1024 * 1024,
+		},
 		Crawl: CrawlConfig{
 			UserAgent:     "atlas-crawler/0.1 (+https://github.com/tunedev/atlas)",
 			Delay:         2 * time.Second,
@@ -444,6 +448,23 @@ func applyEnv(c *Config) error {
 		}
 		c.Permission.SummaryBytes = n
 	}
+	if v := os.Getenv("ATLAS_RENDER_TYPST"); v != "" {
+		c.Render.TypstPath = v
+	}
+	if v := os.Getenv("ATLAS_RENDER_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_RENDER_TIMEOUT: invalid duration %q: %w", v, err)
+		}
+		c.Render.Timeout = d
+	}
+	if v := os.Getenv("ATLAS_RENDER_MAX_BYTES"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_RENDER_MAX_BYTES: invalid integer %q: %w", v, err)
+		}
+		c.Render.MaxBytes = n
+	}
 	return nil
 }
 
@@ -518,6 +539,7 @@ func applyFlags(c *Config, args []string) error {
 		c.Permission.Rules = rules
 		return nil
 	})
+	fs.StringVar(&c.Render.TypstPath, "render-typst", c.Render.TypstPath, "typst binary to render documents with; empty disables rendering")
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("config: parse flags: %w", err)
 	}

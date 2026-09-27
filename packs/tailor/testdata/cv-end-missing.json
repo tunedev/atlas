@@ -1,0 +1,14 @@
+{
+  "template": "cv.typ",
+  "data": {
+    "history": {
+      "entries": [
+        {"title": "Keeper", "employer": "Lighthouse Board", "start": "2019-04", "status": "grounded"},
+        {"title": "Lamp tender", "employer": "Harbour Board", "start": "2017", "end": null, "ongoing": false, "status": "grounded"}
+      ]
+    },
+    "tailored": {"requirements": [], "bullets": []}
+  },
+  "expect": ["Keeper, Lighthouse Board", "2019-04", "Lamp tender, Harbour Board", "2017"],
+  "absent": ["present"]
+}

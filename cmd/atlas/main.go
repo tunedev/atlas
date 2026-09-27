@@ -25,6 +25,7 @@ import (
 	"github.com/tunedev/atlas/internal/adapters/outbound/sqlindex"
 	"github.com/tunedev/atlas/internal/adapters/outbound/termprompt"
 	"github.com/tunedev/atlas/internal/adapters/outbound/tools"
+	"github.com/tunedev/atlas/internal/adapters/outbound/typstconv"
 	"github.com/tunedev/atlas/internal/config"
 	"github.com/tunedev/atlas/internal/core/app"
 	"github.com/tunedev/atlas/internal/core/ports"
@@ -69,6 +70,13 @@ func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index, source
 		tools.NewExtract(extractor),
 		tools.NewDecision(docs, index),
 		tools.NewSourcePull(source, cfg.Feed.StaleAfter, slog.Default()),
+		tools.NewTextSpans(cfg.Pack.FileMaxBytes),
+		tools.NewSpanResolve(),
+		tools.NewCitationsJudge(judge, docs, index),
+		tools.NewClaimsSettle(),
+		tools.NewItemsCite(),
+		tools.NewItemsGather(),
+		tools.NewTextLines(),
 		tools.NewJudgeEach(source, judge, docs, index, cfg.Model.Name, cfg.Feed.StaleAfter, slog.Default()),
 		tools.NewDedupe(),
 		tools.NewCrawlPull(crawler, slog.Default()),
@@ -76,6 +84,20 @@ func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index, source
 		tools.NewCalibrate(docs, index),
 		tools.NewAgreement(index),
 	)
+}
+
+// startRender builds render.run over the configured typst binary. A binary
+// that is configured but not installed fails here, before any pack runs.
+func startRender(cfg config.Config) (ports.Tool, error) {
+	conv, err := typstconv.New(typstconv.Config{
+		Bin:      cfg.Render.TypstPath,
+		Timeout:  cfg.Render.Timeout,
+		MaxBytes: cfg.Render.MaxBytes,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return tools.NewRender(conv, cfg.Render.MaxBytes), nil
 }
 
 // startAgent launches the configured agent, offers it the configured tools
@@ -223,6 +245,14 @@ func run() error {
 	}
 
 	registry := buildRegistry(cfg, docs, index, source, crawler)
+
+	if cfg.Render.TypstPath != "" {
+		render, err := startRender(cfg)
+		if err != nil {
+			return err
+		}
+		registry = registry.With(render)
+	}
 
 	if cfg.Agent.Command != "" {
 		agentTool, stop, err := startAgent(ctx, cfg, registry, docs)

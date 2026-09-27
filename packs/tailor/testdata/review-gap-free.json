@@ -1,0 +1,13 @@
+{
+  "template": "review.typ",
+  "data": {
+    "tailored": {
+      "requirements": [{"text": "keeps a log", "citations": [{"quote": "Logged"}], "gap": false}],
+      "bullets": [],
+      "letter": {"sentences": [], "answers": []}
+    },
+    "dropped": {"requirements": 0}
+  },
+  "expect": ["Requirements dropped as not verbatim in the posting: 0", "Bullets dropped for lack of evidence: 0"],
+  "absent": ["Questions dropped", "keeps a log", "Requirements not shown by the record", "Questions not answered by the record", "Letter sentences removed", "Answer sentences removed"]
+}

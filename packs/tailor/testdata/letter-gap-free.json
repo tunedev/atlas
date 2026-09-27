@@ -1,0 +1,22 @@
+{
+  "template": "letter.typ",
+  "data": {
+    "tailored": {
+      "letter": {
+        "sentences": [
+          {"text": "I sail the coastal routes.", "citations": [{"quote": "sails the coastal routes"}], "gap": false},
+          {"text": "I captained a tall ship.", "citations": [], "gap": true}
+        ],
+        "answers": [
+          {"item": "Can you trim a wick?", "sentences": [
+            {"text": "I trimmed the wicks nightly.", "citations": [{"quote": "trimmed the wicks"}], "gap": false},
+            {"text": "I invented the lens.", "citations": [], "gap": true}
+          ]},
+          {"item": "Can you read a chart?", "sentences": [{"text": "", "citations": [], "gap": true}]}
+        ]
+      }
+    }
+  },
+  "expect": ["I sail the coastal routes.", "Answers to the questions asked", "Can you trim a wick?", "I trimmed the wicks nightly."],
+  "absent": ["I captained a tall ship.", "I invented the lens.", "Can you read a chart?"]
+}
