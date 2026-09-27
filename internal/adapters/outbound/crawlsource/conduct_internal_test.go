@@ -84,18 +84,21 @@ func recordedSite(t *testing.T, h http.HandlerFunc) (*httptest.Server, *siteLog)
 	return srv, log
 }
 
-func get(t *testing.T, c *Conduct, url string) (*http.Response, error) {
+// get and getIn take an http.RoundTripper rather than a *Conduct so a test
+// can drive requests through a wrapper such as a revalidationCounter, over
+// the same *Conduct any other test uses directly.
+func get(t *testing.T, rt http.RoundTripper, url string) (*http.Response, error) {
 	t.Helper()
-	return getIn(t, context.Background(), c, url)
+	return getIn(t, context.Background(), rt, url)
 }
 
-func getIn(t *testing.T, ctx context.Context, c *Conduct, url string) (*http.Response, error) {
+func getIn(t *testing.T, ctx context.Context, rt http.RoundTripper, url string) (*http.Response, error) {
 	t.Helper()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return (&http.Client{Transport: c}).Do(req)
+	return (&http.Client{Transport: rt}).Do(req)
 }
 
 func TestConductRefusesAPathRobotsDisallows(t *testing.T) {

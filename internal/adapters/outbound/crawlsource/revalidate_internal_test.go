@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -64,10 +65,10 @@ func TestARevalidatedPageIsServedFromTheCache(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			srv, full := validatingSite(t, v[0], v[1])
 			c := cachedConduct(t)
-			ctx, revalidated := countingRevalidations(context.Background())
-			resp1, err1 := getIn(t, ctx, c, srv.URL+"/p")
+			rc := &revalidationCounter{conduct: c}
+			resp1, err1 := get(t, rc, srv.URL+"/p")
 			first := readAll(t, resp1, err1)
-			resp2, err2 := getIn(t, ctx, c, srv.URL+"/p")
+			resp2, err2 := get(t, rc, srv.URL+"/p")
 			second := readAll(t, resp2, err2)
 			if first != "the page" || second != "the page" {
 				t.Errorf("bodies %q %q", first, second)
@@ -75,8 +76,8 @@ func TestARevalidatedPageIsServedFromTheCache(t *testing.T) {
 			if *full != 1 {
 				t.Errorf("full responses = %d, want 1; the second read must revalidate", *full)
 			}
-			if revalidated.Load() != 1 {
-				t.Errorf("revalidated = %d, want 1", revalidated.Load())
+			if rc.count.Load() != 1 {
+				t.Errorf("revalidated = %d, want 1", rc.count.Load())
 			}
 		})
 	}
@@ -85,13 +86,84 @@ func TestARevalidatedPageIsServedFromTheCache(t *testing.T) {
 func TestAPageWithoutValidatorsIsRefetched(t *testing.T) {
 	srv, full := validatingSite(t, "", "")
 	c := cachedConduct(t)
-	ctx, revalidated := countingRevalidations(context.Background())
+	rc := &revalidationCounter{conduct: c}
 	for i := 0; i < 2; i++ {
-		resp, err := getIn(t, ctx, c, srv.URL+"/p")
+		resp, err := get(t, rc, srv.URL+"/p")
 		readAll(t, resp, err)
 	}
-	if *full != 2 || revalidated.Load() != 0 {
-		t.Errorf("full = %d revalidated = %d; nothing to revalidate against", *full, revalidated.Load())
+	if *full != 2 || rc.count.Load() != 0 {
+		t.Errorf("full = %d revalidated = %d; nothing to revalidate against", *full, rc.count.Load())
+	}
+}
+
+// TestARevalidationCounterCountsOnlyItsOwnConduct proves the explicit
+// wrapper counts a 304 served from the cache without any context value.
+func TestARevalidationCounterCountsOnlyItsOwnConduct(t *testing.T) {
+	srv, full := validatingSite(t, `"v1"`, "")
+	c := cachedConduct(t)
+	rc := &revalidationCounter{conduct: c}
+	resp1, err1 := get(t, rc, srv.URL+"/p")
+	readAll(t, resp1, err1)
+	if rc.count.Load() != 0 {
+		t.Fatalf("count after the first, full fetch = %d, want 0", rc.count.Load())
+	}
+	resp2, err2 := get(t, rc, srv.URL+"/p")
+	readAll(t, resp2, err2)
+	if *full != 1 || rc.count.Load() != 1 {
+		t.Errorf("full = %d count = %d; want 1 full fetch and 1 counted revalidation", *full, rc.count.Load())
+	}
+}
+
+// TestARevalidationCounterIsSafeForConcurrentRequests proves the counter is
+// correct when many requests through it race, as one Pull's requests to
+// different targets could.
+func TestARevalidationCounterIsSafeForConcurrentRequests(t *testing.T) {
+	srv, _ := validatingSite(t, `"v1"`, "")
+	c := cachedConduct(t)
+	rc := &revalidationCounter{conduct: c}
+	resp, err := get(t, rc, srv.URL+"/p")
+	readAll(t, resp, err) // prime the cache with the first, full fetch
+
+	const n = 20
+	var wg sync.WaitGroup
+	for range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp, err := get(t, rc, srv.URL+"/p")
+			readAll(t, resp, err)
+		}()
+	}
+	wg.Wait()
+	if got := rc.count.Load(); got != n {
+		t.Errorf("count = %d, want %d", got, n)
+	}
+}
+
+// TestTwoRevalidationCountersOverOneConductDoNotShareACount proves two
+// concurrent Pulls, each with its own revalidationCounter over the same
+// shared Conduct, keep independent counts.
+func TestTwoRevalidationCountersOverOneConductDoNotShareACount(t *testing.T) {
+	srv, _ := validatingSite(t, `"v1"`, "")
+	c := cachedConduct(t)
+	resp, err := get(t, c, srv.URL+"/p")
+	readAll(t, resp, err) // prime the cache directly, uncounted
+
+	a, b := &revalidationCounter{conduct: c}, &revalidationCounter{conduct: c}
+	var wg sync.WaitGroup
+	for range 5 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp, err := get(t, a, srv.URL+"/p")
+			readAll(t, resp, err)
+		}()
+	}
+	wg.Wait()
+	resp, err = get(t, b, srv.URL+"/p")
+	readAll(t, resp, err)
+	if a.count.Load() != 5 || b.count.Load() != 1 {
+		t.Errorf("a = %d, b = %d; want 5 and 1, not mixed", a.count.Load(), b.count.Load())
 	}
 }
 
@@ -150,8 +222,8 @@ func TestARevalidatedBodyOverTheNewLimitFails(t *testing.T) {
 	smallCfg.CacheDir = dir
 	smallCfg.MaxBytes = 10
 	small := newConduct(smallCfg, http.DefaultTransport)
-	ctx, revalidated := countingRevalidations(context.Background())
-	resp, err = getIn(t, ctx, small, srv.URL+"/p")
+	rc := &revalidationCounter{conduct: small}
+	resp, err = get(t, rc, srv.URL+"/p")
 	if err == nil {
 		resp.Body.Close()
 		t.Fatal("want an error; the cached body exceeds the new MaxBytes")
@@ -159,8 +231,8 @@ func TestARevalidatedBodyOverTheNewLimitFails(t *testing.T) {
 	if !strings.Contains(err.Error(), "10") {
 		t.Errorf("err = %v; want it to name the limit", err)
 	}
-	if revalidated.Load() != 0 {
-		t.Errorf("revalidated = %d, want 0; an over-limit cached body must not count as revalidated", revalidated.Load())
+	if rc.count.Load() != 0 {
+		t.Errorf("revalidated = %d, want 0; an over-limit cached body must not count as revalidated", rc.count.Load())
 	}
 	if full != 1 {
 		t.Errorf("full responses = %d, want 1; the second request must be answered 304", full)
