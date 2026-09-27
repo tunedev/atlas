@@ -87,16 +87,18 @@ attachment it holds an `Outcome` value. There is no third, "in-progress" shape �
 in-progress application is exactly the case that stays `null`. This means "terminal" needs no
 enum in the core: non-null is terminal, by construction.
 
-A job-hunt pack is expected to use states along these lines (illustration, not Go):
+A job-hunt pack is expected to use states along these lines (illustration, not Go). The
+"Default disposition" column is the illustrative pack's own choice — see "What is excluded
+from the sample, and why" for the reasoning behind each — not a Go-enforced classification:
 
-| Illustrative state | What it means | Who declares it, and when |
-|---|---|---|
-| *(null, unattached)* | Not yet known | Nobody yet — this is most judgements, most of the time |
-| `not_applied` | The subject was judged, then skipped; no application will ever exist | The user, at (or soon after) the skip decision — this is a known fact, not a prediction |
-| `offer` | An offer was extended | The user, whenever they learn it — no time bound |
-| `rejected` | The application was declined | The user, whenever they learn it — the roadmap's own example is two months later |
-| `withdrawn` | The candidate pulled out before either side decided | The user, whenever it happens |
-| `ghosted` | The user declares silence long enough to treat as a non-response | The user's own judgement call of "long enough" — Epic 11.2, once Epic 10 exists, can inform that call with a real staleness number, but nothing stops declaring it by hand today |
+| Illustrative state | What it means | Who declares it, and when | Default disposition |
+|---|---|---|---|
+| *(null, unattached)* | Not yet known | Nobody yet — this is most judgements, most of the time | n/a — still pending |
+| `not_applied` | The subject was judged, then skipped; no application will ever exist | The user, at (or soon after) the skip decision — this is a known fact, not a prediction | Inconclusive |
+| `offer` | An offer was extended | The user, whenever they learn it — no time bound | Positive |
+| `rejected` | The application was declined | The user, whenever they learn it — the roadmap's own example is two months later | Negative |
+| `withdrawn` | The candidate pulled out before either side decided | The user, whenever it happens | Inconclusive |
+| `ghosted` | The user declares silence long enough to treat as a non-response | The user's own judgement call of "long enough" — Epic 11.2, once Epic 10 exists, can inform that call with a real staleness number, but nothing stops declaring it by hand today | Inconclusive |
 
 The roadmap's own example is worth restating precisely: **a rejection two months later and a
 role never applied to are different, and neither is a bug.** `rejected` is a resolved trial —
@@ -182,22 +184,29 @@ question (weather forecasting, election modeling) and neither requires assuming 
 
 **What gets scored, generically.** A `Judgement` may carry several answers (`stretch`,
 `seniority`, `focus` in today's job-hunt pack); only one of them, per scoring run, is "the
-prediction" — which one, and which outcome states count as it having come true, is pack
-knowledge, not core knowledge, for the same vocabulary reason `Decision.Choice` is a free
-string:
+prediction" — which one, and which outcome states count as it having come true, come false,
+or tested nothing at all, is pack knowledge, not core knowledge, for the same vocabulary
+reason `Decision.Choice` is a free string:
 
 ```go
 // Prediction names which recorded answer predicts a real-world result, and
-// which outcome states count as that prediction having come true (or
-// false). Positive and Negative are pack-declared free strings, matched
-// against Outcome.State. A resolved outcome whose State is in neither list
-// is excluded from the sample -- not scored as a miss -- because the pack
-// author declared no opinion on what it means, not because the sample
-// dropped it by accident.
+// sorts every outcome state into one of three scoring dispositions: it
+// came true (Positive), it came false (Negative), or it is not evidence
+// either way (Inconclusive). All three are pack-declared free strings,
+// matched against Outcome.State. Only Positive and Negative enter the
+// calibration sample; Inconclusive is excluded on purpose, the same way a
+// coverage-0 answer is, because the outcome never gave the prediction a
+// real trial.
+//
+// A resolved outcome whose State is in none of the three lists is also
+// excluded, but counted separately (ExclusionCounts.Unclassified): the
+// pack author declared no opinion on what it means, which is a gap worth
+// surfacing, not the same thing as declaring it Inconclusive on purpose.
 type Prediction struct {
-    QuestionID string
-    Positive   []string
-    Negative   []string
+    QuestionID   string
+    Positive     []string
+    Negative     []string
+    Inconclusive []string
 }
 ```
 
@@ -231,7 +240,8 @@ type Calibration struct {
 type ExclusionCounts struct {
     Pending      int // outcome still null
     ZeroCoverage int // resolved, but the scored answer's Coverage.Represented == 0
-    Unclassified int // resolved, but State is in neither Positive nor Negative
+    Inconclusive int // resolved, State is in Prediction.Inconclusive by pack declaration
+    Unclassified int // resolved, but State is in none of Positive, Negative, or Inconclusive
 }
 
 type ReliabilityBin struct {
@@ -266,7 +276,12 @@ and match the "your 80% judgements" framing directly — the reader looks up the
 
 ## What is excluded from the sample, and why
 
-Three exclusions, each counted separately in `ExclusionCounts` rather than silently dropped:
+An outcome maps to one of three scoring dispositions — **positive**, **negative**, or
+**inconclusive** — never two. Collapsing the third into "not negative" would silently count
+silence as a passed test; collapsing it into "not positive" would silently count it as a
+failed one. Both are worse than the honest answer, which is that the outcome tested nothing.
+Only positive and negative enter the calibration sample. Four exclusions, each counted
+separately in `ExclusionCounts` rather than silently dropped:
 
 1. **Still pending.** The outcome slot is `null`. Nothing to score yet; not a defect, just not
    time yet.
@@ -284,15 +299,55 @@ Three exclusions, each counted separately in `ExclusionCounts` rather than silen
    competition — the narrow-`TopLogProbs` problem that produces partial coverage is real (see
    `docs/design/the-judge.md`'s known gaps) but is a reason to widen the window later, not a
    reason to throw away every judgement made under today's window.
-3. **Unclassified outcome.** A resolved outcome whose `State` the pack's `Prediction` does not
-   list under `Positive` or `Negative` — the illustrative `not_applied` and `withdrawn` states
-   above are exactly this case for a job-hunt pack that chooses not to score them. Both are
-   real information (the subject was never actually tested, or the process ended before either
-   side decided), and treating either as "the prediction came false" would silently score a
-   fact the model was never in a position to be right or wrong about. Excluding them by pack
-   declaration, rather than hardcoding their names in Go, keeps the vocabulary constraint
-   intact and leaves the choice (should `ghosted` count as a soft no?) to whoever owns the
-   pack, made explicit in `Prediction.Negative` rather than assumed.
+3. **Inconclusive outcome, by pack declaration.** A resolved outcome whose `State` the pack's
+   `Prediction` lists under `Inconclusive`. This is the general form of a principle the human
+   ruled for one specific state: **a ghosted application is inconclusive, not negative.** No
+   reply is not evidence the judgement was wrong; it is evidence of nothing. Scoring it as a
+   miss would punish a verdict that may have been entirely right. The same reasoning applies
+   to every state the spec illustrates as inconclusive, each for its own reason:
+   - `not_applied` — no trial at all. The predicted event was never given a chance to happen,
+     because the user's own decision (unrelated to whether the model was right) removed it
+     from play.
+   - `withdrawn` — a trial that started but was called off before either side decided. The
+     process ended for a reason orthogonal to the model's prediction, the same way `ghosted`
+     ends for a reason (silence) orthogonal to it.
+   - `ghosted` — per the ruling above: silence is not a verdict.
+
+   All three share the same shape: something happened, but it was not the thing the prediction
+   was about. Excluding them by pack declaration, rather than hardcoding their names in Go,
+   keeps the vocabulary constraint intact — Go core has no opinion on what `ghosted` means, only
+   on the fact that *some* disposition must be chosen for it deliberately.
+4. **Unclassified outcome, by omission.** A resolved outcome whose `State` is in none of
+   `Positive`, `Negative`, or `Inconclusive` — the pack simply has not yet said what it means.
+   This is counted separately from Inconclusive precisely because it is a different fact: an
+   Inconclusive state was considered and deliberately ruled out as evidence; an Unclassified
+   state fell through a gap in the pack's own vocabulary and is worth the pack author's
+   attention, the same way a coverage-0 count is worth the reader's attention rather than a
+   silent zero.
+
+**A future refinement this design leaves room for, without building it.** The human has noted
+that at some point a pack author may want a long-enough `ghosted` silence to convert to
+`Negative` rather than stay `Inconclusive` — a presumed-dead application eventually is
+evidence, even without a reply. This spec does not build that rule: `Prediction`'s lists are
+static membership, not time-conditioned. Nothing here forbids adding it later, though, because
+the document already carries what such a rule would need: `Outcome.When` ("when the state
+became true," present on every attached outcome since the first version of this design) and
+the judgement's own recorded time are both already written to every judgement document. A
+later rule can be expressed either way without touching a single already-recorded document:
+- **As a pack convention, today, with zero core changes** — the user (or the pack step that
+  calls `AttachOutcome`) chooses a more specific `State` string at attach time, e.g.
+  `ghosted_recent` versus `ghosted_stale`, computed from elapsed time at the moment of
+  attachment, and lists the two under different `Prediction` buckets. `State` is already a free
+  string; nothing stops a pack from being this granular.
+- **As a core addition, later** — `Calibrate` could accept an as-of time and a
+  duration-per-state threshold, promoting a `State` from `Inconclusive` to `Negative` once
+  `asOf.Sub(Outcome.When)` clears it. This would extend `Prediction` and `CalibrateOptions`,
+  not `Outcome` or the judgement document shape, because the timestamp the rule needs is
+  already there.
+
+Either path reads `Outcome.When` as it already exists; **no change to the recorded document
+shape is needed now to keep this door open**, which matters because a document shape change is
+exactly the kind of thing that cannot be applied retroactively to outcomes already committed.
 
 **Provider and sampling differences are a grouping choice, not silently pooled.**
 `Judgement.Provider`, `Judgement.Model` and `Judgement.Sampling` are already recorded (`the
@@ -365,9 +420,11 @@ follows for the judge itself.
   membership, table-driven, the same style `mass_test.go` already uses for entropy and mass
   arithmetic. No `Docs`/`Index` adapter is needed to prove the arithmetic is right.
 - **The exclusion rules are tested as their own cases**: a coverage-0 answer excluded even
-  when its `Chosen` matches the outcome; a resolved-but-unclassified state excluded and
-  counted, not silently dropped; a still-pending judgement excluded and counted separately
-  from both.
+  when its `Chosen` matches the outcome; a state the pack lists under `Prediction.Inconclusive`
+  (e.g. `ghosted`) excluded and counted under `ExclusionCounts.Inconclusive`; a resolved state
+  in none of the pack's three lists excluded and counted separately under
+  `ExclusionCounts.Unclassified`, proving the two are distinguished rather than merged; and a
+  still-pending judgement excluded and counted separately from all three.
 - **`AttachOutcome` is tested against the real `gitdocs`/`sqlindex` adapters**, mirroring
   `judgementrecord_test.go`'s pattern (a temp git repo, a temp SQLite file): record a
   judgement, attach an outcome, assert `docs.Get` now returns the outcome object where `null`
@@ -388,7 +445,8 @@ follows for the judge itself.
 | 11.2 Staleness from declared send | Same dependency: "measured from the declared send" presumes a send declaration to measure from |
 | Automatic outcome detection (email, ATS scraping) | No such adapter exists; building one is its own epic's worth of scope, and the local-first constraint ("nothing about a user leaves their machine unchosen") means it would need real design, not a tracking primitive |
 | Scoring across mixed question ids in one bucket | A `Prediction` scores one `QuestionID` at a time; pooling e.g. `stretch` and a future `will_succeed` question together would average two different measurements into one meaningless number |
-| Automatic classification of which outcome states are Positive/Negative | Pack-declared, per the vocabulary constraint — Go core has no opinion on what `ghosted` means |
+| Automatic classification of which outcome states are Positive/Negative/Inconclusive | Pack-declared, per the vocabulary constraint — Go core has no opinion on what `ghosted` means |
+| A time-conditioned rule that promotes a long-silent `ghosted` from Inconclusive to Negative | Worth designing room for (see "A future refinement" above), not worth building — no evidence yet on what threshold, or whether one, is right |
 | Widening `TopLogProbs`, rephrasing `choice` options, or the `laya` classifier | Carried over, unresolved, from `docs/notes/2026-09-24-epic-3-closing.md`'s three candidate routes; this epic consumes `Coverage`, it does not fix what produces a low one |
 | A second engine's numbers compared automatically | `CalibrateOptions` supports grouping by provider/model; nothing here runs a second engine against the same subjects to compare, which is unmeasured today per the closing note |
 | Rejecting or gating on a low `Confidence`/`Coverage` at judgement time | A policy decision (Epic 7's deal-breakers, Epic 10's allow/ask/deny), not tracking's job — this epic measures, it does not act |
@@ -401,6 +459,12 @@ Which question id in Epic 7's eventual verdict is the one a job-hunt pack should
 `Prediction.QuestionID` is not this design's call — Epic 7's shape (`docs/plans/2026-09-17-roadmap.md`'s
 "Apply, stretch or skip, with reasons") is not fixed yet, and this spec deliberately does not
 wait on it: `Prediction` is generic enough to score whichever question the pack eventually
-names. Whether `ghosted` should default to `Negative` in the shipped job-hunt pack, or stay
-unclassified until the user has opinions about it, is likewise a pack-authoring decision, not a
-core one, and is left open here.
+names.
+
+This design does rule, per the human's own instruction, that the shipped job-hunt pack
+should list `ghosted` under `Prediction.Inconclusive`, not `Negative` — silence is not a
+verdict. What remains a pack-authoring decision, not a core one, and is left open here, is
+whether and when that should change: whether a long enough silence should later convert to
+`Negative`, and if so at what threshold. "What is excluded from the sample, and why" above
+lays out how a pack (or a later core addition) could express that rule without any change to
+already-recorded documents; it does not pick the threshold.
