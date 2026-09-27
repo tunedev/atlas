@@ -136,17 +136,35 @@ func TestTwoOptionsSharingAFormIsRejected(t *testing.T) {
 }
 
 // TestShippedPackOptionSetsPassValidation proves the new guard does not
-// reject the option sets a shipped pack and the live judge test actually
-// ask with.
+// reject the option sets a shipped pack's own choice question, and the live
+// judge test's own choice and score questions, actually ask with.
 func TestShippedPackOptionSetsPassValidation(t *testing.T) {
 	qs := []ports.Question{
-		{ID: "seniority", Kind: ports.KindScore, Ask: "?", Options: []string{"junior", "mid", "senior", "staff"}},
 		{ID: "focus", Kind: ports.KindChoice, Ask: "?", Options: []string{"backend", "frontend", "platform", "data", "other"}},
-		{ID: "warmth", Kind: ports.KindScore, Ask: "?", Options: []string{"cold", "cool", "warm", "hot"}},
-		{ID: "sky", Kind: ports.KindChoice, Ask: "?", Options: []string{"blue", "grey", "gold", "pink"}},
+		{ID: "warmth", Kind: ports.KindScore, Ask: "?", Options: []string{"freezing", "cool", "warm", "hot"}},
+		{ID: "sky", Kind: ports.KindChoice, Ask: "?", Options: []string{"blue", "grey", "amber", "pink"}},
 	}
 	if _, err := app.AnswerSchema(qs); err != nil {
 		t.Fatalf("a shipped pack's own option set was rejected: %v", err)
+	}
+}
+
+// TestAShippedPackScoreWithSharedInitialsIsNowRejected documents a real
+// defect the new guard surfaces in a shipped pack's own "seniority"
+// question: levels [junior, mid, senior, staff], where "senior" and "staff"
+// share the initial "s". Fixing the pack itself is a separate task (owned
+// elsewhere); this records that the guard correctly rejects the levels as
+// they are written today.
+func TestAShippedPackScoreWithSharedInitialsIsNowRejected(t *testing.T) {
+	qs := []ports.Question{
+		{ID: "seniority", Kind: ports.KindScore, Ask: "?", Options: []string{"junior", "mid", "senior", "staff"}},
+	}
+	_, err := app.AnswerSchema(qs)
+	if err == nil {
+		t.Fatal("a shipped pack's seniority levels, where senior and staff share an initial, produced a schema")
+	}
+	if !strings.Contains(err.Error(), "senior") || !strings.Contains(err.Error(), "staff") {
+		t.Errorf("error does not name both colliding levels: %v", err)
 	}
 }
 
@@ -156,5 +174,42 @@ func TestNoulDefaultsPassValidation(t *testing.T) {
 	qs := []ports.Question{{ID: "clear", Kind: ports.KindNoul, Ask: "?"}}
 	if _, err := app.AnswerSchema(qs); err != nil {
 		t.Fatalf("the noul defaults were rejected: %v", err)
+	}
+}
+
+// TestAnOptionSetSharingAFirstCharacterIsRejected covers the root cause a
+// live engine exposed: "cold" and "cool" are not a prefix relation nor a
+// shared form, so the older checks let them through, but any single
+// truncated character ("c") is still a prefix of both. Naming a question's
+// options in its prompt (docs/design/the-judge.md) makes the engine more
+// likely to emit exactly such a truncation as a low-probability
+// alternative, so the option set itself must be rejected up front rather
+// than left for a live call to discover at random.
+func TestAnOptionSetSharingAFirstCharacterIsRejected(t *testing.T) {
+	qs := []ports.Question{{
+		ID: "warmth", Kind: ports.KindScore, Ask: "?",
+		Options: []string{"cold", "cool", "warm"},
+	}}
+	_, err := app.AnswerSchema(qs)
+	if err == nil {
+		t.Fatal("an option set where two options share a first character produced a schema")
+	}
+	if !strings.Contains(err.Error(), "warmth") {
+		t.Errorf("error does not name the question: %v", err)
+	}
+	if !strings.Contains(err.Error(), "cold") || !strings.Contains(err.Error(), "cool") {
+		t.Errorf("error does not name both colliding options: %v", err)
+	}
+}
+
+// TestDistinctInitialOptionSetsPassValidation proves the new guard leaves a
+// noul's own defaults and an ordinary distinct-initial option set alone.
+func TestDistinctInitialOptionSetsPassValidation(t *testing.T) {
+	qs := []ports.Question{
+		{ID: "clear", Kind: ports.KindNoul, Ask: "?"},
+		{ID: "length", Kind: ports.KindScore, Ask: "?", Options: []string{"short", "medium", "long"}},
+	}
+	if _, err := app.AnswerSchema(qs); err != nil {
+		t.Fatalf("distinct-initial option sets were rejected: %v", err)
 	}
 }

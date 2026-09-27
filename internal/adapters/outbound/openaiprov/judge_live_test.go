@@ -31,9 +31,9 @@ func liveJudgeQuestions() []ports.Question {
 	return []ports.Question{
 		{ID: "clear", Kind: ports.KindNoul, Ask: "Is the sky clear in this report?"},
 		{ID: "warmth", Kind: ports.KindScore, Ask: "How warm is the weather described?",
-			Options: []string{"cold", "cool", "warm", "hot"}},
+			Options: []string{"freezing", "cool", "warm", "hot"}},
 		{ID: "sky", Kind: ports.KindChoice, Ask: "What is the dominant color of the sky described?",
-			Options: []string{"blue", "grey", "gold", "pink"}},
+			Options: []string{"blue", "grey", "amber", "pink"}},
 	}
 }
 
@@ -146,7 +146,7 @@ func TestAChoiceQuestionIsCoveredOnALiveEngine(t *testing.T) {
 	q := ports.Question{
 		ID: "ingredient", Kind: ports.KindChoice,
 		Ask:     "What is the main ingredient of this dish?",
-		Options: []string{"rice", "pasta", "potato", "bread", "other"},
+		Options: []string{"rice", "pasta", "bread", "noodles", "other"},
 	}
 	got, err := judge.Ask(context.Background(), liveRecipe, []ports.Question{q})
 	if err != nil {

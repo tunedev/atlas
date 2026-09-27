@@ -133,23 +133,32 @@ real tokenizer often produces, is still matched), then
 2. a **non-empty prefix** match against a form counts, provided the trimmed
    text prefixes exactly one option's forms.
 
-`AnswerSchema` (below) rejects, ahead of time, two option-set shapes that
-would let step 1 resolve confidently to the wrong option before step 2 ever
-saw an ambiguity: two different options sharing an identical surface form,
-and a whole option or form that is itself a proper prefix of another's. That
-leaves prefix ambiguity to arise only from a genuinely truncated token,
-which is a real failure to surface, not a data shape to special-case.
+`AnswerSchema` (below) rejects, ahead of time, three option-set shapes that
+would let step 1 or step 2 resolve confidently to the wrong option: two
+different options sharing an identical surface form, a whole option or form
+that is a proper prefix of another's, and — the general case of the other
+two — two different options whose forms start with the same character.
+Naming a question's options in its prompt (`promptUserMessage`, above) makes
+a live engine more likely to emit exactly such a shared-initial truncation
+as a low-probability alternative, which is what makes the third check load-
+bearing rather than decorative: a single-character token is always a valid
+prefix of every form sharing it, so any two options sharing a first
+character can be made ambiguous by some truncation regardless of how the
+rest of their text differs. Rejecting the option set at validation time
+turns that failure into a deterministic, parse-time error instead of a
+live-only one that depends on which alternative an engine happens to emit.
 
-A trimmed text that prefixes two or more different options' forms is an
-error: `judge: <question id>: "<text>" is ambiguous between <a> and <b>
+`optionMatch`'s prefix-ambiguity branch — a trimmed text that prefixes two
+or more different options' forms — is unreachable through `Judge.Ask` for
+any question that passes `AnswerSchema`: reaching it would require two
+different options to share a first character, which validation now refuses
+before the provider is ever called. The branch, and its error format
+(`judge: <question id>: "<text>" is ambiguous between <a> and <b>
 (alternative "<text>", p=<probability>)`, or `(emitted token "<text>",
-p=<probability>)` when the ambiguity was found in the fallback read of the
-token's own text rather than in one of its alternatives. Dropping an
-ambiguous alternative silently was rejected: on a low-probability
-alternative that would distort the distribution without saying so, and the
-whole call is one round trip, so discarding one question's answer to save
-the others is not available either — the error must instead be diagnosable
-enough to act on, hence naming the source and the probability. The same
+p=<probability>)` when found in the fallback read of the token's own text),
+stay in place as a defensive check rather than dead code to delete: nothing
+in this package calls `massForToken`/`optionMatch` on a question that has
+skipped `AnswerSchema`, but the read path itself does not assume that. The same
 double-count guard `MassAtToken` applies for every caller: the answer
 token's own probability is folded in only when its own text is not already
 among its alternatives.
