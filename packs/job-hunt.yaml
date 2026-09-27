@@ -144,26 +144,10 @@ steps:
            "required":["spans"],"additionalProperties":false,
            "properties":{"spans":{"type":"array","minItems":1,"maxItems":1,"items":{"type":"integer"}}}}}}}
 
-  - id: asked_questions
-    tool: extract.run
+  - id: questions
+    tool: text.lines
     with:
-      text: |
-        {{ if .vars.questions }}Task: list every question asked below, each as a verbatim quote copied
-        from the text.
-
-        Questions:
-        {{ .vars.questions }}{{ else }}No questions are asked. Return an empty questions list.{{ end }}
-      schema: |
-        {"type":"object","required":["questions"],"additionalProperties":false,
-         "properties":{"questions":{"type":"array","items":{"type":"object",
-           "required":["quote"],"additionalProperties":false,
-           "properties":{"quote":{"type":"string"}}}}}}
-
-  - id: questions_ground
-    tool: quote.ground
-    with:
-      fields: "{{ json .steps.asked_questions.fields }}"
-      source: '{{ or .vars.questions "(none)" }}'
+      text: "{{ .vars.questions }}"
 
   - id: letter
     tool: extract.run
@@ -172,7 +156,7 @@ steps:
         Task: write a short letter of application of about six sentences. Every sentence about
         the candidate must cite the numbers of the evidence spans that support it. Do not write
         a sentence the spans do not support.
-        {{ if .vars.questions }}Also answer each numbered question below in one to three sentences,
+        {{ if .steps.questions.items }}Also answer each numbered question below in one to three sentences,
         citing spans the same way. Name every question's number exactly once in answered, with an
         empty sentences list when no span supports an answer.{{ else }}No questions are asked.
         Return an empty answered list.{{ end }}
@@ -183,8 +167,8 @@ steps:
         Role: {{ .steps.role.title }} at {{ .steps.role.company }}
 
         {{ .steps.role.description_text }}
-        {{ if .vars.questions }}Questions:
-        {{ range $i, $q := .steps.questions_ground.fields.questions }}[{{ $i }}] {{ $q.quote }}
+        {{ if .steps.questions.items }}Questions:
+        {{ range $i, $q := .steps.questions.items }}[{{ $i }}] {{ $q.quote }}
         {{ end }}{{ end }}
       schema: |
         {"type":"object","required":["letter","answered"],"additionalProperties":false,
@@ -199,7 +183,7 @@ steps:
   - id: answers
     tool: items.gather
     with:
-      items: '{{ if .vars.questions }}{{ json .steps.questions_ground.fields.questions }}{{ else }}[]{{ end }}'
+      items: "{{ json .steps.questions.items }}"
       answered: "{{ json .steps.letter.fields.answered }}"
 
   - id: resolve
@@ -241,7 +225,6 @@ steps:
       fields: |
         gaps: "{{ .steps.settle.gaps }}"
         dropped_requirements: "{{ .steps.cite_items.dropped }}"
-        dropped_questions: "{{ .steps.answers.dropped }}"
 
   # cv.pdf and letter.pdf are sendable: they carry only kept content, and a
   # render fails if any gap text reaches them. review.pdf lists every gap.
@@ -269,6 +252,6 @@ steps:
       template: "{{ .vars.templates }}/review.typ"
       data: |
         {"tailored": {{ json .steps.settle.fields }},
-         "dropped": {"requirements": {{ .steps.cite_items.dropped }}, "questions": {{ .steps.answers.dropped }}}}
+         "dropped": {"requirements": {{ .steps.cite_items.dropped }}}}
       output: "{{ .vars.out_dir }}/review.pdf"
       expect: "{{ json .steps.settle.gaps_all }}"

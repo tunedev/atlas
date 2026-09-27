@@ -30,14 +30,10 @@ const cannedCited = `[
  {"item":1,"spans":[1]},
  {"item":2,"spans":[42]}]`
 
-// cannedQuestions are the questions a person asked; cannedAskedQuestions is
-// the model's copy of them, and cannedAnswered answers only the first, the
-// way a real model sometimes skips one.
-const cannedQuestions = `Can you pilot a harbour? Can you trim a wick?`
-
-const cannedAskedQuestions = `{"questions":[
- {"quote":"Can you pilot a harbour?"},
- {"quote":"Can you trim a wick?"}]}`
+// cannedQuestions are the questions a person asked, one per line;
+// cannedAnswered answers only the first, the way a real model sometimes
+// skips one.
+const cannedQuestions = "Can you pilot a harbour?\n\nCan you trim a wick?\n"
 
 const cannedAnswered = `[{"item":0,"sentences":[{"text":"Yes, I am licensed.","spans":[1]}]}]`
 
@@ -74,14 +70,13 @@ func tailorCanned(t *testing.T) map[string]any {
 
 	spans := step(tools.NewTextSpans(1<<20).Invoke(ctx, map[string]string{"paths": src, "min_chars": "10"}))
 
-	// What is asked for comes from the source notice and the questions
-	// alone, never from what the model claims it can support.
+	// What is asked for comes from the source notice and the typed
+	// questions alone, never from what the model claims it can support.
 	asked := step(tools.NewQuoteGround().Invoke(ctx, map[string]string{"fields": cannedAsked, "source": cannedNotice}))
 	askedItems := asked["fields"].(map[string]any)["requirements"]
 	cited := step(tools.NewItemsCite().Invoke(ctx, map[string]string{"items": js(askedItems), "cited": cannedCited}))
-	questions := step(tools.NewQuoteGround().Invoke(ctx, map[string]string{"fields": cannedAskedQuestions, "source": cannedQuestions}))
-	questionItems := questions["fields"].(map[string]any)["questions"]
-	answers := step(tools.NewItemsGather().Invoke(ctx, map[string]string{"items": js(questionItems), "answered": cannedAnswered}))
+	questions := step(tools.NewTextLines().Invoke(ctx, map[string]string{"text": cannedQuestions}))
+	answers := step(tools.NewItemsGather().Invoke(ctx, map[string]string{"items": js(questions["items"]), "answered": cannedAnswered}))
 
 	var extracted map[string]any
 	must(t, json.Unmarshal([]byte(cannedExtraction), &extracted))

@@ -6,8 +6,8 @@
       "bullets": [],
       "letter": {"sentences": [], "answers": []}
     },
-    "dropped": {"requirements": 0, "questions": 0}
+    "dropped": {"requirements": 0}
   },
   "expect": ["Requirements dropped as not verbatim in the posting: 0", "Bullets dropped for lack of evidence: 0"],
-  "absent": ["keeps a log", "Requirements not shown by the record", "Questions not answered by the record", "Letter sentences removed", "Answer sentences removed"]
+  "absent": ["Questions dropped", "keeps a log", "Requirements not shown by the record", "Questions not answered by the record", "Letter sentences removed", "Answer sentences removed"]
 }

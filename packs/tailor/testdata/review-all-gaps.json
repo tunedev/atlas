@@ -19,7 +19,7 @@
         ]
       }
     },
-    "dropped": {"requirements": 2, "questions": 3}
+    "dropped": {"requirements": 2}
   },
   "expect": [
     "Requirements not shown by the record", "sails ships",
@@ -27,8 +27,7 @@
     "Questions not answered by the record", "Can you sail?", "Can you read a chart?",
     "Answer sentences removed for lack of evidence", "Yes, for ten years.",
     "Requirements dropped as not verbatim in the posting: 2",
-    "Questions dropped as not verbatim in the questions asked: 3",
     "Bullets dropped for lack of evidence: 1"
   ],
-  "absent": ["keeps a log", "I kept the log.", "Can you trim a wick?", "I trimmed the wicks nightly."]
+  "absent": ["Questions dropped", "keeps a log", "I kept the log.", "Can you trim a wick?", "I trimmed the wicks nightly."]
 }

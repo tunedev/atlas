@@ -1,8 +1,8 @@
 // Renders the review sheet: everything tailoring could not support, for the
 // person sending the documents, never for the reader. data is bound by
 // render.run: {"tailored": <claims.settle fields>, "dropped":
-// {"requirements", "questions"}} (items.cite and items.gather's dropped
-// counts: items asked for that were not verbatim in their source).
+// {"requirements"}} (items.cite's dropped count: requirements that were not
+// verbatim in the posting).
 #set page(paper: "a4", margin: 2cm)
 #set text(size: 10pt, hyphenate: false)
 
@@ -39,5 +39,4 @@
 
 == Counts
 - Requirements dropped as not verbatim in the posting: #data.dropped.requirements
-- Questions dropped as not verbatim in the questions asked: #data.dropped.questions
 - Bullets dropped for lack of evidence: #bullets
