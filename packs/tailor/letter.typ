@@ -7,9 +7,10 @@
 
 #for s in t.letter.filter(s => not s.gap) [ #s.text ]
 
-#if t.answers.len() > 0 [
+#let answers = t.at("answers", default: ())
+#if answers.len() > 0 [
   == Questions
-  #for a in t.answers [
+  #for a in answers [
     === #a.question
     #let kept = a.sentences.filter(s => not s.gap)
     #if kept.len() == 0 [ _Not shown by the record._ ] else [ #for s in kept [ #s.text ] ]

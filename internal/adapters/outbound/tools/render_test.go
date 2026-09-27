@@ -2,6 +2,7 @@ package tools_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,8 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tsawler/tabula"
+
 	"github.com/tunedev/atlas/internal/adapters/outbound/tools"
 	"github.com/tunedev/atlas/internal/adapters/outbound/typstconv"
+	"github.com/tunedev/atlas/internal/core/app"
 )
 
 func renderer(t *testing.T) *tools.Render {
@@ -32,16 +36,35 @@ func writeTemplate(t *testing.T, body string) string {
 	return p
 }
 
+// extractText extracts path's text with tabula and applies the same
+// hyphen-wrap join render.go uses before grounding, so a test can check
+// what actually landed on the page.
+func extractText(t *testing.T, path string) string {
+	t.Helper()
+	text, _, err := tabula.Open(path).Text()
+	must(t, err)
+	return strings.ReplaceAll(text, "-\n", "-")
+}
+
 const hostile = `Cut costs by 30% #set page(fill: red) *bold* $x$ <b>tag</b> \ "quoted"`
+
+// longWithHyphenWrap is long enough, at this template's default text size
+// and page margins, that typst wraps the line inside "north-lighthouse-
+// keeper" itself: measured directly against typst 0.15.1 and tabula, the
+// break lands right after the hyphen with no trailing space. It keeps the
+// "-\n" join in verifyText guarded by a real wrap, not a word-boundary one.
+const longWithHyphenWrap = "word word word word word word word word word word word word word " +
+	"north-lighthouse-keeper more filler words here to continue onward and onward"
 
 func TestRenderKeepsDataAsTextAndVerifiesIt(t *testing.T) {
 	tmpl := writeTemplate(t, "#set text(hyphenate: false)\n#for b in data.items [ - #b ]\n")
 	out := filepath.Join(t.TempDir(), "nested", "doc.pdf")
+	items := `["` + longWithHyphenWrap + `", "` + strings.ReplaceAll(strings.ReplaceAll(hostile, `\`, `\\`), `"`, `\"`) + `"]`
 	res, err := renderer(t).Invoke(context.Background(), map[string]string{
 		"template": tmpl,
-		"data":     `{"items":["Kept the north light burning through the long winter storms of the northern coast every single night", "` + strings.ReplaceAll(strings.ReplaceAll(hostile, `\`, `\\`), `"`, `\"`) + `"]}`,
+		"data":     `{"items":` + items + `}`,
 		"output":   out,
-		"expect":   `["Kept the north light burning through the long winter storms of the northern coast every single night", "` + strings.ReplaceAll(strings.ReplaceAll(hostile, `\`, `\\`), `"`, `\"`) + `"]`,
+		"expect":   items,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -59,34 +82,133 @@ func TestRenderFailsWhenAnExpectedStringIsMissing(t *testing.T) {
 		"output":   filepath.Join(t.TempDir(), "doc.pdf"),
 		"expect":   `["Kept the light", "Sailed the ship"]`,
 	})
-	if err == nil || !strings.Contains(err.Error(), "Sailed the ship") {
+	if err == nil || !strings.Contains(err.Error(), "Sailed the ship") || !strings.Contains(err.Error(), "1 of 2") {
 		t.Errorf("err = %v", err)
 	}
 }
 
-func TestTemplatesRenderAnAllGapsDocument(t *testing.T) {
-	data := `{"history":{"entries":[]},"tailored":{
-	  "requirements":[{"text":"sails ships","citations":[],"gap":true}],
-	  "bullets":[{"citations":[],"gap":true}],
-	  "letter":[{"text":"I sail ships.","citations":[],"gap":true}],
-	  "answers":[{"question":"Can you sail?","sentences":[{"text":"Yes.","citations":[],"gap":true}]}]}}`
-	// The tailor pack's shorter template name is split here so this file's
-	// source text never spells the word internal/arch/vocabulary_test.go
-	// forbids outside packs/.
-	shortTemplate := "c" + "v.typ"
-	expect := map[string]string{
-		shortTemplate: `["Not shown by the record", "sails ships"]`,
-		"letter.typ":  `["Not shown by the record", "Removed for lack of evidence", "I sail ships."]`,
+func TestRenderFailsWhenOutputPathIsMissing(t *testing.T) {
+	tmpl := writeTemplate(t, "#for b in data.items [ - #b ]\n")
+	_, err := renderer(t).Invoke(context.Background(), map[string]string{
+		"template": tmpl,
+		"data":     `{"items":["Kept the light"]}`,
+		"output":   "",
+	})
+	if err == nil || !strings.Contains(err.Error(), "no output path") {
+		t.Errorf("err = %v", err)
 	}
-	for name, want := range expect {
-		_, err := renderer(t).Invoke(context.Background(), map[string]string{
-			"template": filepath.Join("..", "..", "..", "..", "packs", "tailor", name),
-			"data":     data,
-			"output":   filepath.Join(t.TempDir(), name+".pdf"),
-			"expect":   want,
+}
+
+func TestRenderDoesNotPublishWhenVerificationFails(t *testing.T) {
+	tmpl := writeTemplate(t, "#for b in data.items [ - #b ]\n")
+	out := filepath.Join(t.TempDir(), "doc.pdf")
+	must(t, os.WriteFile(out, []byte("old bytes"), 0o600))
+
+	_, err := renderer(t).Invoke(context.Background(), map[string]string{
+		"template": tmpl,
+		"data":     `{"items":["Kept the light"]}`,
+		"output":   out,
+		"expect":   `["Sailed the ship"]`,
+	})
+	if err == nil {
+		t.Fatal("want an error when an expected string is missing")
+	}
+	got, readErr := os.ReadFile(out)
+	must(t, readErr)
+	if string(got) != "old bytes" {
+		t.Errorf("output = %q, want the pre-existing file left untouched", got)
+	}
+}
+
+func TestBeforeScopesExpectToTheTextPrecedingTheEarliestMarker(t *testing.T) {
+	tmpl := writeTemplate(t, "#set text(hyphenate: false)\nKept the beacon lit.\n= Removed\nSailed away at dawn.\n")
+	out := filepath.Join(t.TempDir(), "doc.pdf")
+	_, err := renderer(t).Invoke(context.Background(), map[string]string{
+		"template": tmpl,
+		"data":     `{}`,
+		"output":   out,
+		"expect":   `["Kept the beacon lit."]`,
+		"before":   "Removed",
+	})
+	if err != nil {
+		t.Errorf("a string before the marker should verify: %v", err)
+	}
+}
+
+func TestBeforeMarkerHidesTextThatComesAfterIt(t *testing.T) {
+	tmpl := writeTemplate(t, "#set text(hyphenate: false)\nKept the beacon lit.\n= Removed\nSailed away at dawn.\n")
+	out := filepath.Join(t.TempDir(), "doc.pdf")
+	_, err := renderer(t).Invoke(context.Background(), map[string]string{
+		"template": tmpl,
+		"data":     `{}`,
+		"output":   out,
+		"expect":   `["Sailed away at dawn."]`,
+		"before":   "Removed",
+	})
+	if err == nil || !strings.Contains(err.Error(), "Sailed away at dawn") {
+		t.Errorf("err = %v; a string only after the marker must fail verification", err)
+	}
+}
+
+// packFixture is a pack's own description of one template render to check:
+// which template, what data to bind, which strings must be grounded (in
+// the text before the earliest "before" marker, when given), and which
+// strings must not appear anywhere in the rendered text. The Go harness
+// never names a template file or a pack's own wording; it only reads this
+// shape.
+type packFixture struct {
+	Template string          `json:"template"`
+	Data     json.RawMessage `json:"data"`
+	Expect   []string        `json:"expect"`
+	Before   []string        `json:"before"`
+	Absent   []string        `json:"absent"`
+}
+
+// TestPackTemplateFixturesRender renders every pack's testdata fixture
+// through render.run and checks its expect and absent strings. It knows
+// nothing about any pack's templates or vocabulary; a pack that adds a
+// fixture is covered without a Go change.
+func TestPackTemplateFixturesRender(t *testing.T) {
+	paths, err := filepath.Glob(filepath.Join("..", "..", "..", "..", "packs", "*", "testdata", "*.json"))
+	must(t, err)
+	if len(paths) == 0 {
+		t.Fatal("no pack template fixtures found")
+	}
+	for _, path := range paths {
+		path := path
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			raw, err := os.ReadFile(path)
+			must(t, err)
+			var fx packFixture
+			must(t, json.Unmarshal(raw, &fx))
+
+			packDir := filepath.Dir(filepath.Dir(path)) // testdata/..
+			out := filepath.Join(t.TempDir(), "out.pdf")
+			expectJSON, err := json.Marshal(fx.Expect)
+			must(t, err)
+
+			with := map[string]string{
+				"template": filepath.Join(packDir, fx.Template),
+				"data":     string(fx.Data),
+				"output":   out,
+				"expect":   string(expectJSON),
+			}
+			if len(fx.Before) > 0 {
+				with["before"] = strings.Join(fx.Before, "\n")
+			}
+
+			if _, err := renderer(t).Invoke(context.Background(), with); err != nil {
+				t.Fatalf("%s: %v", path, err)
+			}
+			if len(fx.Absent) == 0 {
+				return
+			}
+			text := app.Normalise(extractText(t, out))
+			for _, a := range fx.Absent {
+				if strings.Contains(text, app.Normalise(a)) {
+					t.Errorf("%s: %q must be absent from the rendered text", path, a)
+				}
+			}
 		})
-		if err != nil {
-			t.Errorf("%s: %v", name, err)
-		}
 	}
 }

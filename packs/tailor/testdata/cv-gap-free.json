@@ -1,0 +1,16 @@
+{
+  "template": "cv.typ",
+  "data": {
+    "history": {
+      "entries": [
+        {"title": "Keeper", "employer": "Lighthouse Board", "start": "2019", "end": null, "status": "grounded"}
+      ]
+    },
+    "tailored": {
+      "requirements": [{"text": "sails ships", "citations": [], "gap": false}],
+      "bullets": [{"citations": [{"quote": "Kept the light burning through the storm"}], "gap": false}]
+    }
+  },
+  "expect": ["Experience", "Keeper, Lighthouse Board", "Kept the light burning through the storm"],
+  "absent": ["Not shown by the record"]
+}

@@ -3,6 +3,7 @@ package app_test
 import (
 	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/tunedev/atlas/internal/core/app"
@@ -64,6 +65,14 @@ func TestGroundEscapesPointerSegments(t *testing.T) {
 func TestGroundRejectsInvalidJSON(t *testing.T) {
 	if _, err := app.Ground(json.RawMessage(`{"quote": `), sightingsSource); err == nil {
 		t.Fatal("invalid json was grounded")
+	}
+}
+
+func TestNormaliseMatchesWhatGroundSearches(t *testing.T) {
+	needle := app.Normalise("Kestrel   HOVERING\nover the")
+	haystack := app.Normalise(sightingsSource)
+	if !strings.Contains(haystack, needle) {
+		t.Errorf("Normalise(%q) = %q, not found in Normalise(source) = %q", "Kestrel   HOVERING\nover the", needle, haystack)
 	}
 }
 

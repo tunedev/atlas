@@ -1,0 +1,10 @@
+{
+  "template": "letter.typ",
+  "data": {
+    "tailored": {
+      "letter": [{"text": "I sail the coastal routes.", "citations": [{"quote": "sails the coastal routes"}], "gap": false}]
+    }
+  },
+  "expect": ["I sail the coastal routes."],
+  "absent": ["Not shown by the record", "Removed for lack of evidence", "Questions"]
+}
