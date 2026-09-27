@@ -120,8 +120,6 @@ func TestRenderDoesNotPublishWhenVerificationFails(t *testing.T) {
 	}
 }
 
-// An absent string is searched for in the whole text, even after a before
-// marker.
 func TestRenderFailsAndPublishesNothingWhenAnAbsentStringIsPrinted(t *testing.T) {
 	tmpl := writeTemplate(t, "#set text(hyphenate: false)\n#for b in data.items [ - #b ]\n")
 	out := filepath.Join(t.TempDir(), "doc.pdf")
@@ -130,7 +128,6 @@ func TestRenderFailsAndPublishesNothingWhenAnAbsentStringIsPrinted(t *testing.T)
 		"data":     `{"items":["Kept the light", "Sailed the ship"]}`,
 		"output":   out,
 		"expect":   `["Kept the light"]`,
-		"before":   "Sailed",
 		"absent":   `["Never wrecked", "sailed  THE ship"]`,
 	})
 	if err == nil || !strings.Contains(err.Error(), "sailed  THE ship") || !strings.Contains(err.Error(), "1 of 2") {
@@ -166,52 +163,20 @@ func TestRenderRejectsAbsentThatIsNotAStringList(t *testing.T) {
 	}
 }
 
-func TestBeforeScopesExpectToTheTextPrecedingTheEarliestMarker(t *testing.T) {
-	tmpl := writeTemplate(t, "#set text(hyphenate: false)\nKept the beacon lit.\n= Removed\nSailed away at dawn.\n")
-	out := filepath.Join(t.TempDir(), "doc.pdf")
-	_, err := renderer(t).Invoke(context.Background(), map[string]string{
-		"template": tmpl,
-		"data":     `{}`,
-		"output":   out,
-		"expect":   `["Kept the beacon lit."]`,
-		"before":   "Removed",
-	})
-	if err != nil {
-		t.Errorf("a string before the marker should verify: %v", err)
-	}
-}
-
-func TestBeforeMarkerHidesTextThatComesAfterIt(t *testing.T) {
-	tmpl := writeTemplate(t, "#set text(hyphenate: false)\nKept the beacon lit.\n= Removed\nSailed away at dawn.\n")
-	out := filepath.Join(t.TempDir(), "doc.pdf")
-	_, err := renderer(t).Invoke(context.Background(), map[string]string{
-		"template": tmpl,
-		"data":     `{}`,
-		"output":   out,
-		"expect":   `["Sailed away at dawn."]`,
-		"before":   "Removed",
-	})
-	if err == nil || !strings.Contains(err.Error(), "Sailed away at dawn") {
-		t.Errorf("err = %v; a string only after the marker must fail verification", err)
-	}
-}
-
 // packFixture is a pack's own description of one template render to check:
-// which template, what data to bind, which strings must be grounded (in
-// the text before the earliest "before" marker, when given), and which
-// strings must not appear anywhere in the rendered text. The Go harness
+// which template, what data to bind, which strings must be grounded, and
+// which strings must not appear anywhere in the rendered text. The Go harness
 // never names a template file or a pack's own wording; it only reads this
 // shape.
 type packFixture struct {
 	Template string          `json:"template"`
 	Data     json.RawMessage `json:"data"`
 	Expect   []string        `json:"expect"`
-	Before   []string        `json:"before"`
 	Absent   []string        `json:"absent"`
 }
 
 // decodeFixture decodes a pack template fixture strictly: an unknown field
-// (a typo such as "befor" for "before") fails loudly instead of being
+// (a typo such as "absnet" for "absent") fails loudly instead of being
 // silently dropped.
 func decodeFixture(raw []byte) (packFixture, error) {
 	var fx packFixture
@@ -222,10 +187,9 @@ func decodeFixture(raw []byte) (packFixture, error) {
 }
 
 // TestPackTemplateFixturesRender renders every pack's testdata fixture
-// through render.run, passing its expect, absent and before strings as the
-// tool's own inputs. It knows
-// nothing about any pack's templates or vocabulary; a pack that adds a
-// fixture is covered without a Go change.
+// through render.run, passing its expect and absent strings as the tool's
+// own inputs. It knows nothing about any pack's templates or vocabulary; a
+// pack that adds a fixture is covered without a Go change.
 func TestPackTemplateFixturesRender(t *testing.T) {
 	paths, err := filepath.Glob(filepath.Join("..", "..", "..", "..", "packs", "*", "testdata", "*.json"))
 	must(t, err)
@@ -247,7 +211,6 @@ func TestPackTemplateFixturesRender(t *testing.T) {
 				"output":   filepath.Join(t.TempDir(), "out.pdf"),
 				"expect":   jsonList(t, fx.Expect),
 				"absent":   jsonList(t, fx.Absent),
-				"before":   strings.Join(fx.Before, "\n"),
 			}
 			if _, err := renderer(t).Invoke(context.Background(), with); err != nil {
 				t.Fatalf("%s: %v", path, err)
@@ -264,10 +227,10 @@ func jsonList(t *testing.T, ss []string) string {
 }
 
 // TestPackFixtureRejectsAnUnknownField proves a misspelled key, such as
-// "befor" for "before", fails fixture decoding loudly rather than being
+// "absnet" for "absent", fails fixture decoding loudly rather than being
 // silently dropped.
 func TestPackFixtureRejectsAnUnknownField(t *testing.T) {
-	if _, err := decodeFixture([]byte(`{"template":"t.typ","expect":["x"],"befor":["y"]}`)); err == nil {
-		t.Error("want an error for the unknown field \"befor\"")
+	if _, err := decodeFixture([]byte(`{"template":"t.typ","expect":["x"],"absnet":["y"]}`)); err == nil {
+		t.Error("want an error for the unknown field \"absnet\"")
 	}
 }

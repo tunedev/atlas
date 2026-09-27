@@ -18,12 +18,10 @@ import (
 
 // Render binds JSON data into a Typst template, converts it to a PDF, and
 // verifies the PDF's own extracted text. Every "expect" string must be
-// grounded in it: with no "before" markers, anywhere in the text; with
-// markers, only in the text preceding the earliest one. A passing check
-// proves presence in that region and nothing more: not order, not count,
-// not that the string appears exactly once. No "absent" string (a JSON
-// array of strings) may be grounded anywhere in the text; an empty one is
-// never grounded. The PDF is written to "output" only once verification
+// grounded in it. A passing check proves presence and nothing more: not
+// order, not count, not that the string appears exactly once. No "absent"
+// string (a JSON array of strings) may be grounded anywhere in the text;
+// an empty one is never grounded. The PDF is written to "output" only once verification
 // passes; a failed verification leaves output untouched.
 type Render struct {
 	conv     ports.Converter
@@ -52,7 +50,6 @@ func (r *Render) Invoke(ctx context.Context, with map[string]string) (any, error
 	if err != nil {
 		return nil, fmt.Errorf("render.run: absent: %w", err)
 	}
-	before := parseBefore(with["before"])
 	out := with["output"]
 	if out == "" {
 		return nil, fmt.Errorf("render.run: no output path")
@@ -68,7 +65,7 @@ func (r *Render) Invoke(ctx context.Context, with map[string]string) (any, error
 	if err != nil {
 		return nil, fmt.Errorf("render.run: %w", err)
 	}
-	if err := verifyText(tmpPath, expect, before, absent); err != nil {
+	if err := verifyText(tmpPath, expect, absent); err != nil {
 		os.Remove(tmpPath)
 		return nil, fmt.Errorf("render.run: %s: %w", out, err)
 	}
@@ -98,19 +95,6 @@ func parseStrings(raw string) ([]string, error) {
 	return out, err
 }
 
-// parseBefore splits a newline-separated list of markers, trimming each and
-// dropping blank lines. An empty or all-blank input yields no markers.
-func parseBefore(raw string) []string {
-	var markers []string
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			markers = append(markers, line)
-		}
-	}
-	return markers
-}
-
 // writeTemp writes body to a new file beside out (creating out's parent
 // directories) and returns that file's path. The file is not out itself:
 // the caller renames it into place only once it is verified, so a failed
@@ -138,11 +122,8 @@ func writeTemp(out string, body []byte) (string, error) {
 
 // verifyText extracts path's text, joins a line ending in a hyphen to the
 // next (a Typst line wrap of a hyphenated word), requires every expected
-// string to be grounded in it, and no absent string to be. When before
-// names any markers, the expected strings are searched for only in the text
-// preceding the earliest one found; absent strings are searched for in the
-// whole text.
-func verifyText(path string, expect, before, absent []string) error {
+// string to be grounded in it, and no absent string to be.
+func verifyText(path string, expect, absent []string) error {
 	if len(expect) == 0 && len(absent) == 0 {
 		return nil
 	}
@@ -151,11 +132,7 @@ func verifyText(path string, expect, before, absent []string) error {
 		return err
 	}
 	whole := app.Normalise(strings.ReplaceAll(text, "-\n", "-"))
-	scoped := whole
-	if i, ok := earliestMarker(whole, before); ok {
-		scoped = whole[:i]
-	}
-	missing, err := ungrounded(expect, scoped)
+	missing, err := ungrounded(expect, whole)
 	if err != nil {
 		return err
 	}
@@ -206,25 +183,6 @@ func without(n int, skip []int) []int {
 		out = append(out, i)
 	}
 	return out
-}
-
-// earliestMarker reports the start index, within haystack, of the earliest
-// occurrence of any marker in before. haystack and every marker are
-// compared through app.Normalise, the same normalisation app.Ground applies
-// to what it searches, so the index it returns cuts haystack at the same
-// place Ground would see the marker start.
-func earliestMarker(haystack string, before []string) (int, bool) {
-	earliest := -1
-	for _, m := range before {
-		m = app.Normalise(m)
-		if m == "" {
-			continue
-		}
-		if i := strings.Index(haystack, m); i >= 0 && (earliest == -1 || i < earliest) {
-			earliest = i
-		}
-	}
-	return earliest, earliest >= 0
 }
 
 // indexOfPointer reads i from a pointer "/<i>/quote".
