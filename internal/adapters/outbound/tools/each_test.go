@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tunedev/atlas/internal/adapters/outbound/gitdocs"
 	"github.com/tunedev/atlas/internal/adapters/outbound/tools"
 	"github.com/tunedev/atlas/internal/core/ports"
 )
@@ -213,6 +214,37 @@ func TestTwoItemsWithIdenticalSubjectsAreBothJudged(t *testing.T) {
 	}
 }
 
+// TestAReusedJudgementWhoseDocumentIsMissingIsJudgedFresh records a
+// judgement, then reuses the same index against a Docs store that never
+// saw that judgement written (the realistic shape of the document going
+// missing: the index row survives, the git history behind it does not).
+// Get on a path never committed fails with the real gitdocs not-found
+// error, so the item must be judged again rather than aborting the run.
+func TestAReusedJudgementWhoseDocumentIsMissingIsJudgedFresh(t *testing.T) {
+	judge := &shelfJudge{}
+	docs, index := store(t)
+	src := fakeSource{items: []ports.Item{book("a", "Dune", 412, "open")}, refreshed: time.Now()}
+	invokeEach(t, tools.NewJudgeEach(src, judge, docs, index, "m", 24*time.Hour, slog.Default()), eachWith())
+	if judge.calls != 1 {
+		t.Fatalf("calls = %d, want 1", judge.calls)
+	}
+
+	emptyDocs, err := gitdocs.Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatalf("open docs: %v", err)
+	}
+	if _, err := emptyDocs.Put(context.Background(), "unrelated.json", []byte(`{}`), "unrelated"); err != nil {
+		t.Fatalf("put unrelated: %v", err)
+	}
+	got := invokeEach(t, tools.NewJudgeEach(src, judge, emptyDocs, index, "m", 24*time.Hour, slog.Default()), eachWith())
+	if judge.calls != 2 {
+		t.Errorf("calls = %d, want 2: a reused judgement whose document is missing must be judged fresh", judge.calls)
+	}
+	if got.rows[0]["reused"] != false {
+		t.Errorf("row = %v, want reused false", got.rows[0])
+	}
+}
+
 const shelfRulesDoc = `{"rules": [
   {"id": "min-pages", "statement": "At least 500 pages.", "kind": "comparable", "op": ">=", "value": 500},
   {"id": "no-spoilers", "statement": "No spoilers in the blurb.", "kind": "judged", "threshold": 0.6, "ask": "Does the blurb reveal the ending?"},
@@ -326,6 +358,31 @@ func TestBadConfigurationFailsBeforeAnyItemIsAsked(t *testing.T) {
 	}
 	if judge.calls != 0 {
 		t.Errorf("calls = %d: configuration errors must stop the run before asking", judge.calls)
+	}
+}
+
+// TestConfigurationIsCheckedEvenWithNoMatchingItems proves the checks are a
+// pre-flight, not a side effect of asking the first item: both a
+// shared-initial option set and a malformed item template fail Invoke here
+// even though no item matches, so nothing about the fix depends on an item
+// reaching t.one.
+func TestConfigurationIsCheckedEvenWithNoMatchingItems(t *testing.T) {
+	for name, change := range map[string]map[string]string{
+		"shared-initial options":        {"questions": strings.Replace(eachQuestions, "[fiction, history]", "[fiction, frontier]", 1)},
+		"malformed subject_id template": {"subject_id": "[[ .item.id"},
+	} {
+		judge := &shelfJudge{}
+		tool, _, _ := newEach(t, []ports.Item{book("a", "Dune", 412, "lent")}, judge)
+		with := eachWith()
+		for k, v := range change {
+			with[k] = v
+		}
+		if _, err := tool.Invoke(context.Background(), with); err == nil {
+			t.Errorf("%s: accepted even though no item matched", name)
+		}
+		if judge.calls != 0 {
+			t.Errorf("%s: calls = %d, want 0", name, judge.calls)
+		}
 	}
 }
 

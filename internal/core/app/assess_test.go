@@ -49,6 +49,35 @@ func TestAssessOrdersReasonsAndLeavesTheVerdictAlone(t *testing.T) {
 	}
 }
 
+func TestAssessNotesZeroCoverageOnTheVerdictBeforeTheOtherAnswers(t *testing.T) {
+	answers := []ports.Answer{
+		answer("verdict", "keep", 0.55, 0, 3),
+		answer("genre", "history", 0.9, 3, 5),
+	}
+	got, err := app.Assess("verdict", answers, nil)
+	if err != nil {
+		t.Fatalf("Assess: %v", err)
+	}
+	want := []string{
+		"verdict: keep (0.55, coverage 0 of 3)",
+		"genre: history (0.90)",
+	}
+	if !slices.Equal(got.Reasons, want) {
+		t.Errorf("reasons =\n%q\nwant\n%q", got.Reasons, want)
+	}
+}
+
+func TestAssessSaysNothingAboutTheVerdictsCoverageWhenItIsRepresented(t *testing.T) {
+	answers := []ports.Answer{answer("verdict", "keep", 0.55, 3, 3)}
+	got, err := app.Assess("verdict", answers, nil)
+	if err != nil {
+		t.Fatalf("Assess: %v", err)
+	}
+	if len(got.Reasons) != 0 {
+		t.Errorf("reasons = %q, want none", got.Reasons)
+	}
+}
+
 func TestAssessWithoutTheVerdictAnswerIsAnError(t *testing.T) {
 	if _, err := app.Assess("verdict", []ports.Answer{answer("genre", "history", 1, 1, 5)}, nil); err == nil {
 		t.Error("an assessment was built with no verdict answer")

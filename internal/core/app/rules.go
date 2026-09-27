@@ -68,6 +68,9 @@ func ParseRules(body []byte) ([]Rule, error) {
 			if !validOp(r.Op) {
 				return nil, fmt.Errorf("rules: %s: unknown operator %q", r.ID, r.Op)
 			}
+			if err := checkComparableValue(r); err != nil {
+				return nil, err
+			}
 		case RuleJudged:
 			if strings.TrimSpace(r.Ask) == "" {
 				return nil, fmt.Errorf("rules: %s: a judged rule needs ask, the yes/no question whose yes means it is broken", r.ID)
@@ -83,6 +86,28 @@ func ParseRules(body []byte) ([]Rule, error) {
 		}
 	}
 	return doc.Rules, nil
+}
+
+// checkComparableValue rejects a comparable rule whose value can never trip
+// it: none at all, a non-number under an ordering operator, or, under ==
+// or !=, a value that is neither a number nor a string.
+func checkComparableValue(r Rule) error {
+	if r.Value == nil {
+		return fmt.Errorf("rules: %s: comparable rule has no value", r.ID)
+	}
+	_, isNumber := r.Value.(float64)
+	switch r.Op {
+	case ">=", "<=", ">", "<":
+		if !isNumber {
+			return fmt.Errorf("rules: %s: %s needs a number, got %v", r.ID, r.Op, r.Value)
+		}
+	case "==", "!=":
+		_, isString := r.Value.(string)
+		if !isNumber && !isString {
+			return fmt.Errorf("rules: %s: %s needs a number or a string, got %v", r.ID, r.Op, r.Value)
+		}
+	}
+	return nil
 }
 
 func validOp(op string) bool {
@@ -149,13 +174,19 @@ func checkComparable(r Rule, doc any, field string) RuleResult {
 	return RuleResult{ID: r.ID, State: state, Evidence: fmt.Sprintf("%s is %s, rule needs %s %s", field, show(got), r.Op, show(r.Value))}
 }
 
-// checkJudged trips r when the probability of yes reaches its threshold.
+// checkJudged trips r when the probability of yes reaches its threshold. An
+// answer whose alternatives named none of its declared options gets that
+// noted in its evidence, since the probability then measured nothing.
 func checkJudged(r Rule, a ports.Answer) RuleResult {
 	p := a.Distribution["yes"]
+	state, evidence := RuleClear, fmt.Sprintf("p(yes) %.2f < %.2f", p, r.Threshold)
 	if p >= r.Threshold {
-		return RuleResult{ID: r.ID, State: RuleTripped, Evidence: fmt.Sprintf("p(yes) %.2f >= %.2f", p, r.Threshold)}
+		state, evidence = RuleTripped, fmt.Sprintf("p(yes) %.2f >= %.2f", p, r.Threshold)
 	}
-	return RuleResult{ID: r.ID, State: RuleClear, Evidence: fmt.Sprintf("p(yes) %.2f < %.2f", p, r.Threshold)}
+	if a.Coverage.Declared > 0 && a.Coverage.Represented == 0 {
+		evidence += fmt.Sprintf(", coverage 0 of %d", a.Coverage.Declared)
+	}
+	return RuleResult{ID: r.ID, State: state, Evidence: evidence}
 }
 
 // RuleInputs collects, for every rule id mapped in fields, the field path

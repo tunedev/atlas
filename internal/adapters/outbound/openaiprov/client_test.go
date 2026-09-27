@@ -165,8 +165,7 @@ func TestASchemaReachesTheEngineInDeclaredKeyOrder(t *testing.T) {
 }
 
 // TestAnInvalidSchemaIsAnError proves a schema that is not valid JSON is
-// still rejected, with the same error prefix, now that the adapter checks
-// validity with json.Valid instead of decoding it into a map.
+// rejected, with the same error prefix the adapter's other errors carry.
 func TestAnInvalidSchemaIsAnError(t *testing.T) {
 	_, err := client(t, "http://unused.invalid").Complete(context.Background(),
 		ports.Prompt{User: "q", Schema: []byte("not json")})

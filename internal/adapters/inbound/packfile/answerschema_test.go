@@ -46,9 +46,7 @@ func decodePackQuestions(t *testing.T, raw string) []ports.Question {
 // TestEveryShippedJudgeEachPackPassesValidation loads every pack under
 // packs/, decodes the questions block of each judge.each step exactly as the
 // pack YAML shapes it (id, type, ask, options, levels, forms), and asserts
-// app.AnswerSchema accepts the whole set. It fails if a shipped pack's
-// option set shares an initial, which is exactly how a shipped pack's
-// "seniority" levels once failed before its rewrite for this task.
+// app.AnswerSchema accepts the whole set.
 //
 // This lives here, in packfile's own test package, rather than in
 // core/app: it needs packfile.Load to read a real pack file, and a core

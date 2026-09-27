@@ -334,12 +334,8 @@ func TestAnAnswerResolvesByTheFirstTokenOfAMultiTokenOption(t *testing.T) {
 	}
 }
 
-// shapeQuestion is the option set that used to require a live answer token
-// to trigger optionMatch's prefix-ambiguity error: "platform" and "plain"
-// share nothing but their first character. AnswerSchema now rejects it
-// before Ask ever calls the provider (TestASharedInitialOptionSetIsRejectedBeforeTheProviderIsCalled),
-// which is why that runtime ambiguity error can no longer be reached this
-// way; it is exercised at the validation layer instead.
+// shapeQuestion is an option set AnswerSchema rejects: "platform" and
+// "plain" share nothing but their first character.
 func shapeQuestion() ports.Question {
 	return ports.Question{
 		ID:      "shape",
@@ -349,16 +345,11 @@ func shapeQuestion() ports.Question {
 	}
 }
 
-// TestASharedInitialOptionSetIsRejectedBeforeTheProviderIsCalled replaces
-// two earlier tests, TestATokenPrefixingTwoDifferentOptionsIsAnAmbiguityError
-// and TestAnAmbiguousEmittedTokenIsDistinguishedFromAnAmbiguousAlternative,
-// which fed shapeQuestion's "platform"/"plain" clash through a live answer
-// token to reach optionMatch's ambiguity error at read time. AnswerSchema's
-// shared-initial guard (answerschema.go) now rejects that option set
-// up front, so the read-time ambiguity path it used to reach is
-// unreachable through Ask: any answer token able to prefix two different
-// options' forms implies those options already share a first character,
-// and AnswerSchema refuses that before a call is ever made.
+// TestASharedInitialOptionSetIsRejectedBeforeTheProviderIsCalled proves
+// AnswerSchema's shared-initial guard rejects shapeQuestion's option set
+// before Ask ever calls the provider: any answer token able to prefix two
+// different options' forms implies those options already share a first
+// character, so AnswerSchema refuses that up front.
 func TestASharedInitialOptionSetIsRejectedBeforeTheProviderIsCalled(t *testing.T) {
 	p := &recordingProvider{completion: twoAnswers()}
 

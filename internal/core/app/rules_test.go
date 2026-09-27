@@ -42,14 +42,17 @@ func TestParseRulesDefaultsAThresholdAndRejectsBadRules(t *testing.T) {
 		t.Errorf("absent threshold = %v, want 0.5", rules[3].Threshold)
 	}
 	for name, body := range map[string]string{
-		"no id":                 `{"rules": [{"kind": "judged", "statement": "x"}]}`,
-		"unknown kind":          `{"rules": [{"id": "a", "kind": "guessed"}]}`,
-		"bad operator":          `{"rules": [{"id": "a", "kind": "comparable", "op": "~", "value": 1}]}`,
-		"repeated id":           `{"rules": [{"id": "a", "kind": "judged", "ask": "Is x true?"}, {"id": "a", "kind": "judged", "ask": "Is x true?"}]}`,
-		"threshold > 1":         `{"rules": [{"id": "a", "kind": "judged", "ask": "Is x true?", "threshold": 1.5}]}`,
-		"judged without ask":    `{"rules": [{"id": "a", "kind": "judged"}]}`,
-		"judged with blank ask": `{"rules": [{"id": "a", "kind": "judged", "ask": "   "}]}`,
-		"not json":              `rules: []`,
+		"no id":                     `{"rules": [{"kind": "judged", "statement": "x"}]}`,
+		"unknown kind":              `{"rules": [{"id": "a", "kind": "guessed"}]}`,
+		"bad operator":              `{"rules": [{"id": "a", "kind": "comparable", "op": "~", "value": 1}]}`,
+		"repeated id":               `{"rules": [{"id": "a", "kind": "judged", "ask": "Is x true?"}, {"id": "a", "kind": "judged", "ask": "Is x true?"}]}`,
+		"threshold > 1":             `{"rules": [{"id": "a", "kind": "judged", "ask": "Is x true?", "threshold": 1.5}]}`,
+		"judged without ask":        `{"rules": [{"id": "a", "kind": "judged"}]}`,
+		"judged with blank ask":     `{"rules": [{"id": "a", "kind": "judged", "ask": "   "}]}`,
+		"comparable without value":  `{"rules": [{"id": "a", "kind": "comparable", "op": ">="}]}`,
+		"ordering op, string value": `{"rules": [{"id": "a", "kind": "comparable", "op": ">=", "value": "100"}]}`,
+		"== with a bool value":      `{"rules": [{"id": "a", "kind": "comparable", "op": "==", "value": true}]}`,
+		"not json":                  `rules: []`,
 	} {
 		if _, err := app.ParseRules([]byte(body)); err == nil {
 			t.Errorf("%s: accepted", name)
@@ -122,6 +125,19 @@ func TestAJudgedRuleTripsAtItsThreshold(t *testing.T) {
 		if got.State != want {
 			t.Errorf("p=%v: %s, want %s", p, got.State, want)
 		}
+	}
+}
+
+func TestAJudgedRuleWithZeroCoverageNotesItInEvidence(t *testing.T) {
+	rule := parsed(t)[2] // no-spoilers, threshold 0.6
+	a := ports.Answer{
+		ID: app.RuleQuestionID(rule.ID), Kind: ports.KindNoul, Chosen: "yes",
+		Distribution: map[string]float64{"yes": 0.71, "no": 0.29},
+		Coverage:     ports.Coverage{Represented: 0, Declared: 2},
+	}
+	got := mustCheck(t, []app.Rule{rule}, nil, nil, []ports.Answer{a})[0]
+	if got.State != app.RuleTripped || !strings.Contains(got.Evidence, "coverage 0 of 2") {
+		t.Errorf("evidence = %q, want tripped with coverage 0 of 2 noted", got.Evidence)
 	}
 }
 

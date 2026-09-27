@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
@@ -113,6 +114,23 @@ func promptUserMessage(subject string, qs []ports.Question) string {
 		fmt.Fprintf(&sb, "%s: %s (one of: %s)\n", q.ID, q.Ask, strings.Join(OptionsFor(q), ", "))
 	}
 	return sb.String()
+}
+
+// JudgeRequest returns exactly what a call to Ask sends the provider about
+// subject and qs: the system message, the user message built by
+// promptUserMessage, and the schema built by AnswerSchema. Two calls with
+// equal subject and qs return byte-identical results, so Fingerprint can
+// hash this to detect a changed prompt or schema.
+func JudgeRequest(subject string, qs []ports.Question) ([]byte, error) {
+	schema, err := AnswerSchema(qs)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(struct {
+		System string
+		User   string
+		Schema json.RawMessage
+	}{judgeSystemMessage, promptUserMessage(subject, qs), schema})
 }
 
 // idsOf returns qs's question ids, in order.

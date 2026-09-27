@@ -3,12 +3,14 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"gopkg.in/yaml.v3"
 
 	"github.com/tunedev/atlas/internal/core/app"
@@ -119,8 +121,11 @@ func (t *JudgeEach) Invoke(ctx context.Context, with map[string]string) (any, er
 	return map[string]any{"rows": rows, "_meta": meta}, nil
 }
 
-// parse reads and checks with. The rules document is read here, so a
-// missing or malformed one fails the run before any item is asked.
+// parse reads and checks with, and is a full pre-flight: the rules document
+// is read, the resulting question set is built into a schema, and both item
+// templates are parsed, all here, so a bad option set, a malformed
+// template, or a missing or malformed rules document fails the run before
+// any item is asked.
 func (t *JudgeEach) parse(ctx context.Context, with map[string]string) (eachSpec, error) {
 	s := eachSpec{subjectID: with["subject_id"], subject: with["subject"], verdict: with["verdict"]}
 	for name, v := range map[string]string{"subject_id": s.subjectID, "subject": s.subject, "verdict": s.verdict} {
@@ -171,6 +176,16 @@ func (t *JudgeEach) parse(ctx context.Context, with map[string]string) (eachSpec
 			s.questions = append(s.questions, app.RuleQuestion(r))
 		}
 	}
+
+	if _, err := app.AnswerSchema(s.questions); err != nil {
+		return eachSpec{}, err
+	}
+	if _, err := app.ParseItemTemplate(s.subjectID); err != nil {
+		return eachSpec{}, err
+	}
+	if _, err := app.ParseItemTemplate(s.subject); err != nil {
+		return eachSpec{}, err
+	}
 	return s, nil
 }
 
@@ -190,7 +205,11 @@ func (t *JudgeEach) one(ctx context.Context, s eachSpec, itemID string, doc any)
 	if err != nil {
 		return errorRow(subjectID, err), false, nil
 	}
-	fp, err := app.Fingerprint(subject, s.questions, s.rules, app.RuleInputs(doc, s.fields), t.model)
+	req, err := app.JudgeRequest(subject, s.questions)
+	if err != nil {
+		return errorRow(subjectID, err), false, nil
+	}
+	fp, err := app.Fingerprint(req, s.rules, app.RuleInputs(doc, s.fields), s.verdict, t.model)
 	if err != nil {
 		return errorRow(subjectID, err), false, nil
 	}
@@ -223,7 +242,10 @@ func (t *JudgeEach) one(ctx context.Context, s eachSpec, itemID string, doc any)
 // rebuilds its row from the stored answers and rule results, through the
 // same Assess a fresh judgement goes through. Matching subjectID as well as
 // fp keeps two different items that render the same subject text from
-// sharing one judgement.
+// sharing one judgement. An indexed judgement whose document gitdocs can no
+// longer find (object.ErrFileNotFound: the index row outlived the git
+// history behind it) is treated as no reuse, so the item is judged fresh
+// instead of aborting the run; any other read failure still aborts it.
 func (t *JudgeEach) reuse(ctx context.Context, s eachSpec, subjectID, fp string) (map[string]any, bool, error) {
 	recs, err := t.index.Find(ctx, ports.Query{Kind: "judgement", Match: map[string]string{"fingerprint": fp, "subject_id": subjectID}, Limit: 1})
 	if err != nil {
@@ -233,6 +255,9 @@ func (t *JudgeEach) reuse(ctx context.Context, s eachSpec, subjectID, fp string)
 		return nil, false, nil
 	}
 	stored, err := app.ReadJudgement(ctx, t.docs, recs[0].Path)
+	if errors.Is(err, object.ErrFileNotFound) {
+		return nil, false, nil
+	}
 	if err != nil {
 		return nil, false, err
 	}
