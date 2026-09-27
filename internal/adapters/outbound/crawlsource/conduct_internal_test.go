@@ -275,3 +275,50 @@ func TestAHostAskingForMoreThanTheCrawlHasFailsAtOnceAndSparesTheRest(t *testing
 		t.Errorf("failures = %v; the slow host's second target must fail naming the host", failed)
 	}
 }
+
+// robotsSite answers robots.txt with each status in turn (the last one
+// repeats), an allow-everything body on a 200, and every other path with a
+// page.
+func robotsSite(t *testing.T, statuses ...int) (*httptest.Server, *siteLog) {
+	t.Helper()
+	log := &siteLog{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.record(r)
+		if r.URL.Path != "/robots.txt" {
+			io.WriteString(w, "page")
+			return
+		}
+		status := statuses[min(log.count("/robots.txt")-1, len(statuses)-1)]
+		w.WriteHeader(status)
+		io.WriteString(w, "User-agent: *\nAllow: /\n")
+	}))
+	t.Cleanup(srv.Close)
+	return srv, log
+}
+
+func TestARobotsTxtAnsweringTooManyRequestsDisallows(t *testing.T) {
+	srv, log := robotsSite(t, http.StatusTooManyRequests)
+	if _, err := get(t, newConduct(testConfig(), http.DefaultTransport), srv.URL+"/open"); !errors.Is(err, ErrDisallowed) {
+		t.Fatalf("err = %v; a 429 robots.txt must disallow the host", err)
+	}
+	if log.count("/open") != 0 {
+		t.Error("a page was requested from a host whose robots.txt answered 429")
+	}
+}
+
+func TestAFailedRobotsTxtIsFetchedAgainForTheNextTarget(t *testing.T) {
+	srv, log := robotsSite(t, http.StatusServiceUnavailable, http.StatusOK)
+	c := newConduct(testConfig(), http.DefaultTransport)
+	if _, err := get(t, c, srv.URL+"/a"); !errors.Is(err, ErrDisallowed) {
+		t.Fatalf("err = %v; a 503 robots.txt must disallow the first target", err)
+	}
+	if _, err := get(t, c, srv.URL+"/b"); err != nil {
+		t.Fatalf("err = %v; the second target must see the robots.txt that now answers 200", err)
+	}
+	if n := log.count("/robots.txt"); n != 2 {
+		t.Errorf("robots.txt fetched %d times, want 2", n)
+	}
+	if log.count("/a") != 0 || log.count("/b") != 1 {
+		t.Errorf("/a requested %d times, /b %d times; want 0 and 1", log.count("/a"), log.count("/b"))
+	}
+}

@@ -127,35 +127,45 @@ func (c *Conduct) permitted(ctx context.Context, u *url.URL) error {
 }
 
 // fetchRobots reads the robots.txt of u's host, taking the host's turn like
-// any other request and following redirects. A 4xx allows everything; a 5xx,
-// an unexpected status or an unreachable host disallows everything.
-func (c *Conduct) fetchRobots(ctx context.Context, u *url.URL) (*robotstxt.RobotsData, error) {
+// any other request and following redirects. A 2xx is parsed and a 4xx other
+// than 429 allows everything; both are kept. A 429, a 5xx, an unexpected
+// status, an unreachable host or an unreadable body disallows everything for
+// this check only, so the next check fetches robots.txt again.
+func (c *Conduct) fetchRobots(ctx context.Context, u *url.URL) (*robotstxt.RobotsData, bool, error) {
 	if err := c.turns.wait(ctx, u.Host); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	robotsURL := url.URL{Scheme: u.Scheme, Host: u.Host, Path: "/robots.txt"}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, robotsURL.String(), nil)
 	if err != nil {
-		return nil, fmt.Errorf("crawlsource: %s: %w", robotsURL.String(), err)
+		return nil, false, fmt.Errorf("crawlsource: %s: %w", robotsURL.String(), err)
 	}
 	req.Header.Set("User-Agent", c.cfg.UserAgent)
 	c.turns.sent(u.Host)
 	resp, err := (&http.Client{Transport: c.next, Timeout: c.cfg.Timeout}).Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, false, ctx.Err()
 		}
-		return disallowAll(), nil
+		return disallowAll(), false, nil
 	}
 	body, err := readBounded(resp.Body, c.cfg.MaxBytes)
-	if err != nil {
-		return disallowAll(), nil
+	if err != nil || !lasting(resp.StatusCode) {
+		return disallowAll(), false, nil
 	}
 	data, err := robotstxt.FromStatusAndBytes(resp.StatusCode, body)
 	if err != nil {
-		return disallowAll(), nil
+		return disallowAll(), false, nil
 	}
-	return data, nil
+	return data, true, nil
+}
+
+// lasting reports whether a robots.txt status says something about the host
+// beyond this moment: a 2xx, or a 4xx other than 429.
+func lasting(status int) bool {
+	ok := status >= 200 && status < 300
+	missing := status >= 400 && status < 500 && status != http.StatusTooManyRequests
+	return ok || missing
 }
 
 // disallowAll is the robots.txt a host gets when its own cannot be read.
