@@ -1,5 +1,16 @@
 package app
 
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+
+	"github.com/tunedev/atlas/internal/core/ports"
+)
+
 // MinSample is the fewest scored points a headline Brier score is reported
 // for, and MinBinSample the fewest one reliability row is: below them the
 // standard error of an observed proportion is too wide for the number to
@@ -83,4 +94,199 @@ func outcomeValue(happened bool) float64 {
 		return 1
 	}
 	return 0
+}
+
+// Prediction names what a calibration run scores. QuestionID is the
+// recorded answer that predicts a real-world result; the summed mass of its
+// Options is the predicted probability of a Positive outcome. Positive and
+// Negative are outcome states a pack declares; an outcome in neither is
+// left out and counted, never scored as a miss.
+type Prediction struct {
+	QuestionID string
+	Options    []string
+	Positive   []string
+	Negative   []string
+}
+
+// CalibrateOptions narrows a run to one provider or one model; empty
+// pools them.
+type CalibrateOptions struct {
+	Provider string
+	Model    string
+}
+
+// EngineCalibration is a Calibration for one provider and model.
+type EngineCalibration struct {
+	Provider, Model string
+	Calibration
+}
+
+func (p Prediction) validate() error {
+	switch {
+	case p.QuestionID == "":
+		return errors.New("calibrate: no question id")
+	case len(p.Options) == 0:
+		return errors.New("calibrate: no predicted options")
+	case len(p.Positive) == 0 || len(p.Negative) == 0:
+		return errors.New("calibrate: positive and negative outcome states are both needed")
+	}
+	for _, s := range p.Positive {
+		if slices.Contains(p.Negative, s) {
+			return fmt.Errorf("calibrate: %q is both positive and negative", s)
+		}
+	}
+	return nil
+}
+
+// Calibrate scores every judgement that asked p.QuestionID and has an
+// outcome p classifies, against the mass it gave p.Options.
+func Calibrate(ctx context.Context, docs ports.Docs, index ports.Index, p Prediction, opts CalibrateOptions) (Calibration, error) {
+	if err := p.validate(); err != nil {
+		return Calibration{}, err
+	}
+	match := map[string]string{}
+	if opts.Provider != "" {
+		match["provider"] = opts.Provider
+	}
+	if opts.Model != "" {
+		match["model"] = opts.Model
+	}
+	rows, err := index.Find(ctx, ports.Query{Kind: "judgement", Match: match})
+	if err != nil {
+		return Calibration{}, fmt.Errorf("calibrate: find: %w", err)
+	}
+	return calibrateRows(ctx, docs, rows, p)
+}
+
+// CalibrateByEngine scores p over every engine pooled, and over each
+// provider and model on its own, ordered by provider then model.
+func CalibrateByEngine(ctx context.Context, docs ports.Docs, index ports.Index, p Prediction) (Calibration, []EngineCalibration, error) {
+	if err := p.validate(); err != nil {
+		return Calibration{}, nil, err
+	}
+	rows, err := index.Find(ctx, ports.Query{Kind: "judgement"})
+	if err != nil {
+		return Calibration{}, nil, fmt.Errorf("calibrate: find: %w", err)
+	}
+	pooled, err := calibrateRows(ctx, docs, rows, p)
+	if err != nil {
+		return Calibration{}, nil, err
+	}
+	groups := map[[2]string][]ports.Record{}
+	for _, r := range rows {
+		key := [2]string{r.Fields["provider"], r.Fields["model"]}
+		groups[key] = append(groups[key], r)
+	}
+	keys := make([][2]string, 0, len(groups))
+	for k := range groups {
+		keys = append(keys, k)
+	}
+	slices.SortFunc(keys, func(a, b [2]string) int { return strings.Compare(a[0]+"\x00"+a[1], b[0]+"\x00"+b[1]) })
+	var byEngine []EngineCalibration
+	for _, k := range keys {
+		c, err := calibrateRows(ctx, docs, groups[k], p)
+		if err != nil {
+			return Calibration{}, nil, err
+		}
+		byEngine = append(byEngine, EngineCalibration{Provider: k[0], Model: k[1], Calibration: c})
+	}
+	return pooled, byEngine, nil
+}
+
+// scoredDoc is the part of a judgement document a calibration reads.
+type scoredDoc struct {
+	Questions []judgementQuestion `json:"questions"`
+	Answers   []judgementAnswer   `json:"answers"`
+	Outcome   *outcomeDoc         `json:"outcome"`
+}
+
+func calibrateRows(ctx context.Context, docs ports.Docs, rows []ports.Record, p Prediction) (Calibration, error) {
+	var points []scoredPoint
+	var excluded ExclusionCounts
+	for _, r := range rows {
+		if !slices.Contains(strings.Split(r.Fields["questions"], ","), p.QuestionID) {
+			continue
+		}
+		body, err := docs.Get(ctx, r.Path)
+		if err != nil {
+			return Calibration{}, fmt.Errorf("calibrate: read %s: %w", r.Path, err)
+		}
+		var doc scoredDoc
+		if err := json.Unmarshal(body, &doc); err != nil {
+			return Calibration{}, fmt.Errorf("calibrate: decode %s: %w", r.Path, err)
+		}
+		pt, reason, err := p.point(r.Path, doc)
+		if err != nil {
+			return Calibration{}, err
+		}
+		switch reason {
+		case "":
+			points = append(points, pt)
+		case "pending":
+			excluded.Pending++
+		case "option_mismatch":
+			excluded.OptionMismatch++
+		case "zero_coverage":
+			excluded.ZeroCoverage++
+		case "unclassified":
+			excluded.Unclassified++
+		}
+	}
+	c := score(points)
+	c.Excluded = excluded
+	return c, nil
+}
+
+// point reads one judgement document as a scored point, or names why it is
+// left out. A document that lists the question but has no answer for it is
+// an error: the record contradicts itself.
+func (p Prediction) point(path string, doc scoredDoc) (scoredPoint, string, error) {
+	if doc.Outcome == nil {
+		return scoredPoint{}, "pending", nil
+	}
+	i := slices.IndexFunc(doc.Answers, func(a judgementAnswer) bool { return a.ID == p.QuestionID })
+	if i < 0 {
+		return scoredPoint{}, "", fmt.Errorf("calibrate: %s has no answer %q", path, p.QuestionID)
+	}
+	answer := doc.Answers[i]
+	if !p.declared(doc, answer) {
+		return scoredPoint{}, "option_mismatch", nil
+	}
+	if answer.Coverage.Represented == 0 {
+		return scoredPoint{}, "zero_coverage", nil
+	}
+	var happened bool
+	switch {
+	case slices.Contains(p.Positive, doc.Outcome.State):
+		happened = true
+	case slices.Contains(p.Negative, doc.Outcome.State):
+		happened = false
+	default:
+		return scoredPoint{}, "unclassified", nil
+	}
+	var mass float64
+	for _, o := range p.Options {
+		mass += answer.Distribution[o]
+	}
+	return scoredPoint{predicted: mass, happened: happened}, "", nil
+}
+
+// declared reports whether the question answer came from declares every
+// predicted option. A noul with no options of its own declares yes and no.
+func (p Prediction) declared(doc scoredDoc, answer judgementAnswer) bool {
+	var options []string
+	for _, q := range doc.Questions {
+		if q.ID == answer.ID {
+			options = q.Options
+			if len(options) == 0 && q.Kind == string(ports.KindNoul) {
+				options = ports.NoulOptions()
+			}
+		}
+	}
+	for _, o := range p.Options {
+		if !slices.Contains(options, o) {
+			return false
+		}
+	}
+	return true
 }
