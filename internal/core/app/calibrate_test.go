@@ -58,6 +58,26 @@ func TestCalibrateScoresResolvedJudgementsAndCountsTheRest(t *testing.T) {
 	}
 }
 
+func TestInconclusiveAndUnclassifiedOutcomesAreCountedSeparately(t *testing.T) {
+	ctx := context.Background()
+	docs, index := record(t)
+	resolved(t, docs, index, "foggy", 0.8, "fog")
+	resolved(t, docs, index, "hailing", 0.8, "hail")
+	p := rainPrediction()
+	p.Inconclusive = []string{"fog"}
+
+	c, err := app.Calibrate(ctx, docs, index, p, app.CalibrateOptions{})
+	if err != nil {
+		t.Fatalf("calibrate: %v", err)
+	}
+	if c.N != 0 {
+		t.Errorf("N = %d, want 0", c.N)
+	}
+	if c.Excluded.Inconclusive != 1 || c.Excluded.Unclassified != 1 {
+		t.Errorf("excluded = %+v, want Inconclusive: 1, Unclassified: 1", c.Excluded)
+	}
+}
+
 func TestAZeroCoverageAnswerIsExcludedEvenWhenItWasRight(t *testing.T) {
 	ctx := context.Background()
 	docs, index := record(t)
@@ -104,6 +124,7 @@ func TestAPredictionThatCannotMeanAnythingIsRefused(t *testing.T) {
 		"overlap":            {QuestionID: "rain", Options: []string{"yes"}, Positive: []string{"wet"}, Negative: []string{"dry", "wet"}},
 		"duplicate option":   {QuestionID: "rain", Options: []string{"yes", "yes"}, Positive: []string{"wet"}, Negative: []string{"dry"}},
 		"duplicate positive": {QuestionID: "rain", Options: []string{"yes"}, Positive: []string{"wet", "wet"}, Negative: []string{"dry"}},
+		"state in two lists": {QuestionID: "rain", Options: []string{"yes"}, Positive: []string{"wet"}, Negative: []string{"dry", "fog"}, Inconclusive: []string{"fog"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := app.Calibrate(context.Background(), docs, index, p, app.CalibrateOptions{}); err == nil || !strings.HasPrefix(err.Error(), "calibrate: ") {

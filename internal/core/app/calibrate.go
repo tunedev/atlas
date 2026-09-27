@@ -34,7 +34,8 @@ type Calibration struct {
 type ExclusionCounts struct {
 	Pending        int // no outcome attached yet
 	ZeroCoverage   int // the scored answer's alternatives named none of its options
-	Unclassified   int // an outcome the prediction names neither positive nor negative
+	Inconclusive   int // resolved, State is in Prediction.Inconclusive by pack declaration
+	Unclassified   int // resolved, but State is in none of Positive, Negative, or Inconclusive
 	OptionMismatch int // a predicted option the judgement's question does not declare
 }
 
@@ -98,14 +99,17 @@ func outcomeValue(happened bool) float64 {
 
 // Prediction names what a calibration run scores. QuestionID is the
 // recorded answer that predicts a real-world result; the summed mass of its
-// Options is the predicted probability of a Positive outcome. Positive and
-// Negative are outcome states a pack declares; an outcome in neither is
-// left out and counted, never scored as a miss.
+// Options is the predicted probability of a Positive outcome. Positive,
+// Negative and Inconclusive are outcome states a pack declares, sorting
+// every resolved outcome into one of three dispositions: it came true, it
+// came false, or it is not evidence either way. An outcome in none of the
+// three is Unclassified — left out and counted, never scored as a miss.
 type Prediction struct {
-	QuestionID string
-	Options    []string
-	Positive   []string
-	Negative   []string
+	QuestionID   string
+	Options      []string
+	Positive     []string
+	Negative     []string
+	Inconclusive []string
 }
 
 // CalibrateOptions narrows a run to one provider or one model; empty
@@ -130,10 +134,14 @@ func (p Prediction) validate() error {
 	case len(p.Positive) == 0 || len(p.Negative) == 0:
 		return errors.New("calibrate: positive and negative outcome states are both needed")
 	}
-	for _, s := range p.Positive {
-		if slices.Contains(p.Negative, s) {
-			return fmt.Errorf("calibrate: %q is both positive and negative", s)
-		}
+	if err := disjoint("positive", p.Positive, "negative", p.Negative); err != nil {
+		return err
+	}
+	if err := disjoint("positive", p.Positive, "inconclusive", p.Inconclusive); err != nil {
+		return err
+	}
+	if err := disjoint("negative", p.Negative, "inconclusive", p.Inconclusive); err != nil {
+		return err
 	}
 	if err := noDuplicate("option", p.Options); err != nil {
 		return err
@@ -143,6 +151,21 @@ func (p Prediction) validate() error {
 	}
 	if err := noDuplicate("negative", p.Negative); err != nil {
 		return err
+	}
+	if err := noDuplicate("inconclusive", p.Inconclusive); err != nil {
+		return err
+	}
+	return nil
+}
+
+// disjoint reports a state common to two Prediction lists: a pack that
+// lists the same state under two of Positive, Negative and Inconclusive has
+// not made up its mind about it.
+func disjoint(aLabel string, a []string, bLabel string, b []string) error {
+	for _, s := range a {
+		if slices.Contains(b, s) {
+			return fmt.Errorf("calibrate: %q is both %s and %s", s, aLabel, bLabel)
+		}
 	}
 	return nil
 }
@@ -251,6 +274,8 @@ func calibrateRows(ctx context.Context, docs ports.Docs, rows []ports.Record, p 
 			excluded.OptionMismatch++
 		case "zero_coverage":
 			excluded.ZeroCoverage++
+		case "inconclusive":
+			excluded.Inconclusive++
 		case "unclassified":
 			excluded.Unclassified++
 		}
@@ -277,6 +302,9 @@ func (p Prediction) point(path string, doc scoredDoc) (scoredPoint, string, erro
 	}
 	if answer.Coverage.Represented == 0 {
 		return scoredPoint{}, "zero_coverage", nil
+	}
+	if slices.Contains(p.Inconclusive, doc.Outcome.State) {
+		return scoredPoint{}, "inconclusive", nil
 	}
 	var happened bool
 	switch {
