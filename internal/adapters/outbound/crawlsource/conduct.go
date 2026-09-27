@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/temoto/robotstxt"
 )
@@ -40,22 +41,30 @@ func newConduct(cfg Config, next http.RoundTripper) *Conduct {
 }
 
 func (c *Conduct) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, _, err := c.roundTrip(req)
+	return resp, err
+}
+
+// roundTrip is RoundTrip's implementation. It additionally reports whether
+// resp was served from the cache after a "not modified" response, for a
+// revalidationCounter wrapping this Conduct to count.
+func (c *Conduct) roundTrip(req *http.Request) (*http.Response, bool, error) {
 	if err := refuse(req); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if err := c.Allow(req.Context(), req.URL); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	req = req.Clone(req.Context())
 	req.Header.Set("User-Agent", c.cfg.UserAgent)
 	cached, ok := c.cached(req)
 	resp, err := c.send(req)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if ok && resp.StatusCode == http.StatusNotModified {
 		if int64(len(cached.Body)) > c.cfg.MaxBytes {
-			return nil, fmt.Errorf("crawlsource: %s: body exceeds max size of %d bytes", req.URL.Redacted(), c.cfg.MaxBytes)
+			return nil, false, fmt.Errorf("crawlsource: %s: body exceeds max size of %d bytes", req.URL.Redacted(), c.cfg.MaxBytes)
 		}
 		resp.Header.Del("Content-Encoding")
 		resp.Header.Del("Content-Length")
@@ -65,18 +74,17 @@ func (c *Conduct) RoundTrip(req *http.Request) (*http.Response, error) {
 		resp.StatusCode, resp.Status = http.StatusOK, "200 OK"
 		resp.Body = io.NopCloser(bytes.NewReader(cached.Body))
 		resp.ContentLength = int64(len(cached.Body))
-		countRevalidation(req.Context())
-		return resp, nil
+		return resp, true, nil
 	}
 	if resp.StatusCode == http.StatusOK && c.cfg.CacheDir != "" && req.Method == http.MethodGet {
 		// resp.Body is send's in-memory reader; this read cannot fail.
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body = io.NopCloser(bytes.NewReader(body))
 		if err := c.cache.save(req.URL.String(), resp, body); err != nil {
-			return nil, fmt.Errorf("crawlsource: cache %s: %w", req.URL.Redacted(), err)
+			return nil, false, fmt.Errorf("crawlsource: cache %s: %w", req.URL.Redacted(), err)
 		}
 	}
-	return resp, nil
+	return resp, false, nil
 }
 
 // cached makes req conditional when a GET for its URL was cached, returning
@@ -124,7 +132,9 @@ func (c *Conduct) permitted(ctx context.Context, u *url.URL) error {
 // any other request and following redirects. A 2xx is parsed and a 4xx other
 // than 429 allows everything; both are kept. A 429, a 5xx, an unexpected
 // status, an unreachable host or an unreadable body disallows everything for
-// this check only, so the next check fetches robots.txt again.
+// this check only, so the next check fetches robots.txt again. A 429 also
+// defers the host's next turn by its Retry-After, capped like any other
+// retry wait; the check is still not cached as permission.
 func (c *Conduct) fetchRobots(ctx context.Context, u *url.URL) (*robotstxt.RobotsData, bool, error) {
 	if err := c.turns.wait(ctx, u.Host); err != nil {
 		return nil, false, err
@@ -142,6 +152,11 @@ func (c *Conduct) fetchRobots(ctx context.Context, u *url.URL) (*robotstxt.Robot
 			return nil, false, ctx.Err()
 		}
 		return disallowAll(), false, nil
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		if wait, ok := retryAfter(resp); ok {
+			c.turns.deferUntil(u.Host, time.Now().Add(wait))
+		}
 	}
 	body, err := readBounded(resp.Body, c.cfg.MaxBytes)
 	if err != nil || !lasting(resp.StatusCode) {
