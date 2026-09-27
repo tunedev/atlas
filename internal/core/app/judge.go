@@ -17,11 +17,14 @@ const judgeSystemMessage = "Answer every field in the schema. Each field's value
 // JudgeConfig pins how a Judge samples: a fixed temperature and seed so
 // repeated runs over the same subject answer the same way, TopLogProbs many
 // alternatives per token to sum mass from, and MaxTokens bounding the reply.
+// ContextTokens, when above zero, is the engine's context size: a completion
+// whose prompt reached it may have been truncated and is refused.
 type JudgeConfig struct {
-	Temperature float64
-	Seed        int
-	TopLogProbs int
-	MaxTokens   int
+	Temperature   float64
+	Seed          int
+	TopLogProbs   int
+	MaxTokens     int
+	ContextTokens int
 }
 
 // Judge answers every question about a subject in one call to a Provider,
@@ -48,6 +51,10 @@ func (j *Judge) Ask(ctx context.Context, subject string, qs []ports.Question) (p
 	completion, err := j.provider.Complete(ctx, j.promptFor(subject, qs, schema))
 	if err != nil {
 		return ports.Judgement{}, fmt.Errorf("judge: %w", err)
+	}
+
+	if j.cfg.ContextTokens > 0 && completion.Usage.PromptTokens >= j.cfg.ContextTokens {
+		return ports.Judgement{}, fmt.Errorf("judge: prompt may be truncated: %d prompt tokens reached the %d-token context", completion.Usage.PromptTokens, j.cfg.ContextTokens)
 	}
 
 	tokens, err := AnswerTokens(completion, idsOf(qs))

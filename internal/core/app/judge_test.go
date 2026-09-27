@@ -624,3 +624,24 @@ func TestThePromptNamesEveryQuestionsOptions(t *testing.T) {
 		}
 	}
 }
+
+func TestAPromptAtTheContextLimitIsRefused(t *testing.T) {
+	c := twoAnswers()
+	c.Usage.PromptTokens = 4096
+	cfg := testJudgeConfig()
+	cfg.ContextTokens = 4096
+	_, err := app.NewJudge(&recordingProvider{completion: c}, cfg).Ask(context.Background(), "a novel", judgeQuestions())
+	if err == nil || !strings.Contains(err.Error(), "prompt may be truncated") {
+		t.Fatalf("err = %v, want a truncation refusal", err)
+	}
+}
+
+func TestAPromptUnderTheContextLimitIsAnswered(t *testing.T) {
+	c := twoAnswers()
+	c.Usage.PromptTokens = 4095
+	cfg := testJudgeConfig()
+	cfg.ContextTokens = 4096
+	if _, err := app.NewJudge(&recordingProvider{completion: c}, cfg).Ask(context.Background(), "a novel", judgeQuestions()); err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+}

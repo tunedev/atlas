@@ -522,3 +522,17 @@ func TestMalformedFeedDurationEnvVarIsRejected(t *testing.T) {
 		t.Error("a malformed ATLAS_FEED_STALE_AFTER was accepted")
 	}
 }
+
+func TestJudgeContextTokensDefaultsEnvAndValidation(t *testing.T) {
+	cfg, err := config.Load([]string{"-pack", "p.yaml"})
+	if err != nil || cfg.Judge.ContextTokens != 4096 {
+		t.Fatalf("default = %d, %v; want 4096", cfg.Judge.ContextTokens, err)
+	}
+	t.Setenv("ATLAS_JUDGE_CONTEXT_TOKENS", "8192")
+	if cfg, err := config.Load([]string{"-pack", "p.yaml"}); err != nil || cfg.Judge.ContextTokens != 8192 {
+		t.Errorf("env = %d, %v; want 8192", cfg.Judge.ContextTokens, err)
+	}
+	if _, err := config.Load([]string{"-pack", "p.yaml", "-judge-context-tokens", "0"}); err == nil {
+		t.Error("a zero context size was accepted")
+	}
+}
