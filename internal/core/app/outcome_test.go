@@ -123,6 +123,27 @@ func TestAttachingAnOutcomeIsANewRevisionOfTheSameDocument(t *testing.T) {
 	}
 }
 
+func TestAttachingTrimsTheState(t *testing.T) {
+	ctx := context.Background()
+	docs, index := record(t)
+	path := judged(t, docs, index, "harbour-fete", 0.7, day)
+	if _, err := app.AttachOutcome(ctx, docs, index, path, app.Outcome{State: "  wet ", When: day}); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := docs.Get(ctx, path)
+	var doc map[string]any
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("document is not json: %v", err)
+	}
+	outcome, _ := doc["outcome"].(map[string]any)
+	if outcome["state"] != "wet" {
+		t.Errorf("document state = %q, want wet", outcome["state"])
+	}
+	if r := row(t, index, "harbour-fete", path); r.Fields["outcome"] != "wet" {
+		t.Errorf("index outcome = %q, want wet", r.Fields["outcome"])
+	}
+}
+
 func TestACorrectionIsAThirdRevisionAndTheLatestWins(t *testing.T) {
 	ctx := context.Background()
 	docs, index := record(t)

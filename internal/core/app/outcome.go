@@ -42,12 +42,14 @@ func AttachOutcome(ctx context.Context, docs ports.Docs, index ports.Index, judg
 	if path.Clean(judgementPath) != judgementPath || !strings.HasPrefix(judgementPath, "judgements/") || !strings.HasSuffix(judgementPath, ".json") {
 		return "", fmt.Errorf("outcome: %q is not a judgement document", judgementPath)
 	}
-	if strings.TrimSpace(o.State) == "" {
+	state := strings.TrimSpace(o.State)
+	if state == "" {
 		return "", errors.New("outcome: state is empty")
 	}
 	if o.When.IsZero() {
 		return "", errors.New("outcome: when is not set")
 	}
+	o.State = state
 
 	body, err := docs.Get(ctx, judgementPath)
 	if err != nil {
