@@ -2,6 +2,8 @@ package app_test
 
 import (
 	"encoding/json"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/tunedev/atlas/internal/core/app"
@@ -53,5 +55,42 @@ func TestResolveTurnsANonListIntoNoCitations(t *testing.T) {
 	got := encode(t, app.ResolveCitations(tree, keeperSpans))
 	if got != `{"citations":[],"title":"x"}` {
 		t.Errorf("got %s", got)
+	}
+}
+
+func TestSettleKeepsOnlyCheckedCitationsAndMarksGaps(t *testing.T) {
+	tree := decode(t, `{
+	 "claims":[
+	  {"text":"keeps a ship log","citations":[
+	    {"id":0,"quote":"Logged every passing ship","status":"grounded","relevant":true},
+	    {"id":1,"quote":"Refitted the lamp lens","status":"grounded","relevant":false}]},
+	  {"text":"sails the ship","citations":[{"id":1,"quote":"Refitted the lamp lens","status":"grounded","relevant":false}]},
+	  {"text":"never judged","citations":[{"id":0,"quote":"Logged every passing ship","status":"grounded"}]}],
+	 "picked":[
+	  {"citations":[{"id":1,"quote":"Refitted the lamp lens","status":"grounded"}]},
+	  {"citations":[{"id":7,"quote":"","status":"needs_review"}]}]
+	}`)
+	settled, kept, gaps := app.Settle(tree)
+	got := encode(t, settled)
+	for _, want := range []string{
+		`{"citations":[{"id":0,"quote":"Logged every passing ship","relevant":true,"status":"grounded"}],"gap":false,"text":"keeps a ship log"}`,
+		`{"citations":[],"gap":true,"text":"sails the ship"}`,
+		`{"citations":[],"gap":true,"text":"never judged"}`,
+		`{"citations":[{"id":1,"quote":"Refitted the lamp lens","status":"grounded"}],"gap":false}`,
+		`{"citations":[],"gap":true}`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("settled lacks %s:\n%s", want, got)
+		}
+	}
+	if gaps != 3 {
+		t.Errorf("gaps = %d; want 3", gaps)
+	}
+	wantKept := map[string][]string{"claims": {"keeps a ship log"}, "picked": {"Refitted the lamp lens"}}
+	if _, empty, _ := app.Settle(decode(t, `{"none":[{"citations":[]}]}`)); !reflect.DeepEqual(empty, map[string][]string{"none": {}}) {
+		t.Errorf("a key with nothing kept must still be present, empty: %v", empty)
+	}
+	if !reflect.DeepEqual(kept, wantKept) {
+		t.Errorf("kept = %v; want %v", kept, wantKept)
 	}
 }
