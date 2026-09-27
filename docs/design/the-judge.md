@@ -156,12 +156,10 @@ describes. The document holds the subject text, the model name, the
 provider name, the sampling that produced the call, every question asked,
 every answer with its distribution, confidence, coverage, and the raw
 alternatives it was read from, and an `outcome` field carried as `any` and
-marshalled as JSON `null`
-— present, not omitted, so the key reads `null` until a later increment
-(checking a probability against a real outcome, epic 11) fills it in. The
+marshalled as JSON `null` until `judge.outcome` fills it — see below. The
 index row mirrors the subject, model and provider as flat string fields,
-plus `"outcome": "pending"`, since the row cannot hold a nested
-distribution.
+plus an `outcome` field that reads `"pending"` until then, since the row
+cannot hold a nested distribution.
 
 `tools.Judge` (`judge.ask`) is the one caller: it parses a pack's YAML
 questions block into `[]ports.Question`, calls `Judge.Ask`, then
@@ -169,6 +167,47 @@ questions block into `[]ports.Question`, calls `Judge.Ask`, then
 `p`, `distribution`, `confidence`, `coverage`, `expected` for a score) plus
 the path written, under the key `"path"` — reserved, so a pack cannot name a
 question `path` and collide with it.
+
+## Filling the outcome slot
+
+`app.AttachOutcome(ctx, docs, index, judgementPath, o)` fills a judgement's
+`outcome` key as a later revision of the same document, not a new one. It
+reads the document, splices `o` into the `outcome` key byte for byte
+(`spliceKey`), leaving every other key, value and key order untouched, and
+copies the existing index row's fields, changing only `outcome`. History
+keeps every earlier revision; `Get` and `Find` resolve to the latest.
+Attaching the same outcome twice is a byte-identical write, so no new
+revision is made — a correction is a third revision, and the latest wins.
+`AttachOutcomeForSubject` finds every judgement recorded for a subject and
+calls `AttachOutcome` on each, since a re-judged subject's real-world result
+belongs to all of its sibling judgements, not to one judge call.
+
+`app.Calibrate` (and `CalibrateByEngine`, which also groups by provider and
+model, alongside a pooled figure) scores one `Prediction` — a question id,
+the answer options whose summed distribution mass is the predicted
+probability, and the outcome states that sort into one of three
+dispositions: positive, negative, or inconclusive (evidence of nothing,
+such as a ghosted application) — against every judgement that asked the
+question and has an outcome. A judgement is excluded, and the exclusion
+counted rather than silently dropped, when: its outcome is still null
+(pending); its scored answer's `Coverage.Represented` is zero (zero
+coverage — the probability never measured real competition among the
+options); its outcome's state is in the prediction's inconclusive list, by
+pack declaration (inconclusive); its outcome's state is in none of the
+prediction's positive, negative or inconclusive lists (unclassified); or
+its question does not declare every option the prediction names (option
+mismatch). A judgement that never asked the scored question is not part of
+the sample at all, and is not counted as an exclusion either — it is a
+different measurement, not a missing point. `MinSample` (30) gates the
+headline Brier score and `MinBinSample` (10) gates each of the ten
+fixed-decile reliability bins: below either, the count is still reported
+and the number is `nil`. A calibration report is derived on every run and
+never persisted to git.
+
+`judge.outcome` and `judge.calibrate` (the tools that expose
+`AttachOutcome`/`AttachOutcomeForSubject` and `CalibrateByEngine`) only
+parse `with`, call the core, and render the result; every rule above lives
+in `internal/core/app`.
 
 ## Known gaps
 
@@ -206,11 +245,14 @@ question `path` and collide with it.
   two-of-five distribution likewise now reports `Coverage: {2, 5}` rather
   than looking as resolved as a five-of-five one.
 
-  What remains open: the numbers are recorded, in both the judgement
-  document and the tool result, and nothing yet acts on them. No caller
-  rejects a thin-coverage answer or treats a low `Confidence` differently —
-  that judgment call belongs to whatever reads the record later (epic 11),
-  now that it has the numbers to make it with.
+  The numbers are recorded, in both the judgement document and the tool
+  result, and one caller now reads `Coverage`: `app.Calibrate`
+  (`judge.calibrate`) excludes an answer whose `Coverage.Represented` is zero
+  from a calibration run and counts it as `zero_coverage`, since a
+  probability that never measured real competition among the options should
+  not be scored as if it had. Nothing gates or rejects on coverage or
+  confidence at judgement time itself — `judge.ask` records both numbers and
+  writes whatever answer the schema produced regardless of either one.
 
   A purpose-built classifier (`receptron/laya`, a decision head over a
   ModernBERT encoder) was measured against this exact failure and does not
@@ -241,3 +283,9 @@ question `path` and collide with it.
   with more than one answer field; the answer-token rule's "first content
   token of the field's value" is defined for a single scalar value; it does
   not yet have a definition for a value that is itself an array or object.
+- An index rebuild (`app.Rebuild`) stamps a row's `When` from the document's
+  newest revision, while `AttachOutcome` keeps the judgement's own time. A
+  judgement row rebuilt after an outcome was attached would therefore show
+  the attach time, not the judgement time the row otherwise carries. No
+  judgement extractor exists yet, so `Rebuild` does not reach judgement rows
+  today.
