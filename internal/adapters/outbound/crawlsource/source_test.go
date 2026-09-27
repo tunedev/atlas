@@ -281,3 +281,64 @@ func TestNewRefusesAConfigThatWouldCrawlImpolitely(t *testing.T) {
 		t.Error("no targets: accepted")
 	}
 }
+
+// validating serves eventsPage at /events with an ETag and answers a
+// matching If-None-Match with 304, calling hold before each 304.
+func validating(t *testing.T, hold func()) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/events" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("If-None-Match") == `"v1"` {
+			hold()
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("ETag", `"v1"`)
+		w.Header().Set("Content-Type", "text/html")
+		io.WriteString(w, eventsPage)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestAReportCountsOnlyItsOwnPullsRevalidations(t *testing.T) {
+	aWaiting, bDone := make(chan struct{}), make(chan struct{})
+	a := validating(t, func() { close(aWaiting); <-bDone })
+	b := validating(t, func() {})
+	cfg := testConfig()
+	cfg.CacheDir = t.TempDir()
+	crawler, err := crawlsource.NewCrawler(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srcA, _ := crawler.Source(targets(t, oneTarget, a.URL, "/events"))
+	srcB, _ := crawler.Source(targets(t, oneTarget, b.URL, "/events"))
+	primeA, _ := crawler.Source(targets(t, oneTarget, a.URL, "/events"))
+	if _, err := primeA.Pull(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srcB.Pull(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	pulledA := make(chan error)
+	go func() {
+		_, err := srcA.Pull(context.Background())
+		pulledA <- err
+	}()
+	<-aWaiting
+	_, errB := srcB.Pull(context.Background())
+	close(bDone)
+	if err := <-pulledA; err != nil || errB != nil {
+		t.Fatalf("pull A err = %v, pull B err = %v", err, errB)
+	}
+	if got := srcA.LastReport().Revalidated; got != 1 {
+		t.Errorf("A revalidated = %d, want 1; it counted B's revalidation", got)
+	}
+	if got := srcB.LastReport().Revalidated; got != 1 {
+		t.Errorf("B revalidated = %d, want 1", got)
+	}
+}

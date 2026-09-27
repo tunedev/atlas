@@ -1,12 +1,14 @@
 package crawlsource
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 )
 
 // revalidator keeps, per URL, the last full body and the validators that
@@ -67,4 +69,21 @@ func (v revalidator) save(u string, resp *http.Response, body []byte) error {
 		return err
 	}
 	return os.WriteFile(v.path(u), raw, 0o600)
+}
+
+// revalidationsKey is the context key of a revalidation counter.
+type revalidationsKey struct{}
+
+// countingRevalidations returns ctx carrying a fresh counter of the requests
+// made under it that were answered "not modified" and served from the cache.
+func countingRevalidations(ctx context.Context) (context.Context, *atomic.Int64) {
+	n := new(atomic.Int64)
+	return context.WithValue(ctx, revalidationsKey{}, n), n
+}
+
+// countRevalidation adds one to ctx's revalidation counter, if it carries one.
+func countRevalidation(ctx context.Context) {
+	if n, ok := ctx.Value(revalidationsKey{}).(*atomic.Int64); ok {
+		n.Add(1)
+	}
 }

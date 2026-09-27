@@ -65,6 +65,8 @@ type Source struct {
 
 // Report is what the last Pull did beyond yielding items.
 type Report struct {
+	// Revalidated is how many of that Pull's own requests were answered
+	// "not modified" and served from the cache.
 	Revalidated int
 }
 
@@ -143,7 +145,7 @@ func New(cfg Config, targets []Target) (*Source, error) {
 func (s *Source) Pull(ctx context.Context) ([]ports.Item, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.cfg.PullTimeout)
 	defer cancel()
-	before := s.conduct.Revalidated()
+	ctx, revalidated := countingRevalidations(ctx)
 
 	var items []ports.Item
 	var failed Failures
@@ -158,7 +160,7 @@ func (s *Source) Pull(ctx context.Context) ([]ports.Item, error) {
 
 	s.mu.Lock()
 	s.last = time.Now().UTC()
-	s.report = Report{Revalidated: int(s.conduct.Revalidated() - before)}
+	s.report = Report{Revalidated: int(revalidated.Load())}
 	s.mu.Unlock()
 
 	switch {

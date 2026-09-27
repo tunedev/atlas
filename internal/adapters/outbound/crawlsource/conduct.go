@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"sync/atomic"
 
 	"github.com/temoto/robotstxt"
 )
@@ -26,12 +25,11 @@ var (
 // robots.txt, waits for its host's turn, carries the configured user agent,
 // and has its body bounded. There is no option to switch any of it off.
 type Conduct struct {
-	cfg         Config
-	next        http.RoundTripper
-	robots      *robotsCache
-	turns       *hostTurns
-	cache       revalidator
-	revalidated atomic.Int64
+	cfg    Config
+	next   http.RoundTripper
+	robots *robotsCache
+	turns  *hostTurns
+	cache  revalidator
 }
 
 func newConduct(cfg Config, next http.RoundTripper) *Conduct {
@@ -67,7 +65,7 @@ func (c *Conduct) RoundTrip(req *http.Request) (*http.Response, error) {
 		resp.StatusCode, resp.Status = http.StatusOK, "200 OK"
 		resp.Body = io.NopCloser(bytes.NewReader(cached.Body))
 		resp.ContentLength = int64(len(cached.Body))
-		c.revalidated.Add(1)
+		countRevalidation(req.Context())
 		return resp, nil
 	}
 	if resp.StatusCode == http.StatusOK && c.cfg.CacheDir != "" && req.Method == http.MethodGet {
@@ -93,10 +91,6 @@ func (c *Conduct) cached(req *http.Request) (stored, bool) {
 	}
 	return s, ok
 }
-
-// Revalidated is how many requests were answered "not modified" and served
-// from the cache.
-func (c *Conduct) Revalidated() int64 { return c.revalidated.Load() }
 
 // Allow checks u is permitted, then waits for its host's turn.
 func (c *Conduct) Allow(ctx context.Context, u *url.URL) error {

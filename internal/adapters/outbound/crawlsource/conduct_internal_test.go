@@ -78,7 +78,12 @@ func site(t *testing.T, routes map[string]string) (*httptest.Server, *siteLog) {
 
 func get(t *testing.T, c *Conduct, url string) (*http.Response, error) {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	return getIn(t, context.Background(), c, url)
+}
+
+func getIn(t *testing.T, ctx context.Context, c *Conduct, url string) (*http.Response, error) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

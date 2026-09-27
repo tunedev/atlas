@@ -64,9 +64,10 @@ func TestARevalidatedPageIsServedFromTheCache(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			srv, full := validatingSite(t, v[0], v[1])
 			c := cachedConduct(t)
-			resp1, err1 := get(t, c, srv.URL+"/p")
+			ctx, revalidated := countingRevalidations(context.Background())
+			resp1, err1 := getIn(t, ctx, c, srv.URL+"/p")
 			first := readAll(t, resp1, err1)
-			resp2, err2 := get(t, c, srv.URL+"/p")
+			resp2, err2 := getIn(t, ctx, c, srv.URL+"/p")
 			second := readAll(t, resp2, err2)
 			if first != "the page" || second != "the page" {
 				t.Errorf("bodies %q %q", first, second)
@@ -74,8 +75,8 @@ func TestARevalidatedPageIsServedFromTheCache(t *testing.T) {
 			if *full != 1 {
 				t.Errorf("full responses = %d, want 1; the second read must revalidate", *full)
 			}
-			if c.Revalidated() != 1 {
-				t.Errorf("revalidated = %d, want 1", c.Revalidated())
+			if revalidated.Load() != 1 {
+				t.Errorf("revalidated = %d, want 1", revalidated.Load())
 			}
 		})
 	}
@@ -84,12 +85,13 @@ func TestARevalidatedPageIsServedFromTheCache(t *testing.T) {
 func TestAPageWithoutValidatorsIsRefetched(t *testing.T) {
 	srv, full := validatingSite(t, "", "")
 	c := cachedConduct(t)
+	ctx, revalidated := countingRevalidations(context.Background())
 	for i := 0; i < 2; i++ {
-		resp, err := get(t, c, srv.URL+"/p")
+		resp, err := getIn(t, ctx, c, srv.URL+"/p")
 		readAll(t, resp, err)
 	}
-	if *full != 2 || c.Revalidated() != 0 {
-		t.Errorf("full = %d revalidated = %d; nothing to revalidate against", *full, c.Revalidated())
+	if *full != 2 || revalidated.Load() != 0 {
+		t.Errorf("full = %d revalidated = %d; nothing to revalidate against", *full, revalidated.Load())
 	}
 }
 
@@ -148,7 +150,8 @@ func TestARevalidatedBodyOverTheNewLimitFails(t *testing.T) {
 	smallCfg.CacheDir = dir
 	smallCfg.MaxBytes = 10
 	small := newConduct(smallCfg, http.DefaultTransport)
-	resp, err = get(t, small, srv.URL+"/p")
+	ctx, revalidated := countingRevalidations(context.Background())
+	resp, err = getIn(t, ctx, small, srv.URL+"/p")
 	if err == nil {
 		resp.Body.Close()
 		t.Fatal("want an error; the cached body exceeds the new MaxBytes")
@@ -156,8 +159,8 @@ func TestARevalidatedBodyOverTheNewLimitFails(t *testing.T) {
 	if !strings.Contains(err.Error(), "10") {
 		t.Errorf("err = %v; want it to name the limit", err)
 	}
-	if small.Revalidated() != 0 {
-		t.Errorf("revalidated = %d, want 0; an over-limit cached body must not count as revalidated", small.Revalidated())
+	if revalidated.Load() != 0 {
+		t.Errorf("revalidated = %d, want 0; an over-limit cached body must not count as revalidated", revalidated.Load())
 	}
 	if full != 1 {
 		t.Errorf("full responses = %d, want 1; the second request must be answered 304", full)
