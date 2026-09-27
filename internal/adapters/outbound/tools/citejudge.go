@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 
@@ -33,8 +34,8 @@ func (c *CitationsJudge) Invoke(ctx context.Context, with map[string]string) (an
 		return nil, fmt.Errorf("citations.judge: fields: %w", err)
 	}
 	threshold, err := strconv.ParseFloat(with["threshold"], 64)
-	if err != nil || threshold < 0 || threshold > 1 {
-		return nil, fmt.Errorf("citations.judge: threshold must be between 0 and 1, got %q", with["threshold"])
+	if err != nil || math.IsNaN(threshold) || threshold <= 0 || threshold > 1 {
+		return nil, fmt.Errorf("citations.judge: threshold must be greater than 0 and at most 1, got %q", with["threshold"])
 	}
 	subjectID := with["subject_id"]
 	if subjectID == "" {
@@ -56,7 +57,10 @@ func (c *CitationsJudge) Invoke(ctx context.Context, with map[string]string) (an
 			walkErr = err
 			return
 		}
-		markRelevance(asked, j, threshold)
+		if err := markRelevance(asked, j, threshold); err != nil {
+			walkErr = err
+			return
+		}
 		if _, err := app.RecordJudgement(ctx, c.docs, c.index, fmt.Sprintf("%s-claim-%d", subjectID, judged), qs, j); err != nil {
 			walkErr = err
 			return
@@ -115,7 +119,7 @@ func questionsFor(citations []map[string]any) ([]map[string]any, []ports.Questio
 		qs = append(qs, ports.Question{
 			ID:      "c" + strconv.Itoa(len(qs)),
 			Kind:    ports.KindNoul,
-			Ask:     "Evidence: " + quote + "\nDoes this evidence, on its own, directly show the statement?",
+			Ask:     "Evidence: " + quote + "\nDoes this evidence, on its own, directly show that the subject is true?",
 			Options: ports.NoulOptions(),
 			Forms:   ports.NoulForms(),
 		})
@@ -123,15 +127,23 @@ func questionsFor(citations []map[string]any) ([]map[string]any, []ports.Questio
 	return asked, qs
 }
 
-// markRelevance sets relevant and p on each asked citation from j.
-func markRelevance(asked []map[string]any, j ports.Judgement, threshold float64) {
+// markRelevance sets relevant and p on each asked citation from j. It is an
+// error for a question to have no matching answer in j: the caller must
+// never see a citation silently treated as not relevant for that reason.
+func markRelevance(asked []map[string]any, j ports.Judgement, threshold float64) error {
 	byID := make(map[string]ports.Answer, len(j.Answers))
 	for _, a := range j.Answers {
 		byID[a.ID] = a
 	}
 	for i, c := range asked {
-		p := byID["c"+strconv.Itoa(i)].Distribution["yes"]
+		id := "c" + strconv.Itoa(i)
+		a, ok := byID[id]
+		if !ok {
+			return fmt.Errorf("no answer for %s", id)
+		}
+		p := a.Distribution["yes"]
 		c["p"] = p
 		c["relevant"] = p >= threshold
 	}
+	return nil
 }

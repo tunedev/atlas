@@ -13,16 +13,18 @@ import (
 )
 
 // relevanceJudge answers yes with mass p for evidence containing a word in
-// yes, and no otherwise. fail makes every call error.
+// yes, and no otherwise. fail makes a call error: every call if failOn is 0,
+// or only the failOn'th call (1-indexed) otherwise.
 type relevanceJudge struct {
 	yes      []string
 	fail     error
+	failOn   int
 	subjects []string
 }
 
 func (r *relevanceJudge) Ask(_ context.Context, subject string, qs []ports.Question) (ports.Judgement, error) {
 	r.subjects = append(r.subjects, subject)
-	if r.fail != nil {
+	if r.fail != nil && (r.failOn == 0 || len(r.subjects) == r.failOn) {
 		return ports.Judgement{}, r.fail
 	}
 	answers := make([]ports.Answer, len(qs))
@@ -37,6 +39,16 @@ func (r *relevanceJudge) Ask(_ context.Context, subject string, qs []ports.Quest
 			Distribution: map[string]float64{"yes": p, "no": 1 - p}}
 	}
 	return ports.Judgement{Subject: subject, Model: "stub", Provider: "stub", When: time.Now(), Answers: answers}, nil
+}
+
+// partialAnswerJudge answers only the first of however many questions it is
+// asked, so the caller sees a question with no matching answer.
+type partialAnswerJudge struct{}
+
+func (partialAnswerJudge) Ask(_ context.Context, subject string, qs []ports.Question) (ports.Judgement, error) {
+	return ports.Judgement{Subject: subject, Model: "stub", Provider: "stub", When: time.Now(), Answers: []ports.Answer{
+		{ID: qs[0].ID, Kind: ports.KindNoul, Chosen: "yes", Distribution: map[string]float64{"yes": 0.9, "no": 0.1}},
+	}}, nil
 }
 
 const groundedFields = `{"claims":[
@@ -81,12 +93,30 @@ func TestCitationsJudgeMarksEachGroundedCitation(t *testing.T) {
 	}
 }
 
+const twoClaimsGroundedFields = `{"claims":[
+ {"text":"keeps a ship log","citations":[{"id":0,"quote":"Logged every passing ship","status":"grounded"}]},
+ {"text":"refits the lamp","citations":[{"id":1,"quote":"Refitted the lamp lens","status":"grounded"}]}
+]}`
+
 func TestJudgeErrorFailsTheStepAndMarksNothingRelevant(t *testing.T) {
 	docs, index := store(t)
-	_, err := tools.NewCitationsJudge(&relevanceJudge{fail: errors.New("engine down")}, docs, index).
-		Invoke(context.Background(), map[string]string{"fields": groundedFields, "threshold": "0.6", "subject_id": "keeper"})
+	j := &relevanceJudge{yes: []string{"ship"}, fail: errors.New("engine down"), failOn: 2}
+	out, err := tools.NewCitationsJudge(j, docs, index).
+		Invoke(context.Background(), map[string]string{"fields": twoClaimsGroundedFields, "threshold": "0.6", "subject_id": "keeper"})
 	if err == nil || !strings.Contains(err.Error(), "engine down") {
 		t.Errorf("err = %v; want the engine's error", err)
+	}
+	if out != nil {
+		t.Errorf("out = %v; want nil, no partially marked tree escaping a failed step", out)
+	}
+}
+
+func TestMissingAnswerFailsTheStep(t *testing.T) {
+	docs, index := store(t)
+	_, err := tools.NewCitationsJudge(partialAnswerJudge{}, docs, index).
+		Invoke(context.Background(), map[string]string{"fields": groundedFields, "threshold": "0.6", "subject_id": "keeper"})
+	if err == nil || !strings.Contains(err.Error(), "no answer for c1") {
+		t.Errorf("err = %v; want an error naming the unanswered question", err)
 	}
 }
 
@@ -96,6 +126,8 @@ func TestCitationsJudgeRejectsBadInput(t *testing.T) {
 		"bad json":      {"fields": "{", "threshold": "0.5", "subject_id": "s"},
 		"bad threshold": {"fields": "{}", "threshold": "high", "subject_id": "s"},
 		"out of range":  {"fields": "{}", "threshold": "1.5", "subject_id": "s"},
+		"zero":          {"fields": "{}", "threshold": "0", "subject_id": "s"},
+		"nan":           {"fields": "{}", "threshold": "NaN", "subject_id": "s"},
 		"no subject":    {"fields": "{}", "threshold": "0.5", "subject_id": ""},
 	} {
 		if _, err := tools.NewCitationsJudge(&relevanceJudge{}, docs, index).Invoke(context.Background(), with); err == nil {
