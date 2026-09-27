@@ -12,11 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tsawler/tabula"
-
 	"github.com/tunedev/atlas/internal/adapters/outbound/tools"
 	"github.com/tunedev/atlas/internal/adapters/outbound/typstconv"
-	"github.com/tunedev/atlas/internal/core/app"
 	"github.com/tunedev/atlas/internal/core/ports"
 )
 
@@ -37,16 +34,6 @@ func writeTemplate(t *testing.T, body string) string {
 	p := filepath.Join(t.TempDir(), "t.typ")
 	must(t, os.WriteFile(p, []byte(body), 0o600))
 	return p
-}
-
-// extractText extracts path's text with tabula and applies the same
-// hyphen-wrap join render.go uses before grounding, so a test can check
-// what actually landed on the page.
-func extractText(t *testing.T, path string) string {
-	t.Helper()
-	text, _, err := tabula.Open(path).Text()
-	must(t, err)
-	return strings.ReplaceAll(text, "-\n", "-")
 }
 
 const hostile = `Cut costs by 30% #set page(fill: red) *bold* $x$ <b>tag</b> \ "quoted"`
@@ -235,7 +222,8 @@ func decodeFixture(raw []byte) (packFixture, error) {
 }
 
 // TestPackTemplateFixturesRender renders every pack's testdata fixture
-// through render.run and checks its expect and absent strings. It knows
+// through render.run, passing its expect, absent and before strings as the
+// tool's own inputs. It knows
 // nothing about any pack's templates or vocabulary; a pack that adds a
 // fixture is covered without a Go change.
 func TestPackTemplateFixturesRender(t *testing.T) {
@@ -253,34 +241,26 @@ func TestPackTemplateFixturesRender(t *testing.T) {
 			must(t, err)
 
 			packDir := filepath.Dir(filepath.Dir(path)) // testdata/..
-			out := filepath.Join(t.TempDir(), "out.pdf")
-			expectJSON, err := json.Marshal(fx.Expect)
-			must(t, err)
-
 			with := map[string]string{
 				"template": filepath.Join(packDir, fx.Template),
 				"data":     string(fx.Data),
-				"output":   out,
-				"expect":   string(expectJSON),
+				"output":   filepath.Join(t.TempDir(), "out.pdf"),
+				"expect":   jsonList(t, fx.Expect),
+				"absent":   jsonList(t, fx.Absent),
+				"before":   strings.Join(fx.Before, "\n"),
 			}
-			if len(fx.Before) > 0 {
-				with["before"] = strings.Join(fx.Before, "\n")
-			}
-
 			if _, err := renderer(t).Invoke(context.Background(), with); err != nil {
 				t.Fatalf("%s: %v", path, err)
 			}
-			if len(fx.Absent) == 0 {
-				return
-			}
-			text := app.Normalise(extractText(t, out))
-			for _, a := range fx.Absent {
-				if strings.Contains(text, app.Normalise(a)) {
-					t.Errorf("%s: %q must be absent from the rendered text", path, a)
-				}
-			}
 		})
 	}
+}
+
+func jsonList(t *testing.T, ss []string) string {
+	t.Helper()
+	b, err := json.Marshal(ss)
+	must(t, err)
+	return string(b)
 }
 
 // TestPackFixtureRejectsAnUnknownField proves a misspelled key, such as

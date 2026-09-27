@@ -7,6 +7,6 @@
       "bullets": [{"citations": [], "gap": true}]
     }
   },
-  "expect": ["Not shown by the record", "sails ships"],
-  "absent": ["Kept the light"]
+  "expect": ["Experience", "Selected work"],
+  "absent": ["sails ships", "Not shown by the record"]
 }

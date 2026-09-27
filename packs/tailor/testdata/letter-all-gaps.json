@@ -2,11 +2,15 @@
   "template": "letter.typ",
   "data": {
     "tailored": {
-      "letter": [{"text": "I sail ships.", "citations": [], "gap": true}],
-      "answers": [
-        {"question": "Can you sail?", "sentences": [{"text": "Yes.", "citations": [], "gap": true}]}
-      ]
+      "letter": {
+        "sentences": [{"text": "I sail ships.", "citations": [], "gap": true}],
+        "answers": [
+          {"item": "Can you sail?", "sentences": [{"text": "Yes, for ten years.", "citations": [], "gap": true}]},
+          {"item": "Can you read a chart?", "sentences": [{"text": "", "citations": [], "gap": true}]}
+        ]
+      }
     }
   },
-  "expect": ["Not shown by the record", "Removed for lack of evidence", "I sail ships."]
+  "expect": [],
+  "absent": ["I sail ships.", "Can you sail?", "Yes, for ten years.", "Can you read a chart?", "Answers to the questions asked", "Not shown by the record", "Removed"]
 }

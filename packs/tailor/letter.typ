@@ -1,24 +1,20 @@
-// Renders the letter and answers: only sentences that kept a checked
-// citation; every cut sentence and unsupported answer is listed as a gap.
+// Renders the letter and the answers: only sentences that kept a checked
+// citation, and only questions with at least one; gaps are listed on the
+// review sheet, never here. data is bound by render.run: {"tailored":
+// <claims.settle fields>}, where tailored.letter is {"sentences", "answers"}.
 #set page(paper: "a4", margin: 2.2cm)
 #set text(size: 11pt, hyphenate: false)
 
-#let t = data.tailored
+#let l = data.tailored.letter
+#let kept(ss) = ss.filter(s => not s.gap)
 
-#for s in t.letter.filter(s => not s.gap) [ #s.text ]
+#for s in kept(l.sentences) [ #s.text ]
 
-#let answers = t.at("answers", default: ())
-#if answers.len() > 0 [
+#let answered = l.answers.filter(a => kept(a.sentences).len() > 0)
+#if answered.len() > 0 [
   == Answers to the questions asked
-  #for a in answers [
-    === #a.question
-    #let kept = a.sentences.filter(s => not s.gap)
-    #if kept.len() == 0 [ _Not shown by the record._ ] else [ #for s in kept [ #s.text ] ]
+  #for a in answered [
+    === #a.item
+    #for s in kept(a.sentences) [ #s.text ]
   ]
-]
-
-#let cut = t.letter.filter(s => s.gap)
-#if cut.len() > 0 [
-  == Removed for lack of evidence
-  #for s in cut [ - #s.text ]
 ]

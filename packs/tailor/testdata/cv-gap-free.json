@@ -3,14 +3,15 @@
   "data": {
     "history": {
       "entries": [
-        {"title": "Keeper", "employer": "Lighthouse Board", "start": "2019", "end": null, "status": "grounded"}
+        {"title": "Keeper", "employer": "Lighthouse Board", "start": "2019", "end": null, "ongoing": true, "status": "grounded"},
+        {"title": "Deckhand", "employer": "Harbour Ferries", "start": "2015", "end": "2018", "status": "grounded"}
       ]
     },
     "tailored": {
-      "requirements": [{"text": "sails ships", "citations": [], "gap": false}],
+      "requirements": [{"text": "sails ships", "citations": [{"quote": "Sailed"}], "gap": false}],
       "bullets": [{"citations": [{"quote": "Kept the light burning through the storm"}], "gap": false}]
     }
   },
-  "expect": ["Experience", "Keeper, Lighthouse Board", "Kept the light burning through the storm"],
-  "absent": ["Not shown by the record"]
+  "expect": ["Keeper, Lighthouse Board", "2019 – present", "Deckhand, Harbour Ferries", "2015 – 2018", "Kept the light burning through the storm"],
+  "absent": ["sails ships"]
 }

@@ -1,11 +1,15 @@
 # Tailors application documents to one posting from the record. Every
-# statement about the candidate cites spans of the candidate's own text;
-# anything uncited or unsupported is listed as a gap, never written as fact.
-# Which requirements exist comes from the posting alone (the asked step), so
-# a requirement the model cannot support becomes a gap instead of vanishing.
+# statement about the candidate cites spans of the candidate's own text.
+# Which requirements exist comes from the posting alone (the asked step), and
+# which questions exist from the questions var alone (asked_questions), so a
+# requirement or question the record cannot support becomes a gap instead of
+# vanishing. Writes three PDFs to out_dir: cv.pdf and letter.pdf carry only
+# supported content; review.pdf lists every gap and dropped count.
+# Rendering needs ATLAS_RENDER_TYPST (or -render-typst) set to a typst binary.
 #   ATLAS_RENDER_TYPST=typst atlas -pack packs/tailor.yaml \
 #     -var store_root="$HOME/.atlas/workspace" -var subject_id=acme-backend \
-#     -var out_dir="$HOME/applications/acme" -var posting="$(cat posting.txt)"
+#     -var out_dir="$HOME/applications/acme" -var posting="$(cat posting.txt)" \
+#     -var questions="$(cat questions.txt)"
 name: tailor
 vars:
   store_root: ""
@@ -95,6 +99,27 @@ steps:
            "required":["spans"],"additionalProperties":false,
            "properties":{"spans":{"type":"array","minItems":1,"maxItems":1,"items":{"type":"integer"}}}}}}}
 
+  - id: asked_questions
+    tool: extract.run
+    with:
+      text: |
+        {{ if .vars.questions }}Task: list every question asked below, each as a verbatim quote copied
+        from the text.
+
+        Questions:
+        {{ .vars.questions }}{{ else }}No questions are asked. Return an empty questions list.{{ end }}
+      schema: |
+        {"type":"object","required":["questions"],"additionalProperties":false,
+         "properties":{"questions":{"type":"array","items":{"type":"object",
+           "required":["quote"],"additionalProperties":false,
+           "properties":{"quote":{"type":"string"}}}}}}
+
+  - id: questions_ground
+    tool: quote.ground
+    with:
+      fields: "{{ json .steps.asked_questions.fields }}"
+      source: '{{ or .vars.questions "(none)" }}'
+
   - id: letter
     tool: extract.run
     with:
@@ -102,29 +127,33 @@ steps:
         Task: write a short letter of application of about six sentences. Every sentence about
         the candidate must cite the numbers of the evidence spans that support it. Do not write
         a sentence the spans do not support.
-        {{ if .vars.questions }}
-        Also answer each of the posting's questions below, citing spans the same way.
-        {{ else }}
-        No questions are listed below. Return an empty answers list.
-        {{ end }}
+        {{ if .vars.questions }}Also answer each numbered question below in one to three sentences,
+        citing spans the same way. Name every question's number exactly once in answered, with an
+        empty sentences list when no span supports an answer.{{ else }}No questions are asked.
+        Return an empty answered list.{{ end }}
 
         Candidate's evidence spans:
         {{ .steps.spans.listing }}
         Posting:
         {{ .vars.posting }}
-        {{ if .vars.questions }}
-        Questions:
-        {{ .vars.questions }}
-        {{ end }}
+        {{ if .vars.questions }}Questions:
+        {{ range $i, $q := .steps.questions_ground.fields.questions }}[{{ $i }}] {{ $q.quote }}
+        {{ end }}{{ end }}
       schema: |
-        {"type":"object","required":["letter","answers"],"additionalProperties":false,
+        {"type":"object","required":["letter","answered"],"additionalProperties":false,
          "properties":{
           "letter":{"type":"array","items":{"type":"object","required":["text","spans"],"additionalProperties":false,
             "properties":{"text":{"type":"string"},"spans":{"type":"array","items":{"type":"integer"}}}}},
-          "answers":{"type":"array","items":{"type":"object","required":["question","sentences"],"additionalProperties":false,
-            "properties":{"question":{"type":"string"},"sentences":{"type":"array","items":{"type":"object",
+          "answered":{"type":"array","items":{"type":"object","required":["item","sentences"],"additionalProperties":false,
+            "properties":{"item":{"type":"integer"},"sentences":{"type":"array","items":{"type":"object",
               "required":["text","spans"],"additionalProperties":false,
               "properties":{"text":{"type":"string"},"spans":{"type":"array","items":{"type":"integer"}}}}}}}}}}
+
+  - id: answers
+    tool: items.gather
+    with:
+      items: '{{ if .vars.questions }}{{ json .steps.questions_ground.fields.questions }}{{ else }}[]{{ end }}'
+      answered: "{{ json .steps.letter.fields.answered }}"
 
   - id: resolve
     tool: span.resolve
@@ -132,8 +161,8 @@ steps:
       fields: |
         {"requirements": {{ json .steps.cite_items.items }},
          "bullets": {{ json .steps.bullets.fields.bullets }},
-         "letter": {{ json .steps.letter.fields.letter }},
-         "answers": {{ json .steps.letter.fields.answers }}}
+         "letter": {"sentences": {{ json .steps.letter.fields.letter }},
+                    "answers": {{ json .steps.answers.items }}}}
       spans: "{{ json .steps.spans.spans }}"
 
   - id: ground
@@ -164,7 +193,11 @@ steps:
       message: "Tailor for {{ .vars.subject_id }}"
       fields: |
         gaps: "{{ .steps.settle.gaps }}"
+        dropped_requirements: "{{ .steps.cite_items.dropped }}"
+        dropped_questions: "{{ .steps.answers.dropped }}"
 
+  # cv.pdf and letter.pdf are sendable: they carry only kept content, and a
+  # render fails if any gap text reaches them. review.pdf lists every gap.
   - id: cv
     tool: render.run
     with:
@@ -172,15 +205,23 @@ steps:
       data: '{"history": {{ .steps.history.body }}, "tailored": {{ json .steps.settle.fields }}}'
       output: "{{ .vars.out_dir }}/cv.pdf"
       expect: "{{ json .steps.settle.kept.bullets }}"
-      before: "Not shown by the record"
+      absent: "{{ json .steps.settle.gaps_text.requirements }}"
 
   - id: letter_pdf
     tool: render.run
     with:
       template: "{{ .vars.templates }}/letter.typ"
-      data: '{"history": {{ .steps.history.body }}, "tailored": {{ json .steps.settle.fields }}}'
+      data: '{"tailored": {{ json .steps.settle.fields }}}'
       output: "{{ .vars.out_dir }}/letter.pdf"
       expect: "{{ json .steps.settle.kept.letter }}"
-      before: |
-        Answers to the questions asked
-        Removed for lack of evidence
+      absent: "{{ json .steps.settle.gaps_text.letter }}"
+
+  - id: review
+    tool: render.run
+    with:
+      template: "{{ .vars.templates }}/review.typ"
+      data: |
+        {"tailored": {{ json .steps.settle.fields }},
+         "dropped": {"requirements": {{ .steps.cite_items.dropped }}, "questions": {{ .steps.answers.dropped }}}}
+      output: "{{ .vars.out_dir }}/review.pdf"
+      expect: "{{ json .steps.settle.gaps_all }}"
