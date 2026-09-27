@@ -226,7 +226,7 @@ query needs it.
 
 ## Corrections as commits (6.2)
 
-There is no UI yet (Epic 12) and no CLI verb beyond "run a pack" (`cmd/atlas/main.go` only
+There is no UI yet (Epic 13) and no CLI verb beyond "run a pack" (`cmd/atlas/main.go` only
 ever does `packfile.Load` → `runner.Run`). The correction act is therefore:
 
 1. The user opens `<store.root>/profile/history.json` — a real file in a real git working
@@ -514,7 +514,7 @@ would otherwise be the thing under test.
 | Shelling out to `pdftotext` | Only worth adding once tabula's pure-Go extraction is measured insufficient on a real CV, not before |
 | Automatic classification of a deal-breaker as `comparable` or `judged` | Misclassifying one silently disables it; the user states it explicitly |
 | Evaluating deal-breakers against postings | Epic 7's job; this epic only defines the shape |
-| A UI for corrections | Epic 12; corrections are file-edit-plus-pack for now |
+| A UI for corrections | Epic 13; corrections are file-edit-plus-pack for now |
 | Full-text or semantic search over the evidence corpus | Epic 9's job, when tailoring needs to find a quote |
 | Per-claim semantic ("is this a fair characterisation") judging by default | Available via `judge.ask`; not mandated here, to keep ingest to one model call by default |
 | DuckDB indexing of profile revisions | No query scans profile history yet; wiring it would be a port used because it exists |
