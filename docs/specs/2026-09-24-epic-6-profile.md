@@ -51,22 +51,18 @@ This spec resolves it the way the codebase already resolves it for `judge.ask`'s
 all of which live in `packs/` or in the user's own record repository, never as a Go identifier,
 constant or string literal in `internal/` or `cmd/`. The Go tree contributes a small set of
 generic, pack-agnostic primitives, named the way `judgement`, `subject`, `question` and
-`answer` already are:
+`answer` already are.
 
-| Go-tree word | What it means generically | Why it is not use-case vocabulary |
-|---|---|---|
-| `profile` | A document the record holds under a fixed path, alongside `judgements/` | As generic as "judgement" — any pack could keep a profile |
-| `evidence` | A citable source document | Generic evidentiary term, not job-hunt-specific |
-| `decision` | A labelled choice about a subject | Any pack scoring subjects can log a decision |
-| `claim` (used only in prose here, not as a Go identifier — see below) | A statement with a supporting quote | — |
-| `quote` | A verbatim excerpt, as a JSON object key | Structural convention, like `options`/`levels` already are for `judge.ask` |
+**The rule.** The Go tree may name what the harness *does* with data: record, judgement,
+decision, evidence, quote, claim, citation, verdict, subject. It never names what the data is
+*about*: roles, pay, employers, application pipeline states, a CV. `profile` is not on the
+allowed side either. The harness never needed it: the profile is a set of paths and schemas
+that a pack declares.
 
-**This is a judgement call, not something the current test enforces.** `vocabulary_test.go`'s
-forbidden list does not yet contain `cv`, `resume`, `salary`, `deal-breaker` or `dealbreaker`;
-nothing mechanically stops a future contributor from typing `SalaryFloor` into a Go struct.
-Flagged here as a real finding: **the vocabulary test should grow these words into its
-forbidden list as part of implementing this epic**, and the boundary in the table above should
-be ratified (or overruled) by whoever writes the implementation plan, not silently assumed.
+`internal/arch/vocabulary_test.go` enforces the second half as a deny-list, because the allowed
+side cannot be enumerated. Test fixtures are included. Ordinary English that the harness uses
+generically is not listed. `resume`, for example, means resuming an agent session, and only the
+accented `résumé` is forbidden. When a new pack brings a new domain, its words join the list.
 
 ## The profile's shape
 

@@ -169,16 +169,16 @@ func TestARenderResolvesLinksAgainstThePageItLandedOnLive(t *testing.T) {
 	liveBrowser(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/jobs":
-			http.Redirect(w, r, "/careers/list/", http.StatusFound)
-		case "/careers/list/":
+		case "/catalog":
+			http.Redirect(w, r, "/shelf/list/", http.StatusFound)
+		case "/shelf/list/":
 			io.WriteString(w, `<html><body><ul><li class="event"><a href="detail/1">more</a></li></ul></body></html>`)
 		default:
 			http.NotFound(w, r)
 		}
 	}))
 	defer srv.Close()
-	if got, want := renderOne(t, srv.URL+"/jobs"), srv.URL+"/careers/list/detail/1"; got != want {
+	if got, want := renderOne(t, srv.URL+"/catalog"), srv.URL+"/shelf/list/detail/1"; got != want {
 		t.Errorf("link = %s, want %s", got, want)
 	}
 }

@@ -12,6 +12,13 @@ import (
 // The harness knows nothing about any use case. A pack supplies every word
 // specific to what it does; the Go tree supplies none of them.
 //
+// The Go tree may name what the harness does with data: record, judgement,
+// decision, evidence, quote, claim, citation, verdict, subject. It never
+// names what the data is about: roles, pay, employers, pipeline states, a CV.
+// That is enforced as a deny-list, because the allowed side cannot be
+// enumerated. Ordinary English the harness uses generically, such as
+// "resume" (a session) or "rejected", is not listed.
+//
 // Deliberately includes every pack's vocabulary: a harness that is generic
 // for one use case and not another is not generic.
 func TestGoTreeIsFreeOfUseCaseVocabulary(t *testing.T) {
@@ -20,11 +27,12 @@ func TestGoTreeIsFreeOfUseCaseVocabulary(t *testing.T) {
 		"job-hunt", "jobhunt", "recruiter", "hackernews", "hacker news",
 		"salary", "dealbreaker", "deal-breaker", "deal_breaker", "employer",
 		"on-call", "on_call", "curriculum vitae", "résumé",
-		"applicant", "hiring manager",
+		"applicant", "hiring", "career", "vacanc",
+		"ghosted", "not_applied",
 	}
 	// Words short enough to occur inside unrelated identifiers are matched
 	// only as whole words.
-	forbiddenWords := regexp.MustCompile(`\bcv\b`)
+	forbiddenWords := regexp.MustCompile(`\b(cv|jobs)\b`)
 
 	root := filepath.Join("..", "..")
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
