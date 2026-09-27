@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -86,6 +87,16 @@ func TestBackoffDoesNotOverflowOrPanicOnALargeAttempt(t *testing.T) {
 		upper := c.cfg.Delay << maxBackoffShift
 		if wait < 0 || wait >= upper {
 			t.Errorf("backoff(%d) = %s, want [0, %s)", attempt, wait, upper)
+		}
+	}
+}
+
+func TestBackoffSaturatesAHugeDelayInsteadOfPanicking(t *testing.T) {
+	for _, delay := range []time.Duration{3000 * time.Hour, math.MaxInt64} {
+		c := retrying(10)
+		c.cfg.Delay = delay
+		if wait := c.backoff(maxBackoffShift, nil); wait < 0 {
+			t.Errorf("delay %s: backoff = %s, want non-negative", delay, wait)
 		}
 	}
 }

@@ -111,10 +111,12 @@ func NewCrawler(cfg Config) (*Crawler, error) {
 		return nil, errors.New("crawlsource: no user agent")
 	case cfg.Delay <= 0:
 		return nil, errors.New("crawlsource: delay must be positive")
-	case cfg.Timeout <= 0, cfg.PullTimeout <= 0:
+	case cfg.Timeout <= 0, cfg.PullTimeout <= 0, cfg.RenderTimeout <= 0:
 		return nil, errors.New("crawlsource: timeouts must be positive")
 	case cfg.MaxBytes <= 0:
 		return nil, errors.New("crawlsource: max bytes must be positive")
+	case cfg.Retries < 0:
+		return nil, errors.New("crawlsource: retries must not be negative")
 	}
 	conduct := newConduct(cfg, http.DefaultTransport.(*http.Transport).Clone())
 	return &Crawler{cfg: cfg, conduct: conduct, browser: newChrome(cfg, conduct)}, nil

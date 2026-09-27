@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"math/rand/v2"
 	"net/http"
 	"strconv"
@@ -54,8 +55,7 @@ func transient(resp *http.Response, err error) bool {
 	return resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500
 }
 
-// maxBackoffShift caps the exponent in backoff's Delay<<attempt so neither
-// the shift nor rand.N's argument can overflow into a negative duration.
+// maxBackoffShift caps how many times backoff doubles Delay.
 const maxBackoffShift = 10
 
 // maxRetryAfter caps the seconds read from a Retry-After before they become a
@@ -69,6 +69,14 @@ func (c *Conduct) backoff(attempt int, resp *http.Response) time.Duration {
 			return time.Duration(min(secs, maxRetryAfter)) * time.Second
 		}
 	}
-	span := c.cfg.Delay << min(attempt, maxBackoffShift)
-	return rand.N(span)
+	return rand.N(doubled(c.cfg.Delay, min(attempt, maxBackoffShift)))
+}
+
+// doubled is d doubled n times, saturating at the longest Duration instead
+// of overflowing.
+func doubled(d time.Duration, n int) time.Duration {
+	if d > math.MaxInt64>>n {
+		return math.MaxInt64
+	}
+	return d << n
 }

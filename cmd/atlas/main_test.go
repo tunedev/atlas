@@ -40,11 +40,12 @@ func testStore(t *testing.T) (ports.Docs, ports.Index) {
 func testCrawler(t *testing.T) *crawlsource.Crawler {
 	t.Helper()
 	c, err := crawlsource.NewCrawler(crawlsource.Config{
-		UserAgent:   "atlas-test/1 (+https://example.invalid/bot)",
-		Delay:       time.Millisecond,
-		Timeout:     time.Second,
-		PullTimeout: time.Second,
-		MaxBytes:    1 << 20,
+		UserAgent:     "atlas-test/1 (+https://example.invalid/bot)",
+		Delay:         time.Millisecond,
+		Timeout:       time.Second,
+		PullTimeout:   time.Second,
+		MaxBytes:      1 << 20,
+		RenderTimeout: time.Second,
 	})
 	if err != nil {
 		t.Fatalf("new crawler: %v", err)

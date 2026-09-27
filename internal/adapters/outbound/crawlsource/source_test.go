@@ -265,11 +265,14 @@ func TestARerunRevalidatesInsteadOfRefetching(t *testing.T) {
 func TestNewRefusesAConfigThatWouldCrawlImpolitely(t *testing.T) {
 	ts := targets(t, oneTarget, "https://library.example", "/events")
 	for name, mutate := range map[string]func(*crawlsource.Config){
-		"no delay":      func(c *crawlsource.Config) { c.Delay = 0 },
-		"no user agent": func(c *crawlsource.Config) { c.UserAgent = "" },
-		"no timeout":    func(c *crawlsource.Config) { c.Timeout = 0 },
-		"no max bytes":  func(c *crawlsource.Config) { c.MaxBytes = 0 },
-		"no pull bound": func(c *crawlsource.Config) { c.PullTimeout = 0 },
+		"no delay":          func(c *crawlsource.Config) { c.Delay = 0 },
+		"no user agent":     func(c *crawlsource.Config) { c.UserAgent = "" },
+		"no timeout":        func(c *crawlsource.Config) { c.Timeout = 0 },
+		"no max bytes":      func(c *crawlsource.Config) { c.MaxBytes = 0 },
+		"no pull bound":     func(c *crawlsource.Config) { c.PullTimeout = 0 },
+		"negative delay":    func(c *crawlsource.Config) { c.Delay = -time.Second },
+		"no render timeout": func(c *crawlsource.Config) { c.RenderTimeout = 0 },
+		"negative retries":  func(c *crawlsource.Config) { c.Retries = -1 },
 	} {
 		cfg := testConfig()
 		mutate(&cfg)
