@@ -71,9 +71,9 @@ YAML, its schema blocks and its Typst templates, as Epic 6 established.
 2. **`extract.run`** (existing, unchanged). The pack's schema makes every citation field an
    array of span ids. The requirements are quoted from the posting alone and grounded against
    it, then cited by number (`items.cite` builds one claim per requirement); the questions are
-   quoted from the questions var alone and grounded against it, then answered by number as
-   sentences with ids (`items.gather` gives each question its sentences, and an unanswered one
-   an empty sentence). The CV bullets are ordered ids (the bullets are the spans' own text,
+   the questions var's lines (`text.lines`, no model call), answered by number as sentences
+   with ids (`items.gather` gives each question its sentences, and an unanswered one an empty
+   sentence). The CV bullets are ordered ids (the bullets are the spans' own text,
    never reworded); the letter is sentences, each with ids. No questions, no answers.
 3. **`span.resolve`** (new tool, pure). Replaces each cited id with an object
    `{"id","quote"}` carrying the span's verbatim text. An id that does not exist resolves to an
@@ -85,6 +85,8 @@ YAML, its schema blocks and its Typst templates, as Epic 6 established.
    citation survives only if it is grounded and its mass on `yes` is at least the pack's
    `relevance_threshold`. Batching one claim's spans into one call keeps the cost to one model
    call per claim, not per span. The judgement is recorded as `judge.ask` always records it.
+   A sentence answering an item (a question) is judged with the item, then the sentence, as
+   its subject, so it is checked as an answer.
 6. **The gap rule** (new tool, pure: `claims.settle`). Every object with a `text` key is a
    statement; one with no surviving citation, no citations list, or only whitespace for text is
    a gap, and settle always sets the gap flag. Gaps never reach a sendable document:
@@ -136,7 +138,7 @@ consumes structured data natively and values cannot become markup.
 
 | Artifact | Where | Kind |
 |---|---|---|
-| `applications/<subject_id>/tailored.json` | The record (git) | The checked document: every claim with its cited ids and quotes and its gap flag; index fields hold the gap count and the dropped counts |
+| `applications/<subject_id>/tailored.json` | The record (git) | The checked document: every claim with its cited ids and quotes and its gap flag; index fields hold the gap count and the dropped-requirements count |
 | `packs/tailor/*.typ` | The pack | Templates (`cv.typ`, `letter.typ`, `review.typ`); the only place use-case layout lives |
 | `cv.pdf`, `letter.pdf` | A configured output directory, not git | Sendable build artifacts, regenerable from `tailored.json`: kept content only, never a gap |
 | `review.pdf` | The same directory, not git | For the sender only: every gap, unanswered question and dropped count |
@@ -158,7 +160,8 @@ consumes structured data natively and values cannot become markup.
   existing `file.text` path (tabula), and runs `app.Ground` with that text as the source over the
   kept quotes. A kept quote missing from the rendered text is an error, not a warning — the
   artifact must say what the record says. An optional `absent` list works the other way: the
-  packs pass the gap texts, and a render that prints any of them fails and publishes nothing. Normalisation additionally joins a word broken at a
+  packs pass the gap texts, and a render that prints any of them outside the kept statements
+  fails and publishes nothing. Normalisation additionally joins a word broken at a
   line-end hyphen. The spike measured this with `pdftotext`; the plan must re-measure it with
   tabula before relying on it, since the two extract text differently.
 
