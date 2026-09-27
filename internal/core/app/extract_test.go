@@ -30,8 +30,11 @@ func TestExtractSendsTheCallersSchemaAndPinnedSampling(t *testing.T) {
 	if p.last.MaxTokens != 512 {
 		t.Errorf("max tokens = %d", p.last.MaxTokens)
 	}
-	if !strings.Contains(p.last.User, "Kestrel") {
-		t.Errorf("the source text did not reach the model: %q", p.last.User)
+	if !strings.HasPrefix(p.last.User, sightingsSource) {
+		t.Errorf("the source text does not lead the user message: %q", p.last.User)
+	}
+	if !strings.Contains(p.last.User, sightingsSchema) {
+		t.Errorf("the schema is not in the user message, so the model cannot see the shape it must fill: %q", p.last.User)
 	}
 	if !strings.Contains(strings.ToLower(p.last.System), "verbatim") {
 		t.Errorf("the system message does not ask for verbatim quotes: %q", p.last.System)

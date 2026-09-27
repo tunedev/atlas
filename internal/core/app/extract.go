@@ -16,6 +16,11 @@ const extractSystemMessage = "Extract only what the text states. Fill every fiel
 	"For every quote field, copy a verbatim substring of the text that supports the values beside it. " +
 	"Never invent a value the text does not state."
 
+// schemaLabel introduces the schema in the user message. A server that
+// enforces the schema only while decoding never shows it to the model, which
+// then cannot tell what shape it must fill.
+const schemaLabel = "\n\nReply with JSON matching this schema:\n"
+
 // ExtractorConfig pins how an Extractor samples: the same text and schema
 // should give the same value, and MaxTokens bounds the reply.
 type ExtractorConfig struct {
@@ -35,8 +40,9 @@ func NewExtractor(p ports.Provider, cfg ExtractorConfig) *Extractor {
 	return &Extractor{provider: p, cfg: cfg}
 }
 
-// Extract sends text with schema as the reply's constraint and returns the
-// reply. A reply that is not JSON is an error, never a best-effort parse.
+// Extract sends text followed by schema in the user message, with schema also
+// as the reply's constraint, and returns the reply. A reply that is not JSON
+// is an error, never a best-effort parse.
 func (e *Extractor) Extract(ctx context.Context, text string, schema []byte) (json.RawMessage, error) {
 	if strings.TrimSpace(text) == "" {
 		return nil, errors.New("extract: no text")
@@ -47,7 +53,7 @@ func (e *Extractor) Extract(ctx context.Context, text string, schema []byte) (js
 	temperature := e.cfg.Temperature
 	c, err := e.provider.Complete(ctx, ports.Prompt{
 		System:      extractSystemMessage,
-		User:        text,
+		User:        text + schemaLabel + string(schema),
 		MaxTokens:   e.cfg.MaxTokens,
 		Schema:      schema,
 		Temperature: &temperature,
