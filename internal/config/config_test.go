@@ -524,6 +524,66 @@ func TestMalformedFeedDurationEnvVarIsRejected(t *testing.T) {
 	}
 }
 
+func TestCrawlDefaultsAreOffAndPolite(t *testing.T) {
+	cfg, err := config.Load([]string{"-pack", "p.yaml"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	c := cfg.Crawl
+	if c.Render {
+		t.Error("rendering is on by default; it must be opt-in")
+	}
+	if c.Delay < time.Second || c.UserAgent == "" || c.Timeout <= 0 || c.PullTimeout <= 0 || c.MaxBytes <= 0 || c.RenderTimeout <= 0 {
+		t.Errorf("crawl defaults = %+v", c)
+	}
+	if strings.HasPrefix(c.CacheDir, "~") {
+		t.Errorf("CacheDir %q was not expanded", c.CacheDir)
+	}
+}
+
+func TestCrawlLayers(t *testing.T) {
+	t.Setenv("ATLAS_CRAWL_DELAY", "3s")
+	t.Setenv("ATLAS_CRAWL_RENDER", "true")
+	cfg, err := config.Load([]string{"-pack", "p.yaml", "-crawl-delay", "4s"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Crawl.Delay != 4*time.Second || !cfg.Crawl.Render {
+		t.Errorf("crawl = %+v; env turns rendering on, the flag wins on delay", cfg.Crawl)
+	}
+}
+
+func TestImpoliteCrawlConfigIsRejectedAtStartup(t *testing.T) {
+	for name, args := range map[string][]string{
+		"delay under a second": {"-crawl-delay", "500ms"},
+		"anonymous user agent": {"-crawl-user-agent", "atlas-crawler/0.1"},
+		"empty user agent":     {"-crawl-user-agent", ""},
+		"zero timeout":         {"-crawl-timeout", "0s"},
+		"zero pull timeout":    {"-crawl-pull-timeout", "0s"},
+		"zero max bytes":       {"-crawl-max-bytes", "0"},
+		"negative retries":     {"-crawl-retries", "-1"},
+		"zero render timeout":  {"-crawl-render-timeout", "0s"},
+		"empty cache dir":      {"-crawl-cache-dir", ""},
+	} {
+		if _, err := config.Load(append([]string{"-pack", "p.yaml"}, args...)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+func TestAnIdentifiedUserAgentMayUseAnEmail(t *testing.T) {
+	if _, err := config.Load([]string{"-pack", "p.yaml", "-crawl-user-agent", "atlas-crawler/0.1 (me@example.org)"}); err != nil {
+		t.Errorf("a user agent with an email contact was rejected: %v", err)
+	}
+}
+
+func TestCrawlCacheOverlappingTheStoreRootIsRejected(t *testing.T) {
+	root := t.TempDir()
+	if _, err := config.Load([]string{"-pack", "p.yaml", "-store-root", root, "-crawl-cache-dir", filepath.Join(root, "crawl")}); err == nil {
+		t.Error("a crawl cache inside the private record was accepted")
+	}
+}
+
 func TestAgentIsOffWithoutACommand(t *testing.T) {
 	cfg, err := config.Load([]string{"-pack", "p.yaml"})
 	if err != nil {

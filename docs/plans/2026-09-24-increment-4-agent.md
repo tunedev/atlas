@@ -4188,7 +4188,7 @@ git commit -m "Drive Claude Code through a real pack over ACP, and record what i
 
 | Out | Why |
 |---|---|
-| The `suspend` permission outcome | As the spec says: epic 4.6 is the seam, and occupying it needs a human surface that only epic 12 brings |
+| The `suspend` permission outcome | As the spec says: epic 4.6 is the seam, and occupying it needs a human surface that only epic 13 brings |
 | Persisting "always allow" or "always deny" | Epic 10.3 promotes a decision into a rule, deliberately |
 | Nested or structured tool arguments | No shipped tool needs them (R21) |
 | `sessionCapabilities.resume` | Not universally implemented. `session/load` is the interoperable path |
