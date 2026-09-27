@@ -69,6 +69,26 @@ func TestADecisionNeedsASubjectAndAChoice(t *testing.T) {
 	}
 }
 
+func TestADecisionRowSaysWhetherItAgreedWithTheVerdict(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		verdict string
+		want    string
+		present bool
+	}{{"read", "true", true}, {"skip", "false", true}, {"", "", false}} {
+		d := aDecision()
+		d.VerdictAtDecision = c.verdict
+		index := &fakeIndex{}
+		if _, err := app.RecordDecision(ctx, newFakeDocs(), index, d); err != nil {
+			t.Fatalf("record: %v", err)
+		}
+		got, ok := index.rows[0].Fields["agrees"]
+		if ok != c.present || got != c.want {
+			t.Errorf("verdict %q: agrees = %q (present %v), want %q (present %v)", c.verdict, got, ok, c.want, c.present)
+		}
+	}
+}
+
 func TestVerdictAtReadsTheChosenAnswerFromTheJudgement(t *testing.T) {
 	docs, index := newFakeDocs(), &fakeIndex{}
 	path, err := app.RecordJudgement(context.Background(), docs, index, "subject-1", recordQuestions(), aJudgement())
