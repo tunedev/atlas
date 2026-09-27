@@ -3,7 +3,9 @@ package typstconv_test
 import (
 	"bytes"
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -45,8 +47,12 @@ func TestAFailedConversionWritesNothing(t *testing.T) {
 }
 
 func TestATemplateCannotReadFiles(t *testing.T) {
+	outside := filepath.Join(t.TempDir(), "log.txt")
+	if err := os.WriteFile(outside, []byte("Kept the light."), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	var out bytes.Buffer
-	err := converter(t, time.Minute).Convert(context.Background(), &out, strings.NewReader(`#read("/etc/hostname")`))
+	err := converter(t, time.Minute).Convert(context.Background(), &out, strings.NewReader(`#read("`+outside+`")`))
 	if err == nil || out.Len() != 0 {
 		t.Errorf("err %v, wrote %d bytes; a read outside the empty root must fail", err, out.Len())
 	}
