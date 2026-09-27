@@ -117,7 +117,10 @@ func TestARetryKeepsTheHostsCrawlDelay(t *testing.T) {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	c := retrying(1)
+	cfg := testConfig()
+	cfg.Retries = 1
+	out := &sent{at: map[string][]time.Time{}, next: http.DefaultTransport}
+	c := newConduct(cfg, out)
 	for _, p := range []string{"/a", "/b"} {
 		if _, err := get(t, c, srv.URL+p); err != nil {
 			t.Fatal(err)
@@ -127,9 +130,15 @@ func TestARetryKeepsTheHostsCrawlDelay(t *testing.T) {
 	if len(hits) != 4 {
 		t.Fatalf("hits = %v", hits)
 	}
-	for i := 1; i < len(hits); i++ {
-		if gap := hits[i].At.Sub(hits[i-1].At); gap < time.Second-5*time.Millisecond {
-			t.Errorf("%s then %s %s apart; robots.txt asked for 1s", hits[i-1].Path, hits[i].Path, gap)
+	// Spacing is measured where requests leave the Conduct: arrival times
+	// also carry the connection each request travels over.
+	left := out.host(srv.URL) // robots.txt, /a, /a again, /b
+	if len(left) != 4 {
+		t.Fatalf("%d requests left the Conduct, want 4", len(left))
+	}
+	for i := 1; i < len(left); i++ {
+		if gap := left[i].Sub(left[i-1]); gap < time.Second-5*time.Millisecond {
+			t.Errorf("%s left only %s after %s; robots.txt asked for 1s", hits[i].Path, gap, hits[i-1].Path)
 		}
 	}
 }
