@@ -10,10 +10,25 @@ import (
 )
 
 const (
-	inboundRoot   = "github.com/tunedev/atlas/internal/adapters/inbound/"
-	outboundRoot  = "github.com/tunedev/atlas/internal/adapters/outbound/"
-	configRoot    = "github.com/tunedev/atlas/internal/config"
-	telemetryRoot = "github.com/tunedev/atlas/internal/telemetry"
+	modulePath    = "github.com/tunedev/atlas"
+	coreRoot      = modulePath + "/internal/core/"
+	inboundRoot   = modulePath + "/internal/adapters/inbound/"
+	outboundRoot  = modulePath + "/internal/adapters/outbound/"
+	configRoot    = modulePath + "/internal/config"
+	telemetryRoot = modulePath + "/internal/telemetry"
+)
+
+// subtreeHomes hold any package below them; exactHomes are single packages
+// with nothing allowed below.
+var (
+	subtreeHomes = []string{coreRoot, inboundRoot, outboundRoot}
+	exactHomes   = []string{
+		modulePath + "/internal/arch",
+		configRoot,
+		telemetryRoot,
+		modulePath + "/internal/pidlock",
+		modulePath + "/cmd/atlas",
+	}
 )
 
 // TestInboundAdaptersStayIsolated holds the seam every surface plugs into:
@@ -25,7 +40,7 @@ const (
 // package under inbound/ is checked, including ones added after this test
 // was written.
 func TestInboundAdaptersStayIsolated(t *testing.T) {
-	witnessInternalTree(t)
+	witnessModuleTree(t)
 	pkgs := inboundPackages(t)
 	for _, want := range []string{inboundRoot + "packfile", inboundRoot + "mcpserve"} {
 		if !slices.Contains(pkgs, want) {
@@ -70,21 +85,12 @@ func TestIsolationRuleSeparatesSurfaces(t *testing.T) {
 	}
 }
 
-// TestEveryInternalPackageHasAKnownHome makes sure a surface built outside
+// TestEveryPackageHasAKnownHome makes sure a surface built outside
 // internal/adapters/inbound/ cannot hide from TestInboundAdaptersStayIsolated:
-// every package under internal/ must sit in one of the tree's known homes.
-func TestEveryInternalPackageHasAKnownHome(t *testing.T) {
-	witnessInternalTree(t)
-	knownHomes := []string{
-		"github.com/tunedev/atlas/internal/core",
-		inboundRoot,
-		outboundRoot,
-		"github.com/tunedev/atlas/internal/arch",
-		configRoot,
-		telemetryRoot,
-		"github.com/tunedev/atlas/internal/pidlock",
-	}
-	out, err := exec.Command("go", "list", "github.com/tunedev/atlas/internal/...").Output()
+// every package in the module must sit in one of its known homes.
+func TestEveryPackageHasAKnownHome(t *testing.T) {
+	witnessModuleTree(t)
+	out, err := exec.Command("go", "list", modulePath+"/...").Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			t.Fatalf("go list failed: %v: %s", err, exitErr.Stderr)
@@ -92,8 +98,36 @@ func TestEveryInternalPackageHasAKnownHome(t *testing.T) {
 		t.Fatalf("go list failed: %v", err)
 	}
 	for _, pkg := range strings.Fields(string(out)) {
-		if !hasKnownHome(pkg, knownHomes) {
-			t.Errorf("%s has no known home; a new surface belongs under %s, and anything else needs a deliberate home added to this list", pkg, inboundRoot)
+		if !hasKnownHome(pkg) {
+			t.Errorf("%s has no known home; a new surface belongs under %s, and anything else needs a deliberate home added to this test", pkg, inboundRoot)
+		}
+	}
+}
+
+// TestKnownHomesAreExactWhereTheyShouldBe pins the home rule against
+// synthetic package paths.
+func TestKnownHomesAreExactWhereTheyShouldBe(t *testing.T) {
+	cases := []struct {
+		pkg  string
+		home bool
+	}{
+		{coreRoot + "app", true},
+		{coreRoot + "app/sub", true},
+		{inboundRoot + "web", true},
+		{inboundRoot + "web/tmpl", true},
+		{outboundRoot + "gitdocs", true},
+		{modulePath + "/internal/pidlock", true},
+		{modulePath + "/cmd/atlas", true},
+		{modulePath + "/internal/pidlock/web", false},
+		{configRoot + "/web", false},
+		{modulePath + "/internal/web", false},
+		{modulePath + "/web", false},
+		{modulePath + "/cmd/atlasweb", false},
+		{modulePath + "/cmd/atlas/web", false},
+	}
+	for _, c := range cases {
+		if got := hasKnownHome(c.pkg); got != c.home {
+			t.Errorf("hasKnownHome(%s) = %v, want %v", c.pkg, got, c.home)
 		}
 	}
 }
@@ -122,24 +156,33 @@ func isExactOrBelow(dep, root string) bool {
 	return dep == root || strings.HasPrefix(dep, root+"/")
 }
 
-// hasKnownHome reports whether pkg is one of homes or sits below one.
-func hasKnownHome(pkg string, homes []string) bool {
-	for _, home := range homes {
-		home = strings.TrimSuffix(home, "/")
-		if isExactOrBelow(pkg, home) {
+// hasKnownHome reports whether pkg is a known home or sits in a subtree
+// home.
+func hasKnownHome(pkg string) bool {
+	if slices.Contains(exactHomes, pkg) {
+		return true
+	}
+	for _, root := range subtreeHomes {
+		if strings.HasPrefix(pkg, root) {
 			return true
 		}
 	}
 	return false
 }
 
-// witnessInternalTree walks internal/ so Go's testlog records the walk: a
-// package added under internal/ then invalidates the cached result of any
-// test that calls this, instead of returning a stale PASS for a go-list-driven
-// check the test cache cannot otherwise see.
-func witnessInternalTree(t *testing.T) {
+// witnessModuleTree walks the module so Go's testlog records the walk: a
+// package added anywhere in the module then invalidates the cached result of
+// any test that calls this, instead of returning a stale PASS for a
+// go-list-driven check the test cache cannot otherwise see.
+func witnessModuleTree(t *testing.T) {
 	t.Helper()
-	if err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error { return err }); err != nil {
+	walk := func(path string, d fs.DirEntry, err error) error {
+		if err == nil && d.IsDir() && (d.Name() == ".git" || d.Name() == ".superpowers") {
+			return fs.SkipDir
+		}
+		return err
+	}
+	if err := filepath.WalkDir("../..", walk); err != nil {
 		t.Fatalf("witness walk failed: %v", err)
 	}
 }
