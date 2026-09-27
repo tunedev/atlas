@@ -13,8 +13,9 @@ import (
 )
 
 // TextSpans splits local text files into numbered spans a model can cite by
-// id. A directory contributes its regular files, sorted by name. Paths must
-// not contain spaces.
+// id. "paths" holds one path per line; each line is trimmed and blank lines
+// are skipped, so a path may contain spaces. A directory contributes its
+// regular files, sorted by name.
 type TextSpans struct {
 	maxBytes int64
 }
@@ -29,7 +30,7 @@ func (s *TextSpans) Invoke(_ context.Context, with map[string]string) (any, erro
 		return nil, fmt.Errorf("text.spans: min_chars: %w", err)
 	}
 	var sources []app.SpanSource
-	for _, path := range strings.Fields(with["paths"]) {
+	for _, path := range pathLines(with["paths"]) {
 		found, err := s.read(path)
 		if err != nil {
 			return nil, fmt.Errorf("text.spans: %w", err)
@@ -41,6 +42,17 @@ func (s *TextSpans) Invoke(_ context.Context, with map[string]string) (any, erro
 		return nil, fmt.Errorf("text.spans: no span of at least %d characters in %q", minChars, with["paths"])
 	}
 	return map[string]any{"spans": spans, "listing": app.SpanListing(spans), "source": app.SpanText(spans)}, nil
+}
+
+// pathLines returns each non-blank line of raw, trimmed.
+func pathLines(raw string) []string {
+	var paths []string
+	for _, line := range strings.Split(raw, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			paths = append(paths, line)
+		}
+	}
+	return paths
 }
 
 // read returns path as one source, or each regular file in it if it is a

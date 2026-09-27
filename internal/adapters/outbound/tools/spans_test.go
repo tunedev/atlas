@@ -36,6 +36,24 @@ func TestSpansReadFilesAndDirectories(t *testing.T) {
 	}
 }
 
+func TestSpansReadsOnePathPerLineSpacesIncluded(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "keeper notes")
+	must(t, os.Mkdir(dir, 0o700))
+	log := filepath.Join(dir, "night log.txt")
+	must(t, os.WriteFile(log, []byte("Kept the north light burning\n"), 0o600))
+
+	out, err := tools.NewTextSpans(1<<20).Invoke(context.Background(), map[string]string{
+		"paths":     "\n  " + log + "  \n\n",
+		"min_chars": "10",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spans := out.(map[string]any)["spans"].([]app.Span); len(spans) != 1 || spans[0].Source != "night log.txt" {
+		t.Errorf("spans %+v", spans)
+	}
+}
+
 func TestSpansFailsOnAMissingPathAndOnNoSpans(t *testing.T) {
 	dir := t.TempDir()
 	short := filepath.Join(dir, "short.txt")
