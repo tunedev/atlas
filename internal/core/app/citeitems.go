@@ -73,3 +73,56 @@ func wholeIndex(v any, n int) (int, bool) {
 	}
 	return idx, true
 }
+
+// GatherItems pairs each grounded item with the sentences an answering step
+// wrote for it. items is a list of {"quote", "status"} objects, in the order
+// asked; answered is a list of {"item", "sentences"} objects naming an item
+// by its index into items. For every grounded item, in order, GatherItems
+// emits one {"item", "sentences"} object: item is the item's own quote,
+// sentences every sentence object the answered entries give for its index,
+// in order. An item nothing answers gets one sentence with empty text, which
+// Settle marks a gap, so an unanswered item is counted, never silently
+// absent. An item that is not grounded is dropped and counted in dropped.
+// An entry naming no item by a whole index, and a sentence that is not an
+// object, are ignored.
+func GatherItems(items []any, answered []any) ([]any, int) {
+	sentences := sentencesByItem(answered, len(items))
+	out := make([]any, 0, len(items))
+	dropped := 0
+	for i, raw := range items {
+		item, _ := raw.(map[string]any)
+		if item["status"] != "grounded" {
+			dropped++
+			continue
+		}
+		said := sentences[i]
+		if len(said) == 0 {
+			said = []any{map[string]any{"text": "", "spans": []any{}}}
+		}
+		out = append(out, map[string]any{"item": item["quote"], "sentences": said})
+	}
+	return out, dropped
+}
+
+// sentencesByItem collects, per item index in [0, n), every sentence object
+// the answered entries give for it, in order.
+func sentencesByItem(answered []any, n int) map[int][]any {
+	result := make(map[int][]any, n)
+	for _, raw := range answered {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		idx, ok := wholeIndex(entry["item"], n)
+		if !ok {
+			continue
+		}
+		list, _ := entry["sentences"].([]any)
+		for _, s := range list {
+			if obj, ok := s.(map[string]any); ok {
+				result[idx] = append(result[idx], obj)
+			}
+		}
+	}
+	return result
+}

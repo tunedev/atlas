@@ -29,3 +29,25 @@ func (i *ItemsCite) Invoke(_ context.Context, with map[string]string) (any, erro
 	out, dropped := app.CiteItems(items, cited)
 	return map[string]any{"items": out, "dropped": dropped}, nil
 }
+
+// ItemsGather pairs each grounded item with the sentences an answering step
+// wrote for it, so every item appears exactly once: an unanswered item
+// survives as a gap, never silently vanishes.
+type ItemsGather struct{}
+
+func NewItemsGather() *ItemsGather { return &ItemsGather{} }
+
+func (i *ItemsGather) Name() string { return "items.gather" }
+
+func (i *ItemsGather) Invoke(_ context.Context, with map[string]string) (any, error) {
+	var items []any
+	if err := json.Unmarshal([]byte(with["items"]), &items); err != nil {
+		return nil, fmt.Errorf("items.gather: items: %w", err)
+	}
+	var answered []any
+	if err := json.Unmarshal([]byte(with["answered"]), &answered); err != nil {
+		return nil, fmt.Errorf("items.gather: answered: %w", err)
+	}
+	out, dropped := app.GatherItems(items, answered)
+	return map[string]any{"items": out, "dropped": dropped}, nil
+}

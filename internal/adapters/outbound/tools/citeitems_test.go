@@ -40,3 +40,26 @@ func TestItemsCiteRejectsBadInput(t *testing.T) {
 		}
 	}
 }
+
+func TestItemsGatherTool(t *testing.T) {
+	out, err := tools.NewItemsGather().Invoke(context.Background(), map[string]string{
+		"items":    `[{"quote":"Can you trim a wick?","status":"grounded"},{"quote":"Can you sail?","status":"needs_review"}]`,
+		"answered": `[{"item":0,"sentences":[{"text":"I trimmed wicks nightly.","spans":[0]}]}]`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := out.(map[string]any)
+	items := res["items"].([]any)
+	if len(items) != 1 || items[0].(map[string]any)["item"] != "Can you trim a wick?" || res["dropped"] != 1 {
+		t.Errorf("result %v", res)
+	}
+	for name, with := range map[string]map[string]string{
+		"bad items":    {"items": "{", "answered": "[]"},
+		"bad answered": {"items": "[]", "answered": "{"},
+	} {
+		if _, err := tools.NewItemsGather().Invoke(context.Background(), with); err == nil {
+			t.Errorf("%s: no error", name)
+		}
+	}
+}

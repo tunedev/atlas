@@ -58,3 +58,38 @@ func TestCiteItemsDropsEveryUngroundedItem(t *testing.T) {
 		t.Errorf("dropped = %d; want 2", dropped)
 	}
 }
+
+func TestGatherItemsGivesEveryGroundedItemItsSentences(t *testing.T) {
+	items := decode(t, `[
+	 {"quote":"Can you trim a wick?","status":"grounded"},
+	 {"quote":"Can you sail?","status":"needs_review"},
+	 {"quote":"Can you read a chart?","status":"grounded"}]`).([]any)
+	answered := decode(t, `[
+	 {"item":0,"sentences":[{"text":"I trimmed wicks nightly.","spans":[0]}]},
+	 {"item":0,"sentences":[{"text":"I kept spares.","spans":[1]}]},
+	 {"item":1,"sentences":[{"text":"I sailed.","spans":[2]}]},
+	 {"item":7,"sentences":[{"text":"Out of range.","spans":[3]}]},
+	 {"item":0.5,"sentences":[{"text":"Fractional.","spans":[4]}]}]`).([]any)
+
+	got, dropped := app.GatherItems(items, answered)
+	want := decode(t, `[
+	 {"item":"Can you trim a wick?","sentences":[
+	   {"text":"I trimmed wicks nightly.","spans":[0]},
+	   {"text":"I kept spares.","spans":[1]}]},
+	 {"item":"Can you read a chart?","sentences":[{"text":"","spans":[]}]}]`)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got  %s\nwant %s", encode(t, got), encode(t, want))
+	}
+	if dropped != 1 {
+		t.Errorf("dropped = %d; want 1", dropped)
+	}
+}
+
+func TestAnUnansweredItemSettlesAsAGap(t *testing.T) {
+	items := decode(t, `[{"quote":"Can you read a chart?","status":"grounded"}]`).([]any)
+	got, _ := app.GatherItems(items, []any{})
+	tree := app.ResolveCitations(map[string]any{"answers": got}, keeperSpans)
+	if s := app.Settle(tree); s.Gaps != 1 {
+		t.Errorf("gaps = %d; want 1: an unanswered item is a gap\n%s", s.Gaps, encode(t, s.Tree))
+	}
+}
