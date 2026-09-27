@@ -2,6 +2,10 @@
 # apply, reach or skip, reasons from the same call, and every deal-breaker
 # named as tripped, clear or unknown. A role already judged with the same
 # text, questions, rules and model is reused, not asked again.
+#
+# The deal-breaker named in the profile text above is only informed context
+# for the model; it is checked as a rule, and reported tripped, clear or
+# unknown, only when -var rules=profile/dealbreakers.json is passed.
 #   atlas -pack packs/job-hunt.yaml -var board=gitlab -var rules=profile/dealbreakers.json
 name: job-hunt
 vars:

@@ -67,6 +67,13 @@ provider's own `Name()`) and the `Sampling` that produced it, and every
 `Answer` records the raw `Alternatives` its mass was read from — none of
 this can be added retroactively to a judgement already made.
 
+`JudgeConfig.ContextTokens`, when above zero, is the engine's measured context window. `Ask`
+reads each completion's own token usage and refuses one whose prompt reached or passed that
+window, returning an error ("prompt may be truncated") instead of a judgement: a prompt the
+engine had to cut is not a subject it actually saw. Only `app.Judge` sees a completion's usage,
+so this is the one place the check can live, and it protects `judge.ask` and `judge.each`
+alike.
+
 ## One call, one schema, every answer at once
 
 `Judge.Ask` builds one `ports.Prompt` for every question in `qs`: a system
@@ -159,20 +166,10 @@ rest of their text differs. Rejecting the option set at validation time
 turns that failure into a deterministic, parse-time error instead of a
 live-only one that depends on which alternative an engine happens to emit.
 
-`optionMatch`'s prefix-ambiguity branch — a trimmed text that prefixes two
-or more different options' forms — is unreachable through `Judge.Ask` for
-any question that passes `AnswerSchema`: reaching it would require two
-different options to share a first character, which validation now refuses
-before the provider is ever called. The branch, and its error format
-(`judge: <question id>: "<text>" is ambiguous between <a> and <b>
-(alternative "<text>", p=<probability>)`, or `(emitted token "<text>",
-p=<probability>)` when found in the fallback read of the token's own text),
-stay in place as a defensive check rather than dead code to delete: nothing
-in this package calls `massForToken`/`optionMatch` on a question that has
-skipped `AnswerSchema`, but the read path itself does not assume that. The same
-double-count guard `MassAtToken` applies for every caller: the answer
-token's own probability is folded in only when its own text is not already
-among its alternatives.
+`optionMatch`'s prefix-ambiguity branch is unreachable through `Judge.Ask` for any question
+that passes `AnswerSchema`, and stays in place as a defensive check rather than dead code to
+delete. The same double-count guard `MassAtToken` applies for every caller: the answer token's
+own probability is folded in only when its own text is not already among its alternatives.
 
 ## The judgement record
 
@@ -191,27 +188,37 @@ index row mirrors the subject, model and provider as flat string fields,
 plus `"outcome": "pending"`, since the row cannot hold a nested
 distribution.
 
-`tools.Judge` (`judge.ask`) is the one caller: it parses a pack's YAML
-questions block into `[]ports.Question`, calls `Judge.Ask`, then
-`RecordJudgement`, and returns each answer keyed by question id (`chosen`,
-`p`, `distribution`, `confidence`, `coverage`, `expected` for a score) plus
-the path written, under the key `"path"` — reserved, so a pack cannot name a
-question `path` and collide with it.
+`judge.each` (below) adds two keys to the document, `fingerprint` and `rules` (the rule results
+checked against the same subject), both omitted when absent, and three fields to the index row,
+`fingerprint`, `verdict` (the verdict question's chosen answer), and `tripped` (the tripped
+rules' ids, comma-separated); `judge.ask` writes none of the five.
+
+`tools.Judge` (`judge.ask`) and `tools.JudgeEach` (`judge.each`, below) are the two callers.
+`judge.ask` parses a pack's YAML questions block into `[]ports.Question`, calls `Judge.Ask`,
+then `RecordJudgement`, and returns each answer keyed by question id (`chosen`, `p`,
+`distribution`, `confidence`, `coverage`, `expected` for a score) plus the path written, under
+the key `"path"` — reserved, so a pack cannot name a question `path` and collide with it.
+`judge.each` calls `Judge.Ask` once per item and records through `RecordAssessedJudgement`,
+which adds the fingerprint, verdict and rule results `RecordJudgement` alone does not carry.
 
 ## Judging many subjects: judge.each
 
 `tools.JudgeEach` (`judge.each`) scores every item a `ports.Source` selects, one `Judge.Ask`
 call per item, one item at a time: concurrency measured no faster on this engine, and
 sustained parallel load once wedged it. For each item it renders `subject_id` and `subject`
-from per-item templates, then fingerprints the rendered subject together with the question
-set, the loaded rules, each mapped rule field's resolved value, and the model name
-(`app.Fingerprint`). An item whose subject id and fingerprint are both already recorded is
+from per-item templates, then fingerprints exactly what the call sends the judge
+(`app.JudgeRequest`: the system message, the user message, and the schema) together with the
+loaded rules, each mapped rule field's resolved value, the verdict question's id, and the model
+name (`app.Fingerprint`). An item whose subject id and fingerprint are both already recorded is
 reused: its stored judgement is re-assessed, not re-asked. A run's rules (optional, a `Docs`
 path) split in two: comparable rules are checked in code against a mapped field of the item's
-own document; judged rules are asked as an extra yes/no question in the same call. Either kind
-reports `tripped`, `clear`, or `unknown` (a missing field, never a false trip) — rules flag a
-verdict, they never override it. A subject at risk of truncation is refused by the judge
-itself (above), and that item becomes an error row rather than aborting the run.
+own document; judged rules are asked as an extra yes/no question in the same call, worded by
+the rule's own `ask` — measured on real roles, a question derived from `Statement` alone never
+tripped on a true positive (0 of 20) against 15 of 20 for asking the condition directly, so
+`ParseRules` rejects a judged rule with no usable `ask`. Either kind reports `tripped`, `clear`,
+or `unknown` (a missing field, never a false trip) — rules flag a verdict, they never override
+it. A subject at risk of truncation is refused by the judge itself (`ContextTokens`, above),
+and that item becomes an error row rather than aborting the run.
 
 See `docs/specs/2026-09-27-epic-7-fit.md` for the live measurements: reuse cost, and the
 several-roles-per-call scaling test.
