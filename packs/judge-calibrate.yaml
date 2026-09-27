@@ -1,0 +1,26 @@
+# Scores one recorded question's probabilities against attached outcomes,
+# pooled and per engine, and reports how often decisions agreed with the
+# verdict. Nothing is classified by default: name the question, the answer
+# options whose mass predicts a positive outcome, and which outcome states
+# count as positive and negative. A job-hunt example, leaving ghosted,
+# withdrawn and not_applied unscored:
+#   atlas -pack packs/judge-calibrate.yaml -var question=<verdict question> \
+#     -var options=<option> -var positive=offer -var negative=rejected
+name: judge-calibrate
+vars:
+  question: ""
+  options: ""
+  positive: ""
+  negative: ""
+
+steps:
+  - id: calibration
+    tool: judge.calibrate
+    with:
+      question: "{{ .vars.question }}"
+      options: "{{ .vars.options }}"
+      positive: "{{ .vars.positive }}"
+      negative: "{{ .vars.negative }}"
+
+  - id: agreement
+    tool: decision.agreement
