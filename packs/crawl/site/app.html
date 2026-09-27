@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+<head><title>Northwind careers app</title></head>
+<body>
+<div id="root"></div>
+<script>
+setTimeout(function () {
+  var root = document.getElementById('root');
+  var ul = document.createElement('ul');
+  var jobs = [
+    { title: 'Support Engineer', location: 'Remote', href: '/jobs/support-engineer.html' },
+    { title: 'QA Engineer', location: 'Remote', href: '/jobs/qa-engineer.html' }
+  ];
+  jobs.forEach(function (job) {
+    var li = document.createElement('li');
+    li.className = 'opening';
+    var h3 = document.createElement('h3');
+    h3.className = 'title';
+    h3.textContent = job.title;
+    var span = document.createElement('span');
+    span.className = 'location';
+    span.textContent = job.location;
+    var a = document.createElement('a');
+    a.href = job.href;
+    a.textContent = 'Apply';
+    li.appendChild(h3);
+    li.appendChild(span);
+    li.appendChild(a);
+    ul.appendChild(li);
+  });
+  root.appendChild(ul);
+}, 200);
+</script>
+</body>
+</html>

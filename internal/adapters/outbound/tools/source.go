@@ -21,6 +21,9 @@ import (
 // "stale", "count"}}. A source older than staleAfter is still returned and
 // reported: marked stale and logged as a warning. What to do about stale
 // data is the pack's decision.
+//
+// A Pull that returns an error fails the call, even when it returned items
+// with it: source.pull never presents part of a source as the whole.
 type SourcePull struct {
 	source     ports.Source
 	staleAfter time.Duration

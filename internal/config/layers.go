@@ -24,6 +24,9 @@ func Load(args []string) (Config, error) {
 	if err := expandPaths(&cfg); err != nil {
 		return Config{}, err
 	}
+	if err := resolveWorkDir(&cfg); err != nil {
+		return Config{}, err
+	}
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
 	}
@@ -59,6 +62,12 @@ func expandPaths(c *Config) error {
 	}
 	c.Feed.CachePath = cachePath
 
+	crawlCacheDir, err := expandHome(c.Crawl.CacheDir)
+	if err != nil {
+		return err
+	}
+	c.Crawl.CacheDir = crawlCacheDir
+
 	return nil
 }
 
@@ -76,6 +85,23 @@ func expandHome(path string) (string, error) {
 		return home, nil
 	}
 	return filepath.Join(home, strings.TrimPrefix(path, "~/")), nil
+}
+
+// resolveWorkDir expands a leading "~" in the agent's working directory and,
+// if it is still empty, defaults it to the process's current directory.
+func resolveWorkDir(c *Config) error {
+	workDir, err := expandHome(c.Agent.WorkDir)
+	if err != nil {
+		return err
+	}
+	if workDir == "" {
+		workDir, err = os.Getwd()
+		if err != nil {
+			return fmt.Errorf("config: resolve working directory: %w", err)
+		}
+	}
+	c.Agent.WorkDir = workDir
+	return nil
 }
 
 func defaults() Config {
@@ -116,9 +142,32 @@ func defaults() Config {
 			MaxTokens:     256,
 			ContextTokens: 4096,
 		},
+		Agent: AgentConfig{
+			MCPAddr:            "127.0.0.1:0",
+			StartTimeout:       60 * time.Second,
+			TurnTimeout:        30 * time.Minute,
+			CloseTimeout:       10 * time.Second,
+			MCPHeaderTimeout:   10 * time.Second,
+			MaxMessageBytes:    16 * 1024 * 1024,
+			MaxToolResultBytes: 1024 * 1024,
+		},
+		Permission: PermissionConfig{
+			SummaryBytes: 200,
+		},
 		Extract: ExtractConfig{
 			Temperature: 0,
 			MaxTokens:   4096,
+		},
+		Crawl: CrawlConfig{
+			UserAgent:     "atlas-crawler/0.1 (+https://github.com/tunedev/atlas)",
+			Delay:         2 * time.Second,
+			Timeout:       20 * time.Second,
+			PullTimeout:   10 * time.Minute,
+			MaxBytes:      5 * 1024 * 1024,
+			Retries:       2,
+			CacheDir:      "~/.atlas/crawl-cache",
+			Render:        false,
+			RenderTimeout: 30 * time.Second,
 		},
 	}
 }
@@ -269,6 +318,132 @@ func applyEnv(c *Config) error {
 		}
 		c.Feed.StaleAfter = d
 	}
+	if v := os.Getenv("ATLAS_CRAWL_USER_AGENT"); v != "" {
+		c.Crawl.UserAgent = v
+	}
+	if v := os.Getenv("ATLAS_CRAWL_DELAY"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_CRAWL_DELAY: invalid duration %q: %w", v, err)
+		}
+		c.Crawl.Delay = d
+	}
+	if v := os.Getenv("ATLAS_CRAWL_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_CRAWL_TIMEOUT: invalid duration %q: %w", v, err)
+		}
+		c.Crawl.Timeout = d
+	}
+	if v := os.Getenv("ATLAS_CRAWL_PULL_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_CRAWL_PULL_TIMEOUT: invalid duration %q: %w", v, err)
+		}
+		c.Crawl.PullTimeout = d
+	}
+	if v := os.Getenv("ATLAS_CRAWL_MAX_BYTES"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_CRAWL_MAX_BYTES: invalid integer %q: %w", v, err)
+		}
+		c.Crawl.MaxBytes = n
+	}
+	if v := os.Getenv("ATLAS_CRAWL_RETRIES"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_CRAWL_RETRIES: invalid integer %q: %w", v, err)
+		}
+		c.Crawl.Retries = n
+	}
+	if v := os.Getenv("ATLAS_CRAWL_CACHE_DIR"); v != "" {
+		c.Crawl.CacheDir = v
+	}
+	if v := os.Getenv("ATLAS_CRAWL_RENDER"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_CRAWL_RENDER: invalid bool %q: %w", v, err)
+		}
+		c.Crawl.Render = b
+	}
+	if v := os.Getenv("ATLAS_CRAWL_RENDER_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_CRAWL_RENDER_TIMEOUT: invalid duration %q: %w", v, err)
+		}
+		c.Crawl.RenderTimeout = d
+	}
+	if v := os.Getenv("ATLAS_AGENT_COMMAND"); v != "" {
+		c.Agent.Command = v
+	}
+	if v := os.Getenv("ATLAS_AGENT_ARGS"); v != "" {
+		c.Agent.Args = strings.Fields(v)
+	}
+	if v := os.Getenv("ATLAS_AGENT_WORKDIR"); v != "" {
+		c.Agent.WorkDir = v
+	}
+	if v := os.Getenv("ATLAS_AGENT_TOOLS"); v != "" {
+		c.Agent.Tools = splitList(v)
+	}
+	if v := os.Getenv("ATLAS_AGENT_MCP_ADDR"); v != "" {
+		c.Agent.MCPAddr = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("ATLAS_AGENT_START_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_AGENT_START_TIMEOUT: invalid duration %q: %w", v, err)
+		}
+		c.Agent.StartTimeout = d
+	}
+	if v := os.Getenv("ATLAS_AGENT_TURN_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_AGENT_TURN_TIMEOUT: invalid duration %q: %w", v, err)
+		}
+		c.Agent.TurnTimeout = d
+	}
+	if v := os.Getenv("ATLAS_AGENT_CLOSE_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_AGENT_CLOSE_TIMEOUT: invalid duration %q: %w", v, err)
+		}
+		c.Agent.CloseTimeout = d
+	}
+	if v := os.Getenv("ATLAS_AGENT_MCP_HEADER_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_AGENT_MCP_HEADER_TIMEOUT: invalid duration %q: %w", v, err)
+		}
+		c.Agent.MCPHeaderTimeout = d
+	}
+	if v := os.Getenv("ATLAS_AGENT_MAX_MESSAGE_BYTES"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_AGENT_MAX_MESSAGE_BYTES: invalid integer %q: %w", v, err)
+		}
+		c.Agent.MaxMessageBytes = n
+	}
+	if v := os.Getenv("ATLAS_AGENT_MAX_TOOL_RESULT_BYTES"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_AGENT_MAX_TOOL_RESULT_BYTES: invalid integer %q: %w", v, err)
+		}
+		c.Agent.MaxToolResultBytes = n
+	}
+	if v := os.Getenv("ATLAS_PERMISSION_RULES"); v != "" {
+		rules, err := parseRules(v)
+		if err != nil {
+			return err
+		}
+		c.Permission.Rules = rules
+	}
+	if v := os.Getenv("ATLAS_PERMISSION_SUMMARY_BYTES"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_PERMISSION_SUMMARY_BYTES: invalid integer %q: %w", v, err)
+		}
+		c.Permission.SummaryBytes = n
+	}
 	return nil
 }
 
@@ -315,8 +490,61 @@ func applyFlags(c *Config, args []string) error {
 	fs.StringVar(&c.Feed.CachePath, "feed-cache-path", c.Feed.CachePath, "directory of the feed's local cache; never inside the store root")
 	fs.DurationVar(&c.Feed.PullTimeout, "feed-pull-timeout", c.Feed.PullTimeout, "timeout for one feed pull")
 	fs.DurationVar(&c.Feed.StaleAfter, "feed-stale-after", c.Feed.StaleAfter, "feed age past which source.pull warns")
+	fs.StringVar(&c.Crawl.UserAgent, "crawl-user-agent", c.Crawl.UserAgent, "crawler user agent; must name a contact URL or email")
+	fs.DurationVar(&c.Crawl.Delay, "crawl-delay", c.Crawl.Delay, "least gap between two requests to one host (at least 1s)")
+	fs.DurationVar(&c.Crawl.Timeout, "crawl-timeout", c.Crawl.Timeout, "timeout for one crawl request")
+	fs.DurationVar(&c.Crawl.PullTimeout, "crawl-pull-timeout", c.Crawl.PullTimeout, "timeout for one crawl pull")
+	fs.Int64Var(&c.Crawl.MaxBytes, "crawl-max-bytes", c.Crawl.MaxBytes, "max response body size for a crawl request, in bytes")
+	fs.IntVar(&c.Crawl.Retries, "crawl-retries", c.Crawl.Retries, "max retries for a crawl request")
+	fs.StringVar(&c.Crawl.CacheDir, "crawl-cache-dir", c.Crawl.CacheDir, "directory of the crawler's local cache; never inside the store root")
+	fs.BoolVar(&c.Crawl.Render, "crawl-render", c.Crawl.Render, "render JavaScript pages with a browser already on this machine; never downloads one")
+	fs.DurationVar(&c.Crawl.RenderTimeout, "crawl-render-timeout", c.Crawl.RenderTimeout, "timeout for one render")
+	fs.StringVar(&c.Agent.Command, "agent-command", c.Agent.Command, "command that starts the coding agent; empty disables it")
+	fs.Func("agent-args", "space-separated arguments for the agent command", func(v string) error {
+		c.Agent.Args = strings.Fields(v)
+		return nil
+	})
+	fs.StringVar(&c.Agent.WorkDir, "agent-workdir", c.Agent.WorkDir, "absolute default working directory for the agent")
+	fs.Func("agent-tools", "comma-separated registry tools offered to the agent", func(v string) error {
+		c.Agent.Tools = splitList(v)
+		return nil
+	})
+	fs.DurationVar(&c.Agent.TurnTimeout, "agent-turn-timeout", c.Agent.TurnTimeout, "timeout for one agent turn")
+	fs.Func("permission-rules", "comma-separated tool:kind:decision permission rules, first match wins", func(v string) error {
+		rules, err := parseRules(v)
+		if err != nil {
+			return err
+		}
+		c.Permission.Rules = rules
+		return nil
+	})
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("config: parse flags: %w", err)
 	}
 	return nil
+}
+
+// splitList splits a comma-separated list, trimming space and dropping
+// empty entries.
+func splitList(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+// parseRules reads "tool:kind:decision" entries from a comma-separated list.
+func parseRules(s string) ([]PermissionRule, error) {
+	var rules []PermissionRule
+	for _, entry := range splitList(s) {
+		parts := strings.Split(entry, ":")
+		if len(parts) != 3 {
+			return nil, fmt.Errorf("config: permission rule %q is not tool:kind:decision", entry)
+		}
+		rules = append(rules, PermissionRule{ToolName: parts[0], Kind: parts[1], Decision: parts[2]})
+	}
+	return rules, nil
 }

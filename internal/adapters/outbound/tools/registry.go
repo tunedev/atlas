@@ -1,6 +1,10 @@
 package tools
 
-import "github.com/tunedev/atlas/internal/core/ports"
+import (
+	"maps"
+
+	"github.com/tunedev/atlas/internal/core/ports"
+)
 
 // Registry resolves a tool name to its implementation. Adding a tool is
 // adding it to this map at the composition root; nothing switches on a tool
@@ -18,4 +22,13 @@ func NewRegistry(list ...ports.Tool) Registry {
 func (r Registry) Lookup(name string) (ports.Tool, bool) {
 	t, ok := r[name]
 	return t, ok
+}
+
+// With returns a copy of r that also holds t. r itself is unchanged, so a
+// registry handed out earlier never gains tools behind its holder's back.
+func (r Registry) With(t ports.Tool) Registry {
+	out := make(Registry, len(r)+1)
+	maps.Copy(out, r)
+	out[t.Name()] = t
+	return out
 }

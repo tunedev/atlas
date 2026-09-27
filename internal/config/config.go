@@ -14,13 +14,16 @@ import (
 // Nothing here describes any particular use case: what to run comes from a
 // pack file, named by Pack.Path.
 type Config struct {
-	Pack    PackConfig
-	Model   ModelConfig
-	OTel    OTelConfig
-	Store   StoreConfig
-	Feed    FeedConfig
-	Judge   JudgeConfig
-	Extract ExtractConfig
+	Pack       PackConfig
+	Model      ModelConfig
+	OTel       OTelConfig
+	Store      StoreConfig
+	Feed       FeedConfig
+	Judge      JudgeConfig
+	Agent      AgentConfig
+	Permission PermissionConfig
+	Extract    ExtractConfig
+	Crawl      CrawlConfig
 }
 
 type PackConfig struct {
@@ -94,6 +97,100 @@ type FeedConfig struct {
 	CachePath   string
 	PullTimeout time.Duration
 	StaleAfter  time.Duration
+}
+
+// CrawlConfig governs the local crawler. The user agent must name a contact
+// (a URL or an email address), and Delay, the least gap between two requests
+// to one host, cannot go below minCrawlDelay. robots.txt is always honoured
+// and has no setting.
+type CrawlConfig struct {
+	UserAgent     string
+	Delay         time.Duration
+	Timeout       time.Duration
+	PullTimeout   time.Duration
+	MaxBytes      int64
+	Retries       int
+	CacheDir      string
+	Render        bool
+	RenderTimeout time.Duration
+}
+
+// minCrawlDelay is the least gap between two requests to one host that the
+// crawler may be configured with.
+const minCrawlDelay = time.Second
+
+// identified reports whether a user agent looks like it names a contact: it
+// carries a URL or an "@". It is a nudge toward naming one, not proof of one.
+func identified(ua string) bool {
+	return strings.Contains(ua, "http://") || strings.Contains(ua, "https://") || strings.Contains(ua, "@")
+}
+
+// AgentConfig configures the one coding agent atlas can drive. The agent is
+// enabled only when Command is set. Tools names the registry tools offered
+// to it. WorkDir is the absolute default directory it works in.
+type AgentConfig struct {
+	Command            string
+	Args               []string
+	WorkDir            string
+	Tools              []string
+	MCPAddr            string
+	StartTimeout       time.Duration
+	TurnTimeout        time.Duration
+	CloseTimeout       time.Duration
+	MCPHeaderTimeout   time.Duration
+	MaxMessageBytes    int
+	MaxToolResultBytes int
+}
+
+// PermissionConfig holds the rules that decide an agent's tool calls, first
+// match wins, and bounds the summary a human is shown.
+type PermissionConfig struct {
+	Rules        []PermissionRule
+	SummaryBytes int
+}
+
+// PermissionRule matches a tool name and kind, either of which may be "*".
+type PermissionRule struct {
+	ToolName string
+	Kind     string
+	Decision string
+}
+
+// AgentEnv is environ without atlas's own variables, so no atlas secret
+// reaches the agent process.
+func AgentEnv(environ []string) []string {
+	var out []string
+	for _, kv := range environ {
+		if !strings.HasPrefix(kv, "ATLAS_") {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
+// validate checks the agent config, called only when the agent is enabled.
+func (a AgentConfig) validate() error {
+	if !filepath.IsAbs(a.WorkDir) {
+		return fmt.Errorf("config: agent workdir must be absolute, got %q", a.WorkDir)
+	}
+	for _, t := range []struct {
+		name string
+		d    time.Duration
+	}{
+		{"start timeout", a.StartTimeout}, {"turn timeout", a.TurnTimeout},
+		{"close timeout", a.CloseTimeout}, {"mcp header timeout", a.MCPHeaderTimeout},
+	} {
+		if t.d <= 0 {
+			return fmt.Errorf("config: agent %s must be positive, got %s", t.name, t.d)
+		}
+	}
+	if a.MaxMessageBytes <= 0 || a.MaxToolResultBytes <= 0 {
+		return fmt.Errorf("config: agent max message and tool result bytes must be positive")
+	}
+	if len(a.Tools) > 0 && a.MCPAddr == "" {
+		return fmt.Errorf("config: agent tools are configured but the MCP address is empty")
+	}
+	return nil
 }
 
 func (c Config) validate() error {
@@ -171,6 +268,48 @@ func (c Config) validate() error {
 	}
 	if c.Feed.StaleAfter <= 0 {
 		return fmt.Errorf("config: feed stale-after must be positive, got %s", c.Feed.StaleAfter)
+	}
+	if !identified(c.Crawl.UserAgent) {
+		return fmt.Errorf("config: crawl user agent %q must identify the crawler with a contact URL or email", c.Crawl.UserAgent)
+	}
+	if c.Crawl.Delay < minCrawlDelay {
+		return fmt.Errorf("config: crawl delay must be at least %s, got %s", minCrawlDelay, c.Crawl.Delay)
+	}
+	if c.Crawl.Timeout <= 0 {
+		return fmt.Errorf("config: crawl timeout must be positive, got %s", c.Crawl.Timeout)
+	}
+	if c.Crawl.PullTimeout <= 0 {
+		return fmt.Errorf("config: crawl pull timeout must be positive, got %s", c.Crawl.PullTimeout)
+	}
+	if c.Crawl.MaxBytes <= 0 {
+		return fmt.Errorf("config: crawl max bytes must be positive, got %d", c.Crawl.MaxBytes)
+	}
+	if c.Crawl.Retries < 0 {
+		return fmt.Errorf("config: crawl retries must not be negative, got %d", c.Crawl.Retries)
+	}
+	if c.Crawl.RenderTimeout <= 0 {
+		return fmt.Errorf("config: crawl render timeout must be positive, got %s", c.Crawl.RenderTimeout)
+	}
+	if c.Crawl.CacheDir == "" {
+		return fmt.Errorf("config: crawl cache dir is empty")
+	}
+	if overlaps(c.Crawl.CacheDir, c.Store.Root) {
+		return fmt.Errorf("config: crawl cache dir %s overlaps store root %s; fetched pages must never share a directory with the private record", c.Crawl.CacheDir, c.Store.Root)
+	}
+	for _, r := range c.Permission.Rules {
+		switch r.Decision {
+		case "allow", "ask", "deny":
+		default:
+			return fmt.Errorf("config: permission rule %s:%s has unknown decision %q", r.ToolName, r.Kind, r.Decision)
+		}
+	}
+	if c.Permission.SummaryBytes <= 0 {
+		return fmt.Errorf("config: permission summary bytes must be positive, got %d", c.Permission.SummaryBytes)
+	}
+	if c.Agent.Command != "" {
+		if err := c.Agent.validate(); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -534,5 +535,131 @@ func TestJudgeContextTokensDefaultsEnvAndValidation(t *testing.T) {
 	}
 	if _, err := config.Load([]string{"-pack", "p.yaml", "-judge-context-tokens", "0"}); err == nil {
 		t.Error("a zero context size was accepted")
+	}
+}
+
+func TestCrawlDefaultsAreOffAndPolite(t *testing.T) {
+	cfg, err := config.Load([]string{"-pack", "p.yaml"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	c := cfg.Crawl
+	if c.Render {
+		t.Error("rendering is on by default; it must be opt-in")
+	}
+	if c.Delay < time.Second || c.UserAgent == "" || c.Timeout <= 0 || c.PullTimeout <= 0 || c.MaxBytes <= 0 || c.RenderTimeout <= 0 {
+		t.Errorf("crawl defaults = %+v", c)
+	}
+	if strings.HasPrefix(c.CacheDir, "~") {
+		t.Errorf("CacheDir %q was not expanded", c.CacheDir)
+	}
+}
+
+func TestCrawlLayers(t *testing.T) {
+	t.Setenv("ATLAS_CRAWL_DELAY", "3s")
+	t.Setenv("ATLAS_CRAWL_RENDER", "true")
+	cfg, err := config.Load([]string{"-pack", "p.yaml", "-crawl-delay", "4s"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Crawl.Delay != 4*time.Second || !cfg.Crawl.Render {
+		t.Errorf("crawl = %+v; env turns rendering on, the flag wins on delay", cfg.Crawl)
+	}
+}
+
+func TestImpoliteCrawlConfigIsRejectedAtStartup(t *testing.T) {
+	for name, args := range map[string][]string{
+		"delay under a second": {"-crawl-delay", "500ms"},
+		"anonymous user agent": {"-crawl-user-agent", "atlas-crawler/0.1"},
+		"empty user agent":     {"-crawl-user-agent", ""},
+		"zero timeout":         {"-crawl-timeout", "0s"},
+		"zero pull timeout":    {"-crawl-pull-timeout", "0s"},
+		"zero max bytes":       {"-crawl-max-bytes", "0"},
+		"negative retries":     {"-crawl-retries", "-1"},
+		"zero render timeout":  {"-crawl-render-timeout", "0s"},
+		"empty cache dir":      {"-crawl-cache-dir", ""},
+	} {
+		if _, err := config.Load(append([]string{"-pack", "p.yaml"}, args...)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+func TestAnIdentifiedUserAgentMayUseAnEmail(t *testing.T) {
+	if _, err := config.Load([]string{"-pack", "p.yaml", "-crawl-user-agent", "atlas-crawler/0.1 (me@example.org)"}); err != nil {
+		t.Errorf("a user agent with an email contact was rejected: %v", err)
+	}
+}
+
+func TestCrawlCacheOverlappingTheStoreRootIsRejected(t *testing.T) {
+	root := t.TempDir()
+	if _, err := config.Load([]string{"-pack", "p.yaml", "-store-root", root, "-crawl-cache-dir", filepath.Join(root, "crawl")}); err == nil {
+		t.Error("a crawl cache inside the private record was accepted")
+	}
+}
+
+func TestAgentIsOffWithoutACommand(t *testing.T) {
+	cfg, err := config.Load([]string{"-pack", "p.yaml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Agent.Command != "" {
+		t.Errorf("agent command %q; want none by default", cfg.Agent.Command)
+	}
+	wd, _ := os.Getwd()
+	if cfg.Agent.WorkDir != wd {
+		t.Errorf("workdir %q; want the process's %q", cfg.Agent.WorkDir, wd)
+	}
+}
+
+func TestAgentConfigFromEnvAndFlags(t *testing.T) {
+	t.Setenv("ATLAS_AGENT_COMMAND", "agent-bin")
+	t.Setenv("ATLAS_AGENT_ARGS", "--acp  --quiet")
+	t.Setenv("ATLAS_AGENT_TOOLS", "http.request, judge.ask")
+	t.Setenv("ATLAS_PERMISSION_RULES", "http.request:atlas:allow, *:execute:ask,*:*:deny")
+	workDir := t.TempDir()
+	cfg, err := config.Load([]string{"-pack", "p.yaml", "-agent-turn-timeout", "2m", "-agent-workdir", workDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cfg.Agent.Args, []string{"--acp", "--quiet"}) ||
+		!reflect.DeepEqual(cfg.Agent.Tools, []string{"http.request", "judge.ask"}) ||
+		cfg.Agent.TurnTimeout != 2*time.Minute || cfg.Agent.WorkDir != workDir {
+		t.Errorf("agent config %+v", cfg.Agent)
+	}
+	want := []config.PermissionRule{
+		{ToolName: "http.request", Kind: "atlas", Decision: "allow"},
+		{ToolName: "*", Kind: "execute", Decision: "ask"},
+		{ToolName: "*", Kind: "*", Decision: "deny"},
+	}
+	if !reflect.DeepEqual(cfg.Permission.Rules, want) {
+		t.Errorf("rules %+v", cfg.Permission.Rules)
+	}
+}
+
+func TestBadAgentConfigFailsAtLoad(t *testing.T) {
+	cases := map[string]map[string]string{
+		"bad decision":      {"ATLAS_PERMISSION_RULES": "*:*:maybe"},
+		"short rule":        {"ATLAS_PERMISSION_RULES": "*:allow"},
+		"relative workdir":  {"ATLAS_AGENT_COMMAND": "a", "ATLAS_AGENT_WORKDIR": "work"},
+		"zero turn timeout": {"ATLAS_AGENT_COMMAND": "a", "ATLAS_AGENT_TURN_TIMEOUT": "0s"},
+		"tools, no addr":    {"ATLAS_AGENT_COMMAND": "a", "ATLAS_AGENT_TOOLS": "x", "ATLAS_AGENT_MCP_ADDR": " "},
+	}
+	for name, env := range cases {
+		t.Run(name, func(t *testing.T) {
+			for k, v := range env {
+				t.Setenv(k, v)
+			}
+			if _, err := config.Load([]string{"-pack", "p.yaml"}); err == nil {
+				t.Error("loaded")
+			}
+		})
+	}
+}
+
+func TestAgentEnvDropsAtlasVariables(t *testing.T) {
+	got := config.AgentEnv([]string{"HOME=/home/u", "ATLAS_MODEL_API_KEY=secret", "PATH=/bin", "ATLAS_PACK=p"})
+	if !reflect.DeepEqual(got, []string{"HOME=/home/u", "PATH=/bin"}) {
+		t.Errorf("env %v", got)
 	}
 }

@@ -1,0 +1,24 @@
+name: agent-hn
+vars:
+  item: "8863"
+
+steps:
+  - id: brief
+    tool: agent.do
+    with:
+      subject_id: "agent-hn-{{ .vars.item }}"
+      prompt: |
+        Call the atlas tool http_request with the argument
+        url=https://hacker-news.firebaseio.com/v0/item/{{ .vars.item }}.json
+        to fetch one Hacker News story. Then create a file named
+        story-{{ .vars.item }}.md in the current working directory holding the
+        story's title, its author, and one plain sentence saying what it is about.
+        Reply with the file name and nothing else.
+
+  - id: check
+    tool: agent.do
+    with:
+      subject_id: "agent-hn-{{ .vars.item }}"
+      resume: "true"
+      prompt: |
+        Read back the file you just wrote and reply with its first line only.
