@@ -194,28 +194,56 @@ func TestAllowRefusesAURLCarryingCredentials(t *testing.T) {
 	}
 }
 
+// sent records when each request leaves the Conduct for the network, keyed
+// by host, then passes it on. The Conduct's turns promise spacing between
+// these moments; when a request reaches the server also depends on the
+// connection it travels over, which the first request to a host opens and
+// later ones reuse.
+type sent struct {
+	mu   sync.Mutex
+	at   map[string][]time.Time
+	next http.RoundTripper
+}
+
+func (s *sent) RoundTrip(r *http.Request) (*http.Response, error) {
+	s.mu.Lock()
+	s.at[r.URL.Host] = append(s.at[r.URL.Host], time.Now())
+	s.mu.Unlock()
+	return s.next.RoundTrip(r)
+}
+
+func (s *sent) host(u string) []time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	parsed, _ := url.Parse(u)
+	return append([]time.Time(nil), s.at[parsed.Host]...)
+}
+
 func TestConductSpacesRequestsToOneHostButNotAcrossHosts(t *testing.T) {
 	cfg := testConfig()
 	cfg.Delay = 150 * time.Millisecond
-	a, logA := site(t, map[string]string{"/1": "1", "/2": "2"})
-	b, logB := site(t, map[string]string{"/1": "1"})
-	c := newConduct(cfg, http.DefaultTransport)
+	a, _ := site(t, map[string]string{"/1": "1", "/2": "2"})
+	b, _ := site(t, map[string]string{"/1": "1"})
+	out := &sent{at: map[string][]time.Time{}, next: http.DefaultTransport}
+	c := newConduct(cfg, out)
 
 	for _, u := range []string{a.URL + "/1", b.URL + "/1", a.URL + "/2"} {
 		if _, err := get(t, c, u); err != nil {
 			t.Fatal(err)
 		}
 	}
-	hitsA := logA.all()
-	for i := 1; i < len(hitsA); i++ {
-		if gap := hitsA[i].At.Sub(hitsA[i-1].At); gap < cfg.Delay-5*time.Millisecond {
-			t.Errorf("host A: %s then %s only %s apart, want at least %s", hitsA[i-1].Path, hitsA[i].Path, gap, cfg.Delay)
+	sentA := out.host(a.URL) // robots.txt, /1, /2
+	if len(sentA) != 3 {
+		t.Fatalf("host A: %d requests left the Conduct, want 3", len(sentA))
+	}
+	for i := 1; i < len(sentA); i++ {
+		if gap := sentA[i].Sub(sentA[i-1]); gap < cfg.Delay-5*time.Millisecond {
+			t.Errorf("host A: request %d left only %s after request %d, want at least %s", i, gap, i-1, cfg.Delay)
 		}
 	}
-	firstB := logB.all()[0].At
-	lastA1 := hitsA[1].At // robots.txt, then /1
-	if firstB.Sub(lastA1) >= cfg.Delay {
-		t.Errorf("host B waited %s behind host A; turns must be per host", firstB.Sub(lastA1))
+	firstB := out.host(b.URL)[0]
+	if wait := firstB.Sub(sentA[1]); wait >= cfg.Delay {
+		t.Errorf("host B waited %s behind host A; turns must be per host", wait)
 	}
 }
 
