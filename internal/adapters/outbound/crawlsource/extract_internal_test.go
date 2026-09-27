@@ -56,7 +56,7 @@ func TestParseTargetsRejectsWhatCannotBeCrawled(t *testing.T) {
 		"not yaml":         "- id: [",
 		"unknown key":      valid + "  headers: {Cookie: x}\n",
 		"bad id":           strings.Replace(valid, "id: a", "id: A B", 1),
-		"relative url":     strings.Replace(valid, "https://x.example/", "/jobs", 1),
+		"relative url":     strings.Replace(valid, "https://x.example/", "/catalog", 1),
 		"non-http url":     strings.Replace(valid, "https://x.example/", "file:///etc/passwd", 1),
 		"no item selector": strings.Replace(valid, "item: li", "item: \"\"", 1),
 		"key not a field":  strings.Replace(valid, "key: k", "key: other", 1),

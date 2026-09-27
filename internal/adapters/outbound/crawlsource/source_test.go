@@ -350,15 +350,15 @@ const relativePage = `<html><head>%s</head><body><ul>
 <li class="event"><h3>Tide talk</h3><a href="detail/1">more</a></li>
 </ul></body></html>`
 
-// movedLibrary redirects /jobs to /careers/list/, which serves relativePage
+// movedLibrary redirects /catalog to /shelf/list/, which serves relativePage
 // with head in its head.
 func movedLibrary(t *testing.T, head string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/jobs":
-			http.Redirect(w, r, "/careers/list/", http.StatusFound)
-		case "/careers/list/":
+		case "/catalog":
+			http.Redirect(w, r, "/shelf/list/", http.StatusFound)
+		case "/shelf/list/":
 			w.Header().Set("Content-Type", "text/html")
 			fmt.Fprintf(w, relativePage, head)
 		default:
@@ -371,18 +371,18 @@ func movedLibrary(t *testing.T, head string) *httptest.Server {
 
 func TestLinksResolveAgainstThePageARedirectLandedOn(t *testing.T) {
 	srv := movedLibrary(t, "")
-	items, _, err := pull(t, testConfig(), targets(t, oneTarget, srv.URL, "/jobs"))
+	items, _, err := pull(t, testConfig(), targets(t, oneTarget, srv.URL, "/catalog"))
 	if err != nil || len(items) != 1 {
 		t.Fatalf("items = %v err = %v", items, err)
 	}
-	if want := srv.URL + "/careers/list/detail/1"; items[0]["link"] != want {
+	if want := srv.URL + "/shelf/list/detail/1"; items[0]["link"] != want {
 		t.Errorf("link = %v, want %s", items[0]["link"], want)
 	}
 }
 
 func TestLinksResolveAgainstThePagesBaseHref(t *testing.T) {
 	srv := movedLibrary(t, `<base href="/archive/">`)
-	items, _, err := pull(t, testConfig(), targets(t, oneTarget, srv.URL, "/careers/list/"))
+	items, _, err := pull(t, testConfig(), targets(t, oneTarget, srv.URL, "/shelf/list/"))
 	if err != nil || len(items) != 1 {
 		t.Fatalf("items = %v err = %v", items, err)
 	}
