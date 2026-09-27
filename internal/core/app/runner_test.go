@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/tunedev/atlas/internal/core/app"
@@ -143,5 +144,55 @@ func TestRunStopsAtTheFailingStep(t *testing.T) {
 	}
 	if len(after.seen) != 0 {
 		t.Error("a later step ran after a failure")
+	}
+}
+
+func recordProgress(events *[]domain.StepEvent) func(domain.StepEvent) {
+	return func(e domain.StepEvent) { *events = append(*events, e) }
+}
+
+func TestProgressReportsEachStepStartAndDoneInOrder(t *testing.T) {
+	reg := fakeRegistry{
+		"a": &fakeTool{name: "a", result: map[string]any{"v": "1"}},
+		"b": &fakeTool{name: "b", result: map[string]any{"v": "2"}},
+	}
+	var events []domain.StepEvent
+	bp := domain.Blueprint{Name: "p", Steps: []domain.Step{{ID: "one", Tool: "a"}, {ID: "two", Tool: "b"}}}
+	if _, err := app.NewRunner(reg).WithProgress(recordProgress(&events)).Run(context.Background(), bp); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	want := []domain.StepEvent{
+		{StepID: "one", Tool: "a", Status: domain.StepStarted},
+		{StepID: "one", Tool: "a", Status: domain.StepDone},
+		{StepID: "two", Tool: "b", Status: domain.StepStarted},
+		{StepID: "two", Tool: "b", Status: domain.StepDone},
+	}
+	if !slices.Equal(events, want) {
+		t.Errorf("events = %+v, want %+v", events, want)
+	}
+}
+
+func TestProgressReportsAFailedStepWithItsErrorAndStops(t *testing.T) {
+	boom := errors.New("boom")
+	reg := fakeRegistry{"a": &fakeTool{name: "a", err: boom}, "b": &fakeTool{name: "b", result: map[string]any{}}}
+	var events []domain.StepEvent
+	bp := domain.Blueprint{Name: "p", Steps: []domain.Step{{ID: "one", Tool: "a"}, {ID: "two", Tool: "b"}}}
+	if _, err := app.NewRunner(reg).WithProgress(recordProgress(&events)).Run(context.Background(), bp); err == nil {
+		t.Fatal("Run succeeded with a failing step")
+	}
+	if len(events) != 2 || events[0].Status != domain.StepStarted || events[1].Status != domain.StepFailed || events[1].StepID != "one" {
+		t.Fatalf("events = %+v, want one started and one failed, and nothing for the step after", events)
+	}
+	if !errors.Is(events[1].Err, boom) {
+		t.Errorf("failed event's Err = %v, want it to wrap the tool's error", events[1].Err)
+	}
+}
+
+func TestAMissingToolReportsStartedThenFailed(t *testing.T) {
+	var events []domain.StepEvent
+	bp := domain.Blueprint{Name: "p", Steps: []domain.Step{{ID: "one", Tool: "absent"}}}
+	_, _ = app.NewRunner(fakeRegistry{}).WithProgress(recordProgress(&events)).Run(context.Background(), bp)
+	if len(events) != 2 || events[0].Status != domain.StepStarted || events[1].Status != domain.StepFailed || events[1].Err == nil {
+		t.Errorf("events = %+v, want started then failed with an error", events)
 	}
 }
