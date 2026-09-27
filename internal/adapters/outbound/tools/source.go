@@ -42,10 +42,6 @@ func (t *SourcePull) Invoke(ctx context.Context, with map[string]string) (any, e
 	if err != nil {
 		return nil, fmt.Errorf("source.pull: %w", err)
 	}
-	refreshed, err := t.source.LastRefreshed(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("source.pull: %w", err)
-	}
 
 	kept := []any{}
 	for _, it := range items {
@@ -61,22 +57,34 @@ func (t *SourcePull) Invoke(ctx context.Context, with map[string]string) (any, e
 		}
 	}
 
+	meta, err := freshness(ctx, t.source, t.staleAfter, t.log)
+	if err != nil {
+		return nil, fmt.Errorf("source.pull: %w", err)
+	}
+	meta["count"] = len(kept)
+	return map[string]any{"items": kept, "_meta": meta}, nil
+}
+
+// freshness reports when source last refreshed and whether that is older
+// than staleAfter, logging a warning when it is: stale data is still
+// returned, and what to do about it is the pack's decision.
+func freshness(ctx context.Context, source ports.Source, staleAfter time.Duration, log *slog.Logger) (map[string]any, error) {
+	refreshed, err := source.LastRefreshed(ctx)
+	if err != nil {
+		return nil, err
+	}
 	age := time.Since(refreshed)
-	stale := age > t.staleAfter
+	stale := age > staleAfter
 	if stale {
-		t.log.WarnContext(ctx, "source is stale",
+		log.WarnContext(ctx, "source is stale",
 			"age", age.Round(time.Minute).String(),
-			"stale_after", t.staleAfter.String(),
+			"stale_after", staleAfter.String(),
 			"last_refreshed", refreshed.UTC().Format(time.RFC3339))
 	}
 	return map[string]any{
-		"items": kept,
-		"_meta": map[string]any{
-			"fetched_at": refreshed.UTC().Format(time.RFC3339),
-			"age_hours":  math.Round(age.Hours()*10) / 10,
-			"stale":      stale,
-			"count":      len(kept),
-		},
+		"fetched_at": refreshed.UTC().Format(time.RFC3339),
+		"age_hours":  math.Round(age.Hours()*10) / 10,
+		"stale":      stale,
 	}, nil
 }
 
