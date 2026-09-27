@@ -26,20 +26,34 @@ const selectKey = "select"
 type Runner struct {
 	registry ports.Registry
 	tracer   trace.Tracer
+	progress func(domain.StepEvent)
 }
 
 // NewRunner builds a Runner against the given registry. It traces with a
-// no-op tracer unless a real one is set through WithTracer, so a caller that
+// no-op tracer unless a real one is set through WithTracer, and reports
+// progress to no one unless WithProgress sets a callback, so a caller that
 // does not care about tracing pays nothing and writes nothing extra.
 func NewRunner(r ports.Registry) *Runner {
-	return &Runner{registry: r, tracer: noop.NewTracerProvider().Tracer("")}
+	return &Runner{registry: r, tracer: noop.NewTracerProvider().Tracer(""), progress: func(domain.StepEvent) {}}
 }
 
-// WithTracer replaces the Runner's tracer, returning the same Runner for
-// chaining at construction time.
+// WithTracer returns a copy of the Runner that traces with t. The receiver
+// is unchanged, so a shared Runner stays safe to derive from concurrently.
 func (r *Runner) WithTracer(t trace.Tracer) *Runner {
-	r.tracer = t
-	return r
+	c := *r
+	c.tracer = t
+	return &c
+}
+
+// WithProgress returns a copy of the Runner that reports to f. The receiver
+// is unchanged, so each caller of a shared Runner derives its own. The
+// callback runs synchronously, in the order steps execute, on Run's own
+// goroutine: each step Run attempts reports StepStarted, then StepDone or
+// StepFailed.
+func (r *Runner) WithProgress(f func(domain.StepEvent)) *Runner {
+	c := *r
+	c.progress = f
+	return &c
 }
 
 // Run executes every step in order and stops at the first failure. The
@@ -59,11 +73,23 @@ func (r *Runner) Run(ctx context.Context, b domain.Blueprint) (*domain.State, er
 	return state, nil
 }
 
-// runStep is where a span per tool invocation is opened. Instrumenting here
+// runStep executes one step, reporting its start and its outcome through
+// the progress callback.
+func (r *Runner) runStep(ctx context.Context, blueprint string, s domain.Step, state *domain.State) error {
+	r.progress(domain.StepEvent{StepID: s.ID, Tool: s.Tool, Status: domain.StepStarted})
+	if err := r.execStep(ctx, blueprint, s, state); err != nil {
+		r.progress(domain.StepEvent{StepID: s.ID, Tool: s.Tool, Status: domain.StepFailed, Err: err})
+		return err
+	}
+	r.progress(domain.StepEvent{StepID: s.ID, Tool: s.Tool, Status: domain.StepDone})
+	return nil
+}
+
+// execStep is where a span per tool invocation is opened. Instrumenting here
 // rather than inside each tool is what stops a newly added tool arriving
 // untraced, and traces are how a pack author -- who cannot read Go -- finds
 // out which step was slow or wrong.
-func (r *Runner) runStep(ctx context.Context, blueprint string, s domain.Step, state *domain.State) error {
+func (r *Runner) execStep(ctx context.Context, blueprint string, s domain.Step, state *domain.State) error {
 	ctx, span := r.tracer.Start(ctx, "tool."+s.Tool)
 	defer span.End()
 	span.SetAttributes(

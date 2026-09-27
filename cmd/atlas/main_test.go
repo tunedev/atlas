@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -15,6 +17,7 @@ import (
 	"github.com/tunedev/atlas/internal/adapters/outbound/gitdocs"
 	"github.com/tunedev/atlas/internal/adapters/outbound/sqlindex"
 	"github.com/tunedev/atlas/internal/config"
+	"github.com/tunedev/atlas/internal/core/domain"
 	"github.com/tunedev/atlas/internal/core/ports"
 )
 
@@ -273,5 +276,120 @@ func TestCompositionRootInjectsATracer(t *testing.T) {
 	}
 	if tracerPos < initPos {
 		t.Error("the tracer is obtained before telemetry.Init installs a provider; it will be the no-op one")
+	}
+}
+
+// runDecl returns run()'s declaration in main.go.
+func runDecl(t *testing.T) (*token.FileSet, *ast.FuncDecl) {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "main.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse main.go: %v", err)
+	}
+	for _, decl := range f.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "run" {
+			return fset, fn
+		}
+	}
+	t.Fatal("run() not found in main.go")
+	return nil, nil
+}
+
+// callPositions returns where n calls pkg.name, or name when pkg is empty.
+func callPositions(n ast.Node, pkg, name string) []token.Pos {
+	var at []token.Pos
+	ast.Inspect(n, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		switch f := call.Fun.(type) {
+		case *ast.Ident:
+			if pkg == "" && f.Name == name {
+				at = append(at, call.Pos())
+			}
+		case *ast.SelectorExpr:
+			if id, ok := f.X.(*ast.Ident); ok && id.Name == pkg && f.Sel.Name == name {
+				at = append(at, call.Pos())
+			}
+		}
+		return true
+	})
+	return at
+}
+
+// Every surface shares the registry run() builds; a surface branch that
+// built its own would stand up a second provider and a second tool set.
+func TestBuildRegistryIsCalledOnce(t *testing.T) {
+	n := 0
+	for _, f := range mainFiles(t) {
+		n += len(callPositions(f, "", "buildRegistry"))
+	}
+	if n != 1 {
+		t.Errorf("package main calls buildRegistry %d times; want exactly once, shared by every surface", n)
+	}
+}
+
+// mainFiles parses every non-test Go file in package main.
+func mainFiles(t *testing.T) []*ast.File {
+	t.Helper()
+	names, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	var files []*ast.File
+	for _, name := range names {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		files = append(files, f)
+	}
+	return files
+}
+
+// The lock is held before anything opens the store, so a second process is
+// refused before it touches git.
+func TestRunLocksTheStoreBeforeOpeningIt(t *testing.T) {
+	_, run := runDecl(t)
+	lock, open := callPositions(run, "pidlock", "Acquire"), callPositions(run, "gitdocs", "Open")
+	if len(lock) != 1 || len(open) != 1 {
+		t.Fatalf("run() calls pidlock.Acquire %d times and gitdocs.Open %d times; want one each", len(lock), len(open))
+	}
+	if lock[0] > open[0] {
+		t.Error("run() opens the store before locking it")
+	}
+}
+
+func TestCompositionRootReportsProgress(t *testing.T) {
+	_, run := runDecl(t)
+	var found bool
+	ast.Inspect(run, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "WithProgress" {
+			found = true
+		}
+		return true
+	})
+	if !found {
+		t.Error("run() never calls WithProgress; the CLI would show no step progress")
+	}
+}
+
+func TestProgressPrinterWritesOneLinePerEvent(t *testing.T) {
+	var b bytes.Buffer
+	p := progressPrinter(&b)
+	p(domain.StepEvent{StepID: "fetch", Tool: "http.request", Status: domain.StepStarted})
+	p(domain.StepEvent{StepID: "fetch", Tool: "http.request", Status: domain.StepDone})
+	p(domain.StepEvent{StepID: "judge", Tool: "judge.ask", Status: domain.StepFailed, Err: errors.New("boom")})
+	want := "atlas: step fetch (http.request) started\n" +
+		"atlas: step fetch (http.request) done\n" +
+		"atlas: step judge (judge.ask) failed\n"
+	if b.String() != want {
+		t.Errorf("progress output =\n%q\nwant\n%q", b.String(), want)
 	}
 }
