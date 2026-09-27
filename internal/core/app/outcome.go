@@ -91,16 +91,16 @@ func AttachOutcome(ctx context.Context, docs ports.Docs, index ports.Index, judg
 	return rev, nil
 }
 
-// currentRow returns a copy of the fields and the time of path's index row.
-// When the index has no row for path, it returns the fields a judgement is
-// recorded with, read from its document.
-func currentRow(ctx context.Context, index ports.Index, path string, doc judgementDoc) (map[string]string, time.Time, error) {
+// currentRow returns a copy of the fields and the time of judgementPath's
+// index row. When the index has no row for judgementPath, it returns the
+// fields a judgement is recorded with, read from its document.
+func currentRow(ctx context.Context, index ports.Index, judgementPath string, doc judgementDoc) (map[string]string, time.Time, error) {
 	rows, err := index.Find(ctx, ports.Query{Kind: "judgement", Match: map[string]string{"subject_id": doc.SubjectID}})
 	if err != nil {
-		return nil, time.Time{}, fmt.Errorf("outcome: find %s: %w", path, err)
+		return nil, time.Time{}, fmt.Errorf("outcome: find %s: %w", judgementPath, err)
 	}
 	for _, r := range rows {
-		if r.Path == path {
+		if r.Path == judgementPath {
 			fields := maps.Clone(r.Fields)
 			if fields == nil {
 				fields = map[string]string{}
@@ -110,7 +110,7 @@ func currentRow(ctx context.Context, index ports.Index, path string, doc judgeme
 	}
 	when, err := time.Parse(recordDocTimeFormat, doc.When)
 	if err != nil {
-		return nil, time.Time{}, fmt.Errorf("outcome: %s: when %q: %w", path, doc.When, err)
+		return nil, time.Time{}, fmt.Errorf("outcome: %s: when %q: %w", judgementPath, doc.When, err)
 	}
 	ids := make([]string, len(doc.Questions))
 	for i, q := range doc.Questions {
