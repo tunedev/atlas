@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/tsawler/tabula"
@@ -16,13 +17,14 @@ import (
 )
 
 // Render binds JSON data into a Typst template, converts it to a PDF, and
-// verifies that every expected string is grounded in the PDF's own
-// extracted text. With no "before" markers, that means anywhere in the
-// text; with markers, only in the text preceding the earliest one. Either
-// way, a passing verification proves presence in that region and nothing
-// more: not order, not count, not that the string appears exactly once.
-// The PDF is written to "output" only once verification passes; a failed
-// verification leaves output untouched.
+// verifies the PDF's own extracted text. Every "expect" string must be
+// grounded in it: with no "before" markers, anywhere in the text; with
+// markers, only in the text preceding the earliest one. A passing check
+// proves presence in that region and nothing more: not order, not count,
+// not that the string appears exactly once. No "absent" string (a JSON
+// array of strings) may be grounded anywhere in the text; an empty one is
+// never grounded. The PDF is written to "output" only once verification
+// passes; a failed verification leaves output untouched.
 type Render struct {
 	conv     ports.Converter
 	maxBytes int64
@@ -42,11 +44,13 @@ func (r *Render) Invoke(ctx context.Context, with map[string]string) (any, error
 	if !json.Valid([]byte(with["data"])) {
 		return nil, fmt.Errorf("render.run: data is not valid json")
 	}
-	var expect []string
-	if e := with["expect"]; e != "" {
-		if err := json.Unmarshal([]byte(e), &expect); err != nil {
-			return nil, fmt.Errorf("render.run: expect: %w", err)
-		}
+	expect, err := parseStrings(with["expect"])
+	if err != nil {
+		return nil, fmt.Errorf("render.run: expect: %w", err)
+	}
+	absent, err := parseStrings(with["absent"])
+	if err != nil {
+		return nil, fmt.Errorf("render.run: absent: %w", err)
 	}
 	before := parseBefore(with["before"])
 	out := with["output"]
@@ -64,7 +68,7 @@ func (r *Render) Invoke(ctx context.Context, with map[string]string) (any, error
 	if err != nil {
 		return nil, fmt.Errorf("render.run: %w", err)
 	}
-	if err := verifyText(tmpPath, expect, before); err != nil {
+	if err := verifyText(tmpPath, expect, before, absent); err != nil {
 		os.Remove(tmpPath)
 		return nil, fmt.Errorf("render.run: %s: %w", out, err)
 	}
@@ -82,6 +86,16 @@ func (r *Render) Invoke(ctx context.Context, with map[string]string) (any, error
 func typstData(data string) string {
 	lit := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(data)
 	return `#let data = json(bytes("` + lit + `"))`
+}
+
+// parseStrings decodes raw, a JSON array of strings; empty raw is none.
+func parseStrings(raw string) ([]string, error) {
+	var out []string
+	if raw == "" {
+		return nil, nil
+	}
+	err := json.Unmarshal([]byte(raw), &out)
+	return out, err
 }
 
 // parseBefore splits a newline-separated list of markers, trimming each and
@@ -123,40 +137,75 @@ func writeTemp(out string, body []byte) (string, error) {
 }
 
 // verifyText extracts path's text, joins a line ending in a hyphen to the
-// next (a Typst line wrap of a hyphenated word), and requires every
-// expected string to be grounded in it. When before names any markers, the
-// search is restricted to the text preceding the earliest one found;
-// otherwise the whole text is searched.
-func verifyText(path string, expect, before []string) error {
-	if len(expect) == 0 {
+// next (a Typst line wrap of a hyphenated word), requires every expected
+// string to be grounded in it, and no absent string to be. When before
+// names any markers, the expected strings are searched for only in the text
+// preceding the earliest one found; absent strings are searched for in the
+// whole text.
+func verifyText(path string, expect, before, absent []string) error {
+	if len(expect) == 0 && len(absent) == 0 {
 		return nil
 	}
 	text, _, err := tabula.Open(path).Text()
 	if err != nil {
 		return err
 	}
-	text = strings.ReplaceAll(text, "-\n", "-")
-	haystack := app.Normalise(text)
-	if i, ok := earliestMarker(haystack, before); ok {
-		haystack = haystack[:i]
+	whole := app.Normalise(strings.ReplaceAll(text, "-\n", "-"))
+	scoped := whole
+	if i, ok := earliestMarker(whole, before); ok {
+		scoped = whole[:i]
 	}
-	quotes := make([]map[string]string, len(expect))
-	for i, e := range expect {
-		quotes[i] = map[string]string{"quote": e}
-	}
-	raw, err := json.Marshal(quotes)
-	if err != nil {
-		return err
-	}
-	missing, err := app.Ground(raw, haystack)
+	missing, err := ungrounded(expect, scoped)
 	if err != nil {
 		return err
 	}
 	if len(missing) > 0 {
-		first := expect[indexOfPointer(missing[0])]
-		return fmt.Errorf("%d of %d expected strings are not in the rendered text; first: %q", len(missing), len(expect), first)
+		return fmt.Errorf("%d of %d expected strings are not in the rendered text; first: %q", len(missing), len(expect), expect[missing[0]])
+	}
+	notFound, err := ungrounded(absent, whole)
+	if err != nil {
+		return err
+	}
+	if printed := without(len(absent), notFound); len(printed) > 0 {
+		return fmt.Errorf("%d of %d absent strings are in the rendered text; first: %q", len(printed), len(absent), absent[printed[0]])
 	}
 	return nil
+}
+
+// ungrounded returns the index of every string in ss that app.Ground does
+// not find in haystack, in order.
+func ungrounded(ss []string, haystack string) ([]int, error) {
+	quotes := make([]map[string]string, len(ss))
+	for i, s := range ss {
+		quotes[i] = map[string]string{"quote": s}
+	}
+	raw, err := json.Marshal(quotes)
+	if err != nil {
+		return nil, err
+	}
+	pointers, err := app.Ground(raw, haystack)
+	if err != nil {
+		return nil, err
+	}
+	idx := make([]int, len(pointers))
+	for i, p := range pointers {
+		idx[i] = indexOfPointer(p)
+	}
+	sort.Ints(idx)
+	return idx, nil
+}
+
+// without returns every index in [0, n) that is not in skip, in order.
+func without(n int, skip []int) []int {
+	out := []int{}
+	for i, k := 0, 0; i < n; i++ {
+		if k < len(skip) && skip[k] == i {
+			k++
+			continue
+		}
+		out = append(out, i)
+	}
+	return out
 }
 
 // earliestMarker reports the start index, within haystack, of the earliest

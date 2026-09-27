@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"github.com/tunedev/atlas/internal/adapters/outbound/tools"
 	"github.com/tunedev/atlas/internal/adapters/outbound/typstconv"
 	"github.com/tunedev/atlas/internal/core/app"
+	"github.com/tunedev/atlas/internal/core/ports"
 )
 
 func renderer(t *testing.T) *tools.Render {
@@ -88,9 +90,19 @@ func TestRenderFailsWhenAnExpectedStringIsMissing(t *testing.T) {
 	}
 }
 
+// unusedConverter fails the test if a render reaches conversion.
+type unusedConverter struct{ t *testing.T }
+
+func (u unusedConverter) Pair() ports.Pair { return ports.Pair{} }
+
+func (u unusedConverter) Convert(context.Context, io.Writer, io.Reader) error {
+	u.t.Error("conversion reached; the output path check must come first")
+	return nil
+}
+
 func TestRenderFailsWhenOutputPathIsMissing(t *testing.T) {
 	tmpl := writeTemplate(t, "#for b in data.items [ - #b ]\n")
-	_, err := renderer(t).Invoke(context.Background(), map[string]string{
+	_, err := tools.NewRender(unusedConverter{t}, 1<<20).Invoke(context.Background(), map[string]string{
 		"template": tmpl,
 		"data":     `{"items":["Kept the light"]}`,
 		"output":   "",
@@ -118,6 +130,52 @@ func TestRenderDoesNotPublishWhenVerificationFails(t *testing.T) {
 	must(t, readErr)
 	if string(got) != "old bytes" {
 		t.Errorf("output = %q, want the pre-existing file left untouched", got)
+	}
+}
+
+// An absent string is searched for in the whole text, even after a before
+// marker.
+func TestRenderFailsAndPublishesNothingWhenAnAbsentStringIsPrinted(t *testing.T) {
+	tmpl := writeTemplate(t, "#set text(hyphenate: false)\n#for b in data.items [ - #b ]\n")
+	out := filepath.Join(t.TempDir(), "doc.pdf")
+	_, err := renderer(t).Invoke(context.Background(), map[string]string{
+		"template": tmpl,
+		"data":     `{"items":["Kept the light", "Sailed the ship"]}`,
+		"output":   out,
+		"expect":   `["Kept the light"]`,
+		"before":   "Sailed",
+		"absent":   `["Never wrecked", "sailed  THE ship"]`,
+	})
+	if err == nil || !strings.Contains(err.Error(), "sailed  THE ship") || !strings.Contains(err.Error(), "1 of 2") {
+		t.Errorf("err = %v; want the printed absent string named", err)
+	}
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Errorf("output exists (%v); a failed render must publish nothing", statErr)
+	}
+}
+
+func TestRenderPassesWhenNoAbsentStringIsPrinted(t *testing.T) {
+	tmpl := writeTemplate(t, "#for b in data.items [ - #b ]\n")
+	_, err := renderer(t).Invoke(context.Background(), map[string]string{
+		"template": tmpl,
+		"data":     `{"items":["Kept the light"]}`,
+		"output":   filepath.Join(t.TempDir(), "doc.pdf"),
+		"absent":   `["Sailed the ship", ""]`,
+	})
+	if err != nil {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestRenderRejectsAbsentThatIsNotAStringList(t *testing.T) {
+	_, err := tools.NewRender(unusedConverter{t}, 1<<20).Invoke(context.Background(), map[string]string{
+		"template": writeTemplate(t, "x"),
+		"data":     `{}`,
+		"output":   filepath.Join(t.TempDir(), "doc.pdf"),
+		"absent":   `{"a":1}`,
+	})
+	if err == nil || !strings.Contains(err.Error(), "render.run: absent") {
+		t.Errorf("err = %v", err)
 	}
 }
 
