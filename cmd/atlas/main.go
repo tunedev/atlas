@@ -215,6 +215,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	if pid := lock.Reclaimed(); pid != 0 {
+		fmt.Fprintf(os.Stderr, "atlas: reclaimed stale lock left by pid %d\n", pid)
+	}
 	defer func() {
 		if err := lock.Release(); err != nil {
 			fmt.Fprintf(os.Stderr, "atlas: %v\n", err)

@@ -35,6 +35,9 @@ func TestAcquireWritesThePidAndReleaseRemovesIt(t *testing.T) {
 	if got := holder(t, path); got != strconv.Itoa(os.Getpid()) {
 		t.Errorf("lock holds %q, want this process's pid", got)
 	}
+	if n := l.Reclaimed(); n != 0 {
+		t.Errorf("Reclaimed() = %d on a fresh lock, want 0", n)
+	}
 	if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
 		t.Errorf("directory holds %d entries after Acquire, want the lock alone", len(entries))
 	}
@@ -121,6 +124,9 @@ func TestADeadHoldersLockIsReclaimed(t *testing.T) {
 	defer func() { _ = l.Release() }()
 	if got := holder(t, path); got != strconv.Itoa(os.Getpid()) {
 		t.Errorf("reclaimed lock holds %q, want this process's pid", got)
+	}
+	if got := strconv.Itoa(l.Reclaimed()); got != dead {
+		t.Errorf("Reclaimed() = %s, want the dead holder's pid %s", got, dead)
 	}
 }
 
