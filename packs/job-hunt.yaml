@@ -6,7 +6,7 @@
 name: job-hunt
 vars:
   board: gitlab
-  profile: "Backend engineer. Go, distributed systems, Kubernetes, Postgres, OpenTelemetry."
+  profile: "Backend engineer. Go, distributed systems, Kubernetes, Postgres, OpenTelemetry. Goals: senior backend role, systems with real scale, staying hands-on. Deal-breakers: no on-call or pager rotation."
   rules: ""
 
 steps:

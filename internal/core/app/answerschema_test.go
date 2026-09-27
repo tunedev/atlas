@@ -266,3 +266,48 @@ func TestDistinctInitialOptionSetsPassValidation(t *testing.T) {
 		t.Fatalf("distinct-initial option sets were rejected: %v", err)
 	}
 }
+
+// TestPropertiesAndRequiredAppearInDeclaredOrder proves the schema's
+// property keys and required entries follow the order questions were
+// given, not alphabetical order: a model whose grammar walks the fields in
+// schema order answers zeta before alpha before mid, and each answer can
+// then only depend on the ones before it. zeta, alpha and mid are chosen
+// because alphabetical order would move zeta last.
+func TestPropertiesAndRequiredAppearInDeclaredOrder(t *testing.T) {
+	qs := []ports.Question{
+		{ID: "zeta", Kind: ports.KindChoice, Ask: "?", Options: []string{"y", "n"}},
+		{ID: "alpha", Kind: ports.KindChoice, Ask: "?", Options: []string{"y", "n"}},
+		{ID: "mid", Kind: ports.KindChoice, Ask: "?", Options: []string{"y", "n"}},
+	}
+	b, err := app.AnswerSchema(qs)
+	if err != nil {
+		t.Fatalf("schema: %v", err)
+	}
+	s := string(b)
+
+	propsStart := strings.Index(s, `"properties"`)
+	reqStart := strings.Index(s, `"required"`)
+	if propsStart == -1 || reqStart == -1 {
+		t.Fatalf("schema is missing properties or required: %s", s)
+	}
+
+	zetaProp := strings.Index(s[propsStart:], `"zeta"`)
+	alphaProp := strings.Index(s[propsStart:], `"alpha"`)
+	midProp := strings.Index(s[propsStart:], `"mid"`)
+	if zetaProp == -1 || alphaProp == -1 || midProp == -1 {
+		t.Fatalf("a property key is missing: %s", s)
+	}
+	if !(zetaProp < alphaProp && alphaProp < midProp) {
+		t.Errorf("properties are not in declared order zeta, alpha, mid: %s", s)
+	}
+
+	zetaReq := strings.Index(s[reqStart:], `"zeta"`)
+	alphaReq := strings.Index(s[reqStart:], `"alpha"`)
+	midReq := strings.Index(s[reqStart:], `"mid"`)
+	if zetaReq == -1 || alphaReq == -1 || midReq == -1 {
+		t.Fatalf("a required entry is missing: %s", s)
+	}
+	if !(zetaReq < alphaReq && alphaReq < midReq) {
+		t.Errorf("required is not in declared order zeta, alpha, mid: %s", s)
+	}
+}

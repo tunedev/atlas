@@ -140,6 +140,44 @@ func TestASchemaIsSentWhenSet(t *testing.T) {
 	}
 }
 
+// TestASchemaReachesTheEngineInDeclaredKeyOrder proves the schema's bytes
+// reach the wire verbatim: a property key order that is not alphabetical
+// must survive, since a decode into map[string]any and re-marshal would
+// re-sort it.
+func TestASchemaReachesTheEngineInDeclaredKeyOrder(t *testing.T) {
+	var captured http.Request
+	s := serve(t, http.StatusOK, recorded, &captured)
+	schema := []byte(`{"type":"object","properties":{"zeta":{"type":"string"},"alpha":{"type":"string"}},"required":["zeta","alpha"],"additionalProperties":false}`)
+	_, err := client(t, s.URL).Complete(context.Background(), ports.Prompt{User: "q", Schema: schema})
+	if err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	body, _ := io.ReadAll(captured.Body)
+	sent := string(body)
+	zeta := strings.Index(sent, `"zeta"`)
+	alpha := strings.Index(sent, `"alpha"`)
+	if zeta == -1 || alpha == -1 {
+		t.Fatalf("schema keys are missing from the request body: %s", sent)
+	}
+	if zeta > alpha {
+		t.Errorf("zeta reached the wire after alpha; the schema's declared key order was not preserved: %s", sent)
+	}
+}
+
+// TestAnInvalidSchemaIsAnError proves a schema that is not valid JSON is
+// still rejected, with the same error prefix, now that the adapter checks
+// validity with json.Valid instead of decoding it into a map.
+func TestAnInvalidSchemaIsAnError(t *testing.T) {
+	_, err := client(t, "http://unused.invalid").Complete(context.Background(),
+		ports.Prompt{User: "q", Schema: []byte("not json")})
+	if err == nil {
+		t.Fatal("an invalid schema produced no error")
+	}
+	if !strings.Contains(err.Error(), "openaiprov: schema:") {
+		t.Errorf("error lacks the expected prefix: %v", err)
+	}
+}
+
 func TestRequestCarriesSystemThenUserMessages(t *testing.T) {
 	var captured http.Request
 	s := serve(t, http.StatusOK, recorded, &captured)

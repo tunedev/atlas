@@ -79,6 +79,17 @@ answers every question, so answers about the same subject cannot contradict
 each other, and the schema is what makes an out-of-schema answer impossible
 rather than merely unlikely.
 
+Questions are answered in declared order. `AnswerSchema` emits `properties` and `required` in
+the order `qs` lists them, and `openaiprov` sends that schema on to the engine verbatim, so the
+engine's own grammar walks the fields in the same order — each answer can then depend only on
+the questions already answered, never the ones still to come. Put the question whose answer
+must not be swayed by the others first, typically the verdict. Measured on the GitLab board with
+`qwen2.5-coder:7b`: with the pack's questions built into a schema whose keys were sorted
+alphabetically (so the verdict was answered last, after seniority, focus and the on-call rule),
+mean p(skip) across five non-engineering roles was 0.11; with the same four questions but the
+schema in declared order, verdict first, it rose to 0.35; asking the verdict alone, in its own
+call, rose it further to 0.38.
+
 Each question line also names its options, `id: ask (one of: a, b, c)`, and a noul with no
 options of its own names `yes, no`. This is not decoration. The alternatives an answer's mass
 is read from are the engine's distribution before the schema's grammar applies, so an engine
@@ -206,16 +217,6 @@ See `docs/specs/2026-09-27-epic-7-fit.md` for the live measurements: reuse cost,
 several-roles-per-call scaling test.
 
 ## Known gaps
-
-- Two options that merely share a leading character can fail a call. The
-  option-set validation rejects an option that is a proper prefix of another,
-  but an engine may emit any prefix of a value as its first token, including a
-  single character. When that prefix matches two options, the read cannot tell
-  them apart and the whole call errors, taking every other answer in it with
-  it. Measured: `senior` and `staff` in one option set, against an alternative
-  `s`. Validation does not catch this, because neither option is a prefix of
-  the other; a pack author avoids it by giving a question's options distinct
-  initial characters.
 
 - A distribution of exactly 1.0 used to be indistinguishable from a
   manufactured one. It no longer is: every `Answer` now carries `Confidence`

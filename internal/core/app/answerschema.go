@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -27,6 +28,14 @@ func OptionsFor(q ports.Question) []string {
 // other property allowed. This is what makes a choice unable to answer
 // outside its options.
 //
+// properties and required are emitted in qs's own order, never sorted. A
+// provider that sends the schema on to the engine verbatim (rather than
+// decoding and re-marshalling it, which would re-sort a map's keys) has an
+// engine whose grammar answers each field in that same order, so a
+// question's answer can depend only on the questions before it, never the
+// ones after. Put the question whose answer must not be swayed by the
+// others first.
+//
 // It is an error for qs to be empty, for two questions to share an id, for a
 // question's id to be empty, for a kind to be neither noul, choice nor
 // score, for a choice or score to resolve to fewer than two options, or for
@@ -37,11 +46,12 @@ func AnswerSchema(qs []ports.Question) ([]byte, error) {
 		return nil, fmt.Errorf("judge: no questions to build a schema from")
 	}
 
-	properties := make(map[string]any, len(qs))
-	required := make([]string, 0, len(qs))
 	seen := make(map[string]bool, len(qs))
+	var properties bytes.Buffer
+	properties.WriteByte('{')
+	required := make([]string, 0, len(qs))
 
-	for _, q := range qs {
+	for i, q := range qs {
 		if err := validateQuestion(q, seen); err != nil {
 			return nil, err
 		}
@@ -51,17 +61,37 @@ func AnswerSchema(qs []ports.Question) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		properties[q.ID] = prop
+		if i > 0 {
+			properties.WriteByte(',')
+		}
+		key, err := json.Marshal(q.ID)
+		if err != nil {
+			return nil, err
+		}
+		value, err := json.Marshal(prop)
+		if err != nil {
+			return nil, err
+		}
+		properties.Write(key)
+		properties.WriteByte(':')
+		properties.Write(value)
+
 		required = append(required, q.ID)
 	}
+	properties.WriteByte('}')
 
-	schema := map[string]any{
-		"type":                 "object",
-		"properties":           properties,
-		"required":             required,
-		"additionalProperties": false,
+	requiredJSON, err := json.Marshal(required)
+	if err != nil {
+		return nil, err
 	}
-	return json.Marshal(schema)
+
+	var out bytes.Buffer
+	out.WriteString(`{"type":"object","properties":`)
+	out.Write(properties.Bytes())
+	out.WriteString(`,"required":`)
+	out.Write(requiredJSON)
+	out.WriteString(`,"additionalProperties":false}`)
+	return out.Bytes(), nil
 }
 
 // validateQuestion reports an error for an empty id or one already seen.
