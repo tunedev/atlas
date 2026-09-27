@@ -20,9 +20,10 @@ import (
 // verifies the PDF's own extracted text. Every "expect" string must be
 // grounded in it. A passing check proves presence and nothing more: not
 // order, not count, not that the string appears exactly once. No "absent"
-// string (a JSON array of strings) may be grounded anywhere in the text;
-// an empty one is never grounded. The PDF is written to "output" only once verification
-// passes; a failed verification leaves output untouched.
+// string (a JSON array of strings) may be grounded in the text left once
+// every expected string is cut out; an empty one is never grounded. The PDF
+// is written to "output" only once verification passes; a failed
+// verification leaves output untouched.
 type Render struct {
 	conv     ports.Converter
 	maxBytes int64
