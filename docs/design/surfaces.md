@@ -48,9 +48,11 @@ takes one over. The refusal reads `pidlock: <path> is held by running process N;
 atlas, delete <path>`.
 
 `Acquire` writes the pid to a temp file in the same directory and hard-links it into place, so
-the lock never exists without its pid and exactly one racing creator wins. An empty or garbled
-lock can therefore only come from a crash. Reclaiming a stale lock removes it and tries
-creation again, two attempts in all.
+the lock never exists without its pid and, when no lock exists, exactly one racing creator
+wins. An empty or garbled lock can therefore only come from a crash. Reclaiming a stale lock
+removes it and tries creation again, two attempts in all. Two processes reclaiming the same
+stale lock at once can both hold it: one removes the lock the other just created. This race
+is documented, not solved.
 
 The lock covers `Store.Root` only. `Store.IndexPath` defaults outside it
 (`~/.atlas/index.db`), so two processes on different roots sharing the default index are not
