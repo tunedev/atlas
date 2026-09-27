@@ -151,6 +151,36 @@ func TestRenderPassesWhenNoAbsentStringIsPrinted(t *testing.T) {
 	}
 }
 
+// A gap word inside kept content is not a printed gap: absent strings are
+// searched for only outside every expected string.
+func TestRenderAllowsAnAbsentStringInsideKeptContent(t *testing.T) {
+	tmpl := writeTemplate(t, "#set text(hyphenate: false)\n#for b in data.items [ - #b ]\n")
+	_, err := renderer(t).Invoke(context.Background(), map[string]string{
+		"template": tmpl,
+		"data":     `{"items":["Kept the harbour logs in PostgreSQL every night"]}`,
+		"output":   filepath.Join(t.TempDir(), "doc.pdf"),
+		"expect":   `["Kept the harbour logs in PostgreSQL every night"]`,
+		"absent":   `["Go", "PostgreSQL"]`,
+	})
+	if err != nil {
+		t.Errorf("err = %v; a gap word inside kept content must not fail the render", err)
+	}
+}
+
+func TestRenderFailsWhenAnAbsentStringIsPrintedBesideKeptContent(t *testing.T) {
+	tmpl := writeTemplate(t, "#set text(hyphenate: false)\n#for b in data.items [ - #b ]\n")
+	_, err := renderer(t).Invoke(context.Background(), map[string]string{
+		"template": tmpl,
+		"data":     `{"items":["Kept the harbour logs in PostgreSQL every night", "PostgreSQL"]}`,
+		"output":   filepath.Join(t.TempDir(), "doc.pdf"),
+		"expect":   `["Kept the harbour logs in PostgreSQL every night"]`,
+		"absent":   `["PostgreSQL"]`,
+	})
+	if err == nil || !strings.Contains(err.Error(), "absent strings are in the rendered text") {
+		t.Errorf("err = %v; a gap printed on its own must fail", err)
+	}
+}
+
 func TestRenderRejectsAbsentThatIsNotAStringList(t *testing.T) {
 	_, err := tools.NewRender(unusedConverter{t}, 1<<20).Invoke(context.Background(), map[string]string{
 		"template": writeTemplate(t, "x"),

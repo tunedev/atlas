@@ -122,7 +122,9 @@ func writeTemp(out string, body []byte) (string, error) {
 
 // verifyText extracts path's text, joins a line ending in a hyphen to the
 // next (a Typst line wrap of a hyphenated word), requires every expected
-// string to be grounded in it, and no absent string to be.
+// string to be grounded in it, and no absent string to be grounded in what
+// remains once every expected string is cut out: a gap word inside kept
+// content is not a printed gap.
 func verifyText(path string, expect, absent []string) error {
 	if len(expect) == 0 && len(absent) == 0 {
 		return nil
@@ -139,7 +141,7 @@ func verifyText(path string, expect, absent []string) error {
 	if len(missing) > 0 {
 		return fmt.Errorf("%d of %d expected strings are not in the rendered text; first: %q", len(missing), len(expect), expect[missing[0]])
 	}
-	notFound, err := ungrounded(absent, whole)
+	notFound, err := ungrounded(absent, withoutAll(whole, expect))
 	if err != nil {
 		return err
 	}
@@ -147,6 +149,24 @@ func verifyText(path string, expect, absent []string) error {
 		return fmt.Errorf("%d of %d absent strings are in the rendered text; first: %q", len(printed), len(absent), absent[printed[0]])
 	}
 	return nil
+}
+
+// withoutAll cuts every occurrence of each expected string, normalised,
+// out of haystack, longest first so a string inside another is not cut
+// first. Each cut leaves a NUL, which no normalised string contains, so the
+// text either side cannot join into a match.
+func withoutAll(haystack string, expect []string) string {
+	cuts := make([]string, 0, len(expect))
+	for _, e := range expect {
+		if n := app.Normalise(e); n != "" {
+			cuts = append(cuts, n)
+		}
+	}
+	sort.Slice(cuts, func(i, j int) bool { return len(cuts[i]) > len(cuts[j]) })
+	for _, c := range cuts {
+		haystack = strings.ReplaceAll(haystack, c, "\x00")
+	}
+	return haystack
 }
 
 // ungrounded returns the index of every string in ss that app.Ground does
