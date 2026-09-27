@@ -69,10 +69,28 @@ func sortedKeys(m map[string]any) []string {
 	return keys
 }
 
+// statement reports whether obj has a text field and what that text is.
+// If text is present and non-empty, it returns (text, true). If text is
+// present but empty or not a string, it returns ("", true) marking the
+// object as a statement with no valid text (a gap). If text is absent,
+// it returns ("", false) marking the object as not a statement.
+func statement(obj map[string]any) (string, bool) {
+	_, has := obj["text"]
+	if !has {
+		return "", false
+	}
+	text, ok := obj["text"].(string)
+	if !ok || text == "" {
+		return "", true
+	}
+	return text, true
+}
+
 // Settle decides, for every object with citations, which citations survive
 // and whether the object is a gap. A citation survives if it is grounded
-// and, on an object with a non-empty "text", judged relevant: a statement
-// never judged is a gap, not a claim. kept lists, per top-level key and in
+// and, on a statement with valid text, judged relevant: a statement with
+// invalid text is always a gap, never shown. Objects without a text field
+// keep citations on grounding alone. kept lists, per top-level key and in
 // order, what a renderer shows for each object that is not a gap: its text,
 // or its surviving quotes when it has none. Every top-level key is present
 // in kept, empty when nothing under it survived. tree is modified in place.
@@ -90,7 +108,13 @@ func Settle(tree any) (any, map[string][]string, int) {
 			if !ok {
 				return
 			}
-			text, _ := obj["text"].(string)
+			text, isStatement := statement(obj)
+			if isStatement && text == "" {
+				obj[citationsKey] = []any{}
+				obj["gap"] = true
+				gaps++
+				return
+			}
 			var survivors []any
 			var quotes []string
 			for _, r := range raw {
@@ -98,7 +122,7 @@ func Settle(tree any) (any, map[string][]string, int) {
 				if !ok || c["status"] != "grounded" {
 					continue
 				}
-				if text != "" && c["relevant"] != true {
+				if isStatement && c["relevant"] != true {
 					continue
 				}
 				survivors = append(survivors, c)

@@ -65,7 +65,10 @@ func TestSettleKeepsOnlyCheckedCitationsAndMarksGaps(t *testing.T) {
 	    {"id":0,"quote":"Logged every passing ship","status":"grounded","relevant":true},
 	    {"id":1,"quote":"Refitted the lamp lens","status":"grounded","relevant":false}]},
 	  {"text":"sails the ship","citations":[{"id":1,"quote":"Refitted the lamp lens","status":"grounded","relevant":false}]},
-	  {"text":"never judged","citations":[{"id":0,"quote":"Logged every passing ship","status":"grounded"}]}],
+	  {"text":"never judged","citations":[{"id":0,"quote":"Logged every passing ship","status":"grounded"}]},
+	  {"text":null,"citations":[{"id":0,"quote":"Logged every passing ship","status":"grounded"}]},
+	  {"text":7,"citations":[{"id":1,"quote":"Refitted the lamp lens","status":"grounded","relevant":true}]},
+	  {"text":"","citations":[{"id":0,"quote":"Logged every passing ship","status":"grounded"}]}],
 	 "picked":[
 	  {"citations":[{"id":1,"quote":"Refitted the lamp lens","status":"grounded"}]},
 	  {"citations":[{"id":7,"quote":"","status":"needs_review"}]}]
@@ -76,6 +79,9 @@ func TestSettleKeepsOnlyCheckedCitationsAndMarksGaps(t *testing.T) {
 		`{"citations":[{"id":0,"quote":"Logged every passing ship","relevant":true,"status":"grounded"}],"gap":false,"text":"keeps a ship log"}`,
 		`{"citations":[],"gap":true,"text":"sails the ship"}`,
 		`{"citations":[],"gap":true,"text":"never judged"}`,
+		`{"citations":[],"gap":true,"text":null}`,
+		`{"citations":[],"gap":true,"text":7}`,
+		`{"citations":[],"gap":true,"text":""}`,
 		`{"citations":[{"id":1,"quote":"Refitted the lamp lens","status":"grounded"}],"gap":false}`,
 		`{"citations":[],"gap":true}`,
 	} {
@@ -83,8 +89,8 @@ func TestSettleKeepsOnlyCheckedCitationsAndMarksGaps(t *testing.T) {
 			t.Errorf("settled lacks %s:\n%s", want, got)
 		}
 	}
-	if gaps != 3 {
-		t.Errorf("gaps = %d; want 3", gaps)
+	if gaps != 6 {
+		t.Errorf("gaps = %d; want 6", gaps)
 	}
 	wantKept := map[string][]string{"claims": {"keeps a ship log"}, "picked": {"Refitted the lamp lens"}}
 	if _, empty, _ := app.Settle(decode(t, `{"none":[{"citations":[]}]}`)); !reflect.DeepEqual(empty, map[string][]string{"none": {}}) {
