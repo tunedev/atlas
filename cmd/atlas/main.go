@@ -18,6 +18,7 @@ import (
 	"github.com/tunedev/atlas/internal/adapters/inbound/mcpserve"
 	"github.com/tunedev/atlas/internal/adapters/inbound/packfile"
 	"github.com/tunedev/atlas/internal/adapters/outbound/acpagent"
+	"github.com/tunedev/atlas/internal/adapters/outbound/crawlsource"
 	"github.com/tunedev/atlas/internal/adapters/outbound/feedsource"
 	"github.com/tunedev/atlas/internal/adapters/outbound/gitdocs"
 	"github.com/tunedev/atlas/internal/adapters/outbound/openaiprov"
@@ -37,7 +38,7 @@ func main() {
 	}
 }
 
-func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index, source ports.Source) tools.Registry {
+func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index, source ports.Source, crawler *crawlsource.Crawler) tools.Registry {
 	provider := openaiprov.New(openaiprov.Config{
 		Name:     cfg.Model.Name,
 		BaseURL:  cfg.Model.BaseURL,
@@ -67,6 +68,8 @@ func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index, source
 		tools.NewExtract(extractor),
 		tools.NewDecision(docs, index),
 		tools.NewSourcePull(source, cfg.Feed.StaleAfter, slog.Default()),
+		tools.NewDedupe(),
+		tools.NewCrawlPull(crawler, slog.Default()),
 	)
 }
 
@@ -196,7 +199,25 @@ func run() error {
 		CachePath:   cfg.Feed.CachePath,
 		PullTimeout: cfg.Feed.PullTimeout,
 	})
-	registry := buildRegistry(cfg, docs, index, source)
+
+	// One Crawler for the process, so every crawl.pull shares its robots.txt
+	// cache and per-host pacing.
+	crawler, err := crawlsource.NewCrawler(crawlsource.Config{
+		UserAgent:     cfg.Crawl.UserAgent,
+		Delay:         cfg.Crawl.Delay,
+		Timeout:       cfg.Crawl.Timeout,
+		PullTimeout:   cfg.Crawl.PullTimeout,
+		MaxBytes:      cfg.Crawl.MaxBytes,
+		Retries:       cfg.Crawl.Retries,
+		CacheDir:      cfg.Crawl.CacheDir,
+		Render:        cfg.Crawl.Render,
+		RenderTimeout: cfg.Crawl.RenderTimeout,
+	})
+	if err != nil {
+		return err
+	}
+
+	registry := buildRegistry(cfg, docs, index, source, crawler)
 
 	if cfg.Agent.Command != "" {
 		agentTool, stop, err := startAgent(ctx, cfg, registry, docs)
