@@ -2,8 +2,11 @@ package crawlsource
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -20,7 +23,7 @@ func TestNoBrowserFoundIsAFailureNeverADownload(t *testing.T) {
 	cfg.Render = true
 	c := chrome{cfg: cfg, conduct: newConduct(cfg, http.DefaultTransport), lookPath: func() (string, bool) { return "", false }}
 	u, _ := url.Parse(srv.URL + "/app")
-	if _, err := c.render(context.Background(), u); !errors.Is(err, ErrNoBrowser) {
+	if _, _, err := c.render(context.Background(), u); !errors.Is(err, ErrNoBrowser) {
 		t.Fatalf("err = %v, want ErrNoBrowser", err)
 	}
 	if len(log.all()) != 0 {
@@ -39,12 +42,7 @@ setTimeout(function () {
 // set and a browser is installed: it proves a JavaScript-built page yields
 // items through the user's own browser, identified as the crawler.
 func TestRenderAgainstALocalBrowserLive(t *testing.T) {
-	if os.Getenv("ATLAS_LIVE_BROWSER") == "" {
-		t.Skip("ATLAS_LIVE_BROWSER not set")
-	}
-	if _, has := launcher.LookPath(); !has {
-		t.Skip("no local browser")
-	}
+	liveBrowser(t)
 	srv, log := site(t, map[string]string{"/app": appPage})
 	cfg := testConfig()
 	cfg.Render = true
@@ -95,10 +93,10 @@ func TestARenderThatLandsOnADisallowedURLFails(t *testing.T) {
 	cfg := testConfig()
 	c := chrome{cfg: cfg, conduct: newConduct(cfg, http.DefaultTransport)}
 	asked, _ := url.Parse(srv.URL + "/app")
-	if err := c.landed(context.Background(), asked, srv.URL+"/closed"); !errors.Is(err, ErrDisallowed) {
+	if _, err := c.landed(context.Background(), asked, srv.URL+"/closed"); !errors.Is(err, ErrDisallowed) {
 		t.Errorf("err = %v, want ErrDisallowed", err)
 	}
-	if err := c.landed(context.Background(), asked, srv.URL+"/app"); err != nil {
+	if _, err := c.landed(context.Background(), asked, srv.URL+"/app"); err != nil {
 		t.Errorf("err = %v; a render that stayed put was refused", err)
 	}
 }
@@ -119,11 +117,68 @@ func TestAFailedLaunchLeavesNoProfileBehind(t *testing.T) {
 	cfg := testConfig()
 	c := chrome{cfg: cfg, conduct: newConduct(cfg, http.DefaultTransport), lookPath: func() (string, bool) { return "/bin/false", true }}
 	u, _ := url.Parse(srv.URL + "/app")
-	if _, err := c.render(context.Background(), u); err == nil {
+	if _, _, err := c.render(context.Background(), u); err == nil {
 		t.Fatal("a browser that exits at once rendered a page")
 	}
 	profiles, _ := filepath.Glob(filepath.Join(tmp, "atlas-render-*"))
 	if len(profiles) != 0 {
 		t.Errorf("profiles left behind: %v", profiles)
+	}
+}
+
+// liveBrowser skips t unless ATLAS_LIVE_BROWSER is set and a browser is
+// installed.
+func liveBrowser(t *testing.T) {
+	t.Helper()
+	if os.Getenv("ATLAS_LIVE_BROWSER") == "" {
+		t.Skip("ATLAS_LIVE_BROWSER not set")
+	}
+	if _, has := launcher.LookPath(); !has {
+		t.Skip("no local browser")
+	}
+}
+
+// renderOne pulls one rendering target at u and returns its only item's
+// link.
+func renderOne(t *testing.T, u string) string {
+	t.Helper()
+	cfg := testConfig()
+	cfg.Render = true
+	ts, err := ParseTargets("- id: app\n  url: " + u + "\n  item: li.event\n  key: link\n  render: true\n  fields:\n    link: {css: a, attr: href}\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := New(cfg, ts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := src.Pull(context.Background())
+	if err != nil || len(items) != 1 {
+		t.Fatalf("items = %v err = %v", items, err)
+	}
+	var fields map[string]string
+	if err := json.Unmarshal(items[0].Body, &fields); err != nil {
+		t.Fatal(err)
+	}
+	return fields["link"]
+}
+
+// TestARenderResolvesLinksAgainstThePageItLandedOnLive is skipped unless
+// ATLAS_LIVE_BROWSER is set and a browser is installed.
+func TestARenderResolvesLinksAgainstThePageItLandedOnLive(t *testing.T) {
+	liveBrowser(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/jobs":
+			http.Redirect(w, r, "/careers/list/", http.StatusFound)
+		case "/careers/list/":
+			io.WriteString(w, `<html><body><ul><li class="event"><a href="detail/1">more</a></li></ul></body></html>`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	if got, want := renderOne(t, srv.URL+"/jobs"), srv.URL+"/careers/list/detail/1"; got != want {
+		t.Errorf("link = %s, want %s", got, want)
 	}
 }

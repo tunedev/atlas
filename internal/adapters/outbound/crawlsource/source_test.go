@@ -345,3 +345,48 @@ func TestAReportCountsOnlyItsOwnPullsRevalidations(t *testing.T) {
 		t.Errorf("B revalidated = %d, want 1", got)
 	}
 }
+
+const relativePage = `<html><head>%s</head><body><ul>
+<li class="event"><h3>Tide talk</h3><a href="detail/1">more</a></li>
+</ul></body></html>`
+
+// movedLibrary redirects /jobs to /careers/list/, which serves relativePage
+// with head in its head.
+func movedLibrary(t *testing.T, head string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/jobs":
+			http.Redirect(w, r, "/careers/list/", http.StatusFound)
+		case "/careers/list/":
+			w.Header().Set("Content-Type", "text/html")
+			fmt.Fprintf(w, relativePage, head)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestLinksResolveAgainstThePageARedirectLandedOn(t *testing.T) {
+	srv := movedLibrary(t, "")
+	items, _, err := pull(t, testConfig(), targets(t, oneTarget, srv.URL, "/jobs"))
+	if err != nil || len(items) != 1 {
+		t.Fatalf("items = %v err = %v", items, err)
+	}
+	if want := srv.URL + "/careers/list/detail/1"; items[0]["link"] != want {
+		t.Errorf("link = %v, want %s", items[0]["link"], want)
+	}
+}
+
+func TestLinksResolveAgainstThePagesBaseHref(t *testing.T) {
+	srv := movedLibrary(t, `<base href="/archive/">`)
+	items, _, err := pull(t, testConfig(), targets(t, oneTarget, srv.URL, "/careers/list/"))
+	if err != nil || len(items) != 1 {
+		t.Fatalf("items = %v err = %v", items, err)
+	}
+	if want := srv.URL + "/archive/detail/1"; items[0]["link"] != want {
+		t.Errorf("link = %v, want %s", items[0]["link"], want)
+	}
+}

@@ -57,6 +57,20 @@ func (f Field) read(item *goquery.Selection, base *url.URL) string {
 	return v
 }
 
+// pageBase is the URL a page's links resolve against: its <base href>,
+// itself resolved against the page's own URL, or else the page's URL.
+func pageBase(page *goquery.Selection, pageURL *url.URL) *url.URL {
+	href, ok := page.Find("base[href]").First().Attr("href")
+	if !ok {
+		return pageURL
+	}
+	ref, err := url.Parse(strings.TrimSpace(href))
+	if err != nil {
+		return pageURL
+	}
+	return pageURL.ResolveReference(ref)
+}
+
 // emptyKind says why a page yielded no item: a page carrying script with
 // little visible text is an application shell that needs rendering; any
 // other page no longer matches its target's rules.

@@ -192,17 +192,19 @@ func (s *Source) LastReport() Report {
 }
 
 func (s *Source) crawl(ctx context.Context, t Target) ([]ports.Item, error) {
-	page, base, err := s.fetch(ctx, t)
+	page, pageURL, err := s.fetch(ctx, t)
 	if err != nil {
 		return nil, err
 	}
-	fields := extract(page, t, base)
+	fields := extract(page, t, pageBase(page, pageURL))
 	if len(fields) == 0 {
 		return nil, &emptyError{kind: emptyKind(page), url: t.URL, item: t.Item}
 	}
 	return itemsOf(t, fields, time.Now().UTC())
 }
 
+// fetch reads t's page and returns it with the URL it was read from, which
+// after a redirect is the URL the redirect ended on.
 func (s *Source) fetch(ctx context.Context, t Target) (*goquery.Selection, *url.URL, error) {
 	if t.Render {
 		if !s.cfg.Render {
@@ -232,9 +234,10 @@ func (s *Source) fetched(ctx context.Context, t Target) (*goquery.Selection, *ur
 	c.WithTransport(s.conduct)
 
 	var page *goquery.Selection
-	var base *url.URL
+	var pageURL *url.URL
 	var fetchErr error
-	c.OnHTML("html", func(e *colly.HTMLElement) { page, base = e.DOM, e.Request.URL })
+	// After a redirect Colly sets e.Request.URL to the URL the redirect ended on.
+	c.OnHTML("html", func(e *colly.HTMLElement) { page, pageURL = e.DOM, e.Request.URL })
 	c.OnError(func(r *colly.Response, err error) {
 		fetchErr = fmt.Errorf("%s: status %d: %w", t.URL, r.StatusCode, err)
 	})
@@ -247,7 +250,7 @@ func (s *Source) fetched(ctx context.Context, t Target) (*goquery.Selection, *ur
 	if page == nil {
 		return nil, nil, fmt.Errorf("%s: response is not HTML", t.URL)
 	}
-	return page, base, nil
+	return page, pageURL, nil
 }
 
 func itemsOf(t Target, fields []map[string]string, when time.Time) ([]ports.Item, error) {
