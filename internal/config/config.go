@@ -58,12 +58,15 @@ type OTelConfig struct {
 
 // JudgeConfig pins how the judge samples, so a judged probability does not
 // move between runs. TopLogProbs bounds how many alternatives per token the
-// judge reads mass from; MaxTokens bounds the reply.
+// judge reads mass from; MaxTokens bounds the reply. ContextTokens is the
+// engine's context size; a judge prompt that reaches it is refused as
+// possibly truncated.
 type JudgeConfig struct {
-	Temperature float64
-	Seed        int
-	TopLogProbs int
-	MaxTokens   int
+	Temperature   float64
+	Seed          int
+	TopLogProbs   int
+	MaxTokens     int
+	ContextTokens int
 }
 
 // ExtractConfig pins how extraction samples. Temperature 0 means the same
@@ -232,6 +235,9 @@ func (c Config) validate() error {
 	}
 	if c.Judge.MaxTokens <= 0 {
 		return fmt.Errorf("config: judge max tokens must be positive, got %d", c.Judge.MaxTokens)
+	}
+	if c.Judge.ContextTokens <= 0 {
+		return fmt.Errorf("config: judge context tokens must be positive, got %d", c.Judge.ContextTokens)
 	}
 	if c.Judge.Temperature < 0 {
 		return fmt.Errorf("config: judge temperature must not be negative, got %v", c.Judge.Temperature)

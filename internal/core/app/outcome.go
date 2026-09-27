@@ -179,7 +179,7 @@ func AttachOutcomeForSubject(ctx context.Context, docs ports.Docs, index ports.I
 	if subjectID == "" {
 		return nil, errors.New("outcome: subject id is empty")
 	}
-	if err := checkSubjectID(subjectID); err != nil {
+	if err := CheckSubjectID(subjectID); err != nil {
 		return nil, fmt.Errorf("outcome: %w", err)
 	}
 	rows, err := index.Find(ctx, ports.Query{Kind: "judgement", Match: map[string]string{"subject_id": subjectID}})

@@ -48,10 +48,11 @@ func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index, source
 		MaxBytes: cfg.Model.MaxBytes,
 	})
 	judge := app.NewJudge(provider, app.JudgeConfig{
-		Temperature: cfg.Judge.Temperature,
-		Seed:        cfg.Judge.Seed,
-		TopLogProbs: cfg.Judge.TopLogProbs,
-		MaxTokens:   cfg.Judge.MaxTokens,
+		Temperature:   cfg.Judge.Temperature,
+		Seed:          cfg.Judge.Seed,
+		TopLogProbs:   cfg.Judge.TopLogProbs,
+		MaxTokens:     cfg.Judge.MaxTokens,
+		ContextTokens: cfg.Judge.ContextTokens,
 	})
 	extractor := app.NewExtractor(provider, app.ExtractorConfig{
 		Temperature: cfg.Extract.Temperature,
@@ -68,6 +69,7 @@ func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index, source
 		tools.NewExtract(extractor),
 		tools.NewDecision(docs, index),
 		tools.NewSourcePull(source, cfg.Feed.StaleAfter, slog.Default()),
+		tools.NewJudgeEach(source, judge, docs, index, cfg.Model.Name, cfg.Feed.StaleAfter, slog.Default()),
 		tools.NewDedupe(),
 		tools.NewCrawlPull(crawler, slog.Default()),
 		tools.NewOutcome(docs, index),

@@ -334,28 +334,8 @@ func TestAnAnswerResolvesByTheFirstTokenOfAMultiTokenOption(t *testing.T) {
 	}
 }
 
-// ambiguousPrefixAnswer answers a "shape" choice question whose answer token
-// text, "pla", is a first-token prefix of two different options: platform
-// and plain. Neither can be preferred, so the read must fail rather than
-// guess.
-func ambiguousPrefixAnswer() ports.Completion {
-	plain := func(text string) ports.Token { return ports.Token{Text: text, LogProb: math.Log(0.9)} }
-	c := ports.Completion{Model: "a-model"}
-	add := func(t ports.Token) { c.Text += t.Text; c.Tokens = append(c.Tokens, t) }
-
-	add(plain(`{"`))
-	add(plain(`shape`))
-	add(plain(`":`))
-	add(plain(` "`))
-	add(ports.Token{Text: "pla", LogProb: math.Log(0.9), Alternatives: []ports.Alternative{
-		{Text: "pla", LogProb: math.Log(0.9)},
-		{Text: "other", LogProb: math.Log(0.1)},
-	}})
-	add(plain(`in`))
-	add(plain(`"}`))
-	return c
-}
-
+// shapeQuestion is an option set AnswerSchema rejects: "platform" and
+// "plain" share nothing but their first character.
 func shapeQuestion() ports.Question {
 	return ports.Question{
 		ID:      "shape",
@@ -365,64 +345,26 @@ func shapeQuestion() ports.Question {
 	}
 }
 
-func TestATokenPrefixingTwoDifferentOptionsIsAnAmbiguityError(t *testing.T) {
-	p := &recordingProvider{completion: ambiguousPrefixAnswer()}
+// TestASharedInitialOptionSetIsRejectedBeforeTheProviderIsCalled proves
+// AnswerSchema's shared-initial guard rejects shapeQuestion's option set
+// before Ask ever calls the provider: any answer token able to prefix two
+// different options' forms implies those options already share a first
+// character, so AnswerSchema refuses that up front.
+func TestASharedInitialOptionSetIsRejectedBeforeTheProviderIsCalled(t *testing.T) {
+	p := &recordingProvider{completion: twoAnswers()}
 
 	_, err := app.NewJudge(p, testJudgeConfig()).Ask(context.Background(), "a short book", []ports.Question{shapeQuestion()})
 	if err == nil {
-		t.Fatal("an alternative prefixing two different options produced a judgement instead of an error")
+		t.Fatal("a question whose options share a first character produced a judgement")
 	}
 	if !strings.Contains(err.Error(), "shape") {
 		t.Errorf("error does not name the question: %v", err)
 	}
-	if !strings.Contains(err.Error(), "pla") {
-		t.Errorf("error does not name the ambiguous text: %v", err)
+	if !strings.Contains(err.Error(), "platform") || !strings.Contains(err.Error(), "plain") {
+		t.Errorf("error does not name both colliding options: %v", err)
 	}
-	// F5: the error must be diagnosable rather than merely present -- it
-	// says whether the ambiguous text was an alternative or the emitted
-	// token, and carries its probability.
-	if !strings.Contains(err.Error(), "alternative") {
-		t.Errorf("error does not say the ambiguous text was an alternative: %v", err)
-	}
-	if !strings.Contains(err.Error(), "p=0.9") {
-		t.Errorf("error does not carry the ambiguous text's probability: %v", err)
-	}
-}
-
-// ambiguousOwnTextAnswer answers "shape" with an emitted token, "pla", that
-// is itself a first-token prefix of two options -- and neither of its own
-// alternatives repeats that text, so the ambiguity is found in the fallback
-// read of the emitted token, not in the alternatives loop.
-func ambiguousOwnTextAnswer() ports.Completion {
-	plain := func(text string) ports.Token { return ports.Token{Text: text, LogProb: math.Log(0.9)} }
-	c := ports.Completion{Model: "a-model"}
-	add := func(t ports.Token) { c.Text += t.Text; c.Tokens = append(c.Tokens, t) }
-
-	add(plain(`{"`))
-	add(plain(`shape`))
-	add(plain(`":`))
-	add(plain(` "`))
-	add(ports.Token{Text: "pla", LogProb: math.Log(0.85), Alternatives: []ports.Alternative{
-		{Text: "xyz", LogProb: math.Log(0.85)},
-		{Text: "abc", LogProb: math.Log(0.15)},
-	}})
-	add(plain(`in`))
-	add(plain(`"}`))
-	return c
-}
-
-func TestAnAmbiguousEmittedTokenIsDistinguishedFromAnAmbiguousAlternative(t *testing.T) {
-	p := &recordingProvider{completion: ambiguousOwnTextAnswer()}
-
-	_, err := app.NewJudge(p, testJudgeConfig()).Ask(context.Background(), "a short book", []ports.Question{shapeQuestion()})
-	if err == nil {
-		t.Fatal("an emitted token prefixing two different options produced a judgement instead of an error")
-	}
-	if !strings.Contains(err.Error(), "emitted token") {
-		t.Errorf("error does not say the ambiguous text was the emitted token: %v", err)
-	}
-	if !strings.Contains(err.Error(), "p=0.85") {
-		t.Errorf("error does not carry the emitted token's probability: %v", err)
+	if p.calls != 0 {
+		t.Errorf("provider called %d times; an invalid option set should be rejected before any call is made", p.calls)
 	}
 }
 
@@ -656,5 +598,41 @@ func TestCoverageReportsFullRepresentation(t *testing.T) {
 	}
 	if focus.Coverage.Declared != 5 {
 		t.Errorf("declared = %d, want 5", focus.Coverage.Declared)
+	}
+}
+
+func TestThePromptNamesEveryQuestionsOptions(t *testing.T) {
+	p := &recordingProvider{completion: twoAnswers()}
+	if _, err := app.NewJudge(p, testJudgeConfig()).Ask(context.Background(), "a novel", judgeQuestions()); err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+	for _, want := range []string{
+		"readable: Is it readable? (one of: yes, no)",
+		"length: How long is it? (one of: short, medium, long)",
+	} {
+		if !strings.Contains(p.last.User, want) {
+			t.Errorf("prompt lacks %q:\n%s", want, p.last.User)
+		}
+	}
+}
+
+func TestAPromptAtTheContextLimitIsRefused(t *testing.T) {
+	c := twoAnswers()
+	c.Usage.PromptTokens = 4096
+	cfg := testJudgeConfig()
+	cfg.ContextTokens = 4096
+	_, err := app.NewJudge(&recordingProvider{completion: c}, cfg).Ask(context.Background(), "a novel", judgeQuestions())
+	if err == nil || !strings.Contains(err.Error(), "prompt may be truncated") {
+		t.Fatalf("err = %v, want a truncation refusal", err)
+	}
+}
+
+func TestAPromptUnderTheContextLimitIsAnswered(t *testing.T) {
+	c := twoAnswers()
+	c.Usage.PromptTokens = 4095
+	cfg := testJudgeConfig()
+	cfg.ContextTokens = 4096
+	if _, err := app.NewJudge(&recordingProvider{completion: c}, cfg).Ask(context.Background(), "a novel", judgeQuestions()); err != nil {
+		t.Fatalf("Ask: %v", err)
 	}
 }

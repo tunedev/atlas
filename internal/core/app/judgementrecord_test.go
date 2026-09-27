@@ -348,6 +348,64 @@ func TestJudgingTheSameSubjectWithinASecondProducesDistinctPaths(t *testing.T) {
 	}
 }
 
+func TestAnAssessedJudgementRecordsItsFingerprintRulesAndIndexFields(t *testing.T) {
+	ctx := context.Background()
+	docs, index := newFakeDocs(), &fakeIndex{}
+	j := aJudgement()
+	a := app.Assessed{
+		Fingerprint: "fp1",
+		Verdict:     "yes",
+		Rules: []app.RuleResult{
+			{ID: "min-pages", State: app.RuleTripped, Evidence: "stats.pages is 90, rule needs >= 100"},
+			{ID: "no-spoilers", State: app.RuleTripped, Evidence: "p(yes) 0.71 >= 0.60"},
+			{ID: "language", State: app.RuleClear, Evidence: "language is en, rule needs == en"},
+		},
+	}
+	path, err := app.RecordAssessedJudgement(ctx, docs, index, "shelf:fiction:42", recordQuestions(), j, a)
+	if err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	fields := index.rows[0].Fields
+	for field, want := range map[string]string{"fingerprint": "fp1", "verdict": "yes", "tripped": "min-pages,no-spoilers", "outcome": "pending"} {
+		if fields[field] != want {
+			t.Errorf("index field %s = %q, want %q", field, fields[field], want)
+		}
+	}
+	stored, err := app.ReadJudgement(ctx, docs, path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if stored.SubjectID != "shelf:fiction:42" || len(stored.Rules) != 3 || stored.Rules[0] != a.Rules[0] {
+		t.Errorf("stored = %+v", stored)
+	}
+	if len(stored.Answers) != 1 || stored.Answers[0].Chosen != "yes" || stored.Answers[0].Distribution["yes"] != 0.94 {
+		t.Errorf("stored answers = %+v", stored.Answers)
+	}
+}
+
+func TestAPlainJudgementCarriesNoFingerprintOrRules(t *testing.T) {
+	ctx := context.Background()
+	docs, index := newFakeDocs(), &fakeIndex{}
+	path, err := app.RecordJudgement(ctx, docs, index, "shelf:fiction:43", recordQuestions(), aJudgement())
+	if err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	body := docs.put[path]
+	for _, key := range []string{`"fingerprint"`, `"rules"`} {
+		if strings.Contains(string(body), key) {
+			t.Errorf("a plain judgement document carries %s:\n%s", key, body)
+		}
+	}
+	if !strings.Contains(string(body), `"outcome": null`) {
+		t.Errorf("the outcome slot changed:\n%s", body)
+	}
+	for _, field := range []string{"fingerprint", "verdict", "tripped"} {
+		if _, ok := index.rows[0].Fields[field]; ok {
+			t.Errorf("a plain judgement's index row carries %s", field)
+		}
+	}
+}
+
 type failingIndex struct{ err error }
 
 func (i *failingIndex) Upsert(_ context.Context, _ ports.Record) error { return i.err }

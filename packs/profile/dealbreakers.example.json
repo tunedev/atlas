@@ -11,7 +11,8 @@
       "id": "no-on-call",
       "statement": "No on-call or pager rotation.",
       "kind": "judged",
-      "threshold": 0.6
+      "threshold": 0.6,
+      "ask": "Does this role involve on-call or a pager rotation?"
     }
   ]
 }

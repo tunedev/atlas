@@ -1,9 +1,11 @@
 package app
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/tunedev/atlas/internal/core/ports"
 )
@@ -26,19 +28,30 @@ func OptionsFor(q ports.Question) []string {
 // other property allowed. This is what makes a choice unable to answer
 // outside its options.
 //
+// properties and required are emitted in qs's own order, never sorted. A
+// provider that sends the schema on to the engine verbatim (rather than
+// decoding and re-marshalling it, which would re-sort a map's keys) has an
+// engine whose grammar answers each field in that same order, so a
+// question's answer can depend only on the questions before it, never the
+// ones after. Put the question whose answer must not be swayed by the
+// others first.
+//
 // It is an error for qs to be empty, for two questions to share an id, for a
 // question's id to be empty, for a kind to be neither noul, choice nor
-// score, or for a choice or score to resolve to fewer than two options.
+// score, for a choice or score to resolve to fewer than two options, or for
+// two of a question's options to share a surface form, a prefix, or a first
+// character (see validateOptionSet).
 func AnswerSchema(qs []ports.Question) ([]byte, error) {
 	if len(qs) == 0 {
 		return nil, fmt.Errorf("judge: no questions to build a schema from")
 	}
 
-	properties := make(map[string]any, len(qs))
-	required := make([]string, 0, len(qs))
 	seen := make(map[string]bool, len(qs))
+	var properties bytes.Buffer
+	properties.WriteByte('{')
+	required := make([]string, 0, len(qs))
 
-	for _, q := range qs {
+	for i, q := range qs {
 		if err := validateQuestion(q, seen); err != nil {
 			return nil, err
 		}
@@ -48,17 +61,37 @@ func AnswerSchema(qs []ports.Question) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		properties[q.ID] = prop
+		if i > 0 {
+			properties.WriteByte(',')
+		}
+		key, err := json.Marshal(q.ID)
+		if err != nil {
+			return nil, err
+		}
+		value, err := json.Marshal(prop)
+		if err != nil {
+			return nil, err
+		}
+		properties.Write(key)
+		properties.WriteByte(':')
+		properties.Write(value)
+
 		required = append(required, q.ID)
 	}
+	properties.WriteByte('}')
 
-	schema := map[string]any{
-		"type":                 "object",
-		"properties":           properties,
-		"required":             required,
-		"additionalProperties": false,
+	requiredJSON, err := json.Marshal(required)
+	if err != nil {
+		return nil, err
 	}
-	return json.Marshal(schema)
+
+	var out bytes.Buffer
+	out.WriteString(`{"type":"object","properties":`)
+	out.Write(properties.Bytes())
+	out.WriteString(`,"required":`)
+	out.Write(requiredJSON)
+	out.WriteString(`,"additionalProperties":false}`)
+	return out.Bytes(), nil
 }
 
 // validateQuestion reports an error for an empty id or one already seen.
@@ -105,16 +138,23 @@ type optionString struct {
 // validateOptionSet rejects a question whose effective options and forms
 // (classesFor(q, options): q.Forms, plus the noul defaults where they
 // apply) cannot be told apart by a prefix-matching reader: two different
-// options sharing an identical string, or one option's string being a
-// proper prefix of another option's string. Both would let an exact or
-// prefix match at read time silently resolve to the wrong option.
+// options sharing an identical string, one option's string being a proper
+// prefix of another option's string, or two different options' strings
+// starting with the same character. All three would let an exact or prefix
+// match at read time silently resolve to the wrong option; the third is the
+// general case of the first two, since any shared prefix or shared string
+// implies a shared first character, and a single-character token is always
+// a valid prefix to match against.
 func validateOptionSet(q ports.Question, options []string) error {
 	strs := optionStrings(classesFor(q, options))
 
 	if err := rejectSharedForm(q, strs); err != nil {
 		return err
 	}
-	return rejectPrefixCollision(q, strs)
+	if err := rejectPrefixCollision(q, strs); err != nil {
+		return err
+	}
+	return rejectSharedInitial(q, strs)
 }
 
 // optionStrings flattens classes into one optionString per (option, form)
@@ -158,4 +198,36 @@ func rejectPrefixCollision(q ports.Question, strs []optionString) error {
 		}
 	}
 	return nil
+}
+
+// rejectSharedInitial errors when two different options in strs have a
+// string starting with the same character, compared case-insensitively
+// after strings.TrimSpace, naming the question and both options. A
+// truncated answer token is always at least one character long, and that
+// character alone is a prefix of every string sharing it — so two options
+// sharing a first character can always be made ambiguous by some
+// truncation, regardless of how the rest of their strings differ.
+func rejectSharedInitial(q ports.Question, strs []optionString) error {
+	seen := make(map[rune]string, len(strs))
+	for _, s := range strs {
+		trimmed := strings.TrimSpace(s.text)
+		if trimmed == "" {
+			continue
+		}
+		initial := firstRuneLower(trimmed)
+		owner, ok := seen[initial]
+		if ok && owner != s.option {
+			return fmt.Errorf("judge: question %q: options %q and %q share a first character; give each option a distinct initial", q.ID, owner, s.option)
+		}
+		seen[initial] = s.option
+	}
+	return nil
+}
+
+// firstRuneLower returns s's first rune, lower-cased.
+func firstRuneLower(s string) rune {
+	for _, r := range s {
+		return unicode.ToLower(r)
+	}
+	return 0
 }

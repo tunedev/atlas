@@ -67,7 +67,20 @@ type judgementDoc struct {
 	When      string              `json:"when"`
 	Questions []judgementQuestion `json:"questions"`
 	Answers   []judgementAnswer   `json:"answers"`
-	Outcome   any                 `json:"outcome"`
+
+	Fingerprint string       `json:"fingerprint,omitempty"`
+	Rules       []RuleResult `json:"rules,omitempty"`
+
+	Outcome any `json:"outcome"`
+}
+
+// Assessed is what a board run adds to a judgement: the fingerprint it is
+// found by, the verdict it was assessed to, and the rules checked against
+// its subject.
+type Assessed struct {
+	Fingerprint string
+	Verdict     string
+	Rules       []RuleResult
 }
 
 // RecordJudgement writes j as a document under the subject it judged and
@@ -77,10 +90,18 @@ type judgementDoc struct {
 // Upsert after a successful Put still returns the path, since the document
 // is already recorded and the index can be rebuilt from it.
 func RecordJudgement(ctx context.Context, docs ports.Docs, index ports.Index, subjectID string, qs []ports.Question, j ports.Judgement) (string, error) {
+	return RecordAssessedJudgement(ctx, docs, index, subjectID, qs, j, Assessed{})
+}
+
+// RecordAssessedJudgement writes j with a's fingerprint, verdict and rule
+// results, and indexes it under all three so a later run can find it by
+// fingerprint and a reader can list judgements by verdict or tripped rule.
+// With a zero Assessed it records exactly what RecordJudgement always has.
+func RecordAssessedJudgement(ctx context.Context, docs ports.Docs, index ports.Index, subjectID string, qs []ports.Question, j ports.Judgement, a Assessed) (string, error) {
 	if subjectID == "" {
 		return "", errors.New("judgement: subject id is empty")
 	}
-	if err := checkSubjectID(subjectID); err != nil {
+	if err := CheckSubjectID(subjectID); err != nil {
 		return "", fmt.Errorf("judgement: %w", err)
 	}
 	if len(j.Answers) == 0 {
@@ -88,7 +109,7 @@ func RecordJudgement(ctx context.Context, docs ports.Docs, index ports.Index, su
 	}
 
 	path := judgementPath(subjectID, j)
-	body, err := json.MarshalIndent(judgementDocFor(subjectID, qs, j), "", "  ")
+	body, err := json.MarshalIndent(judgementDocFor(subjectID, qs, j, a), "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("judgement: encode: %w", err)
 	}
@@ -98,7 +119,7 @@ func RecordJudgement(ctx context.Context, docs ports.Docs, index ports.Index, su
 		Body:    body,
 		Message: "Record judgement for " + subjectID,
 		Kind:    "judgement",
-		Fields:  judgementFields(subjectID, qs, j),
+		Fields:  judgementFields(subjectID, qs, j, a),
 		When:    j.When,
 	})
 	if err != nil {
@@ -120,7 +141,7 @@ func judgementPath(subjectID string, j ports.Judgement) string {
 }
 
 // judgementDocFor builds the document body for a judgement of subjectID.
-func judgementDocFor(subjectID string, qs []ports.Question, j ports.Judgement) judgementDoc {
+func judgementDocFor(subjectID string, qs []ports.Question, j ports.Judgement, a Assessed) judgementDoc {
 	questions := make([]judgementQuestion, len(qs))
 	for i, q := range qs {
 		questions[i] = judgementQuestion{ID: q.ID, Kind: string(q.Kind), Ask: q.Ask, Options: q.Options}
@@ -151,10 +172,12 @@ func judgementDocFor(subjectID string, qs []ports.Question, j ports.Judgement) j
 			TopLogProbs: j.Sampling.TopLogProbs,
 			MaxTokens:   j.Sampling.MaxTokens,
 		},
-		When:      j.When.UTC().Format(recordDocTimeFormat),
-		Questions: questions,
-		Answers:   answers,
-		Outcome:   nil,
+		When:        j.When.UTC().Format(recordDocTimeFormat),
+		Questions:   questions,
+		Answers:     answers,
+		Fingerprint: a.Fingerprint,
+		Rules:       a.Rules,
+		Outcome:     nil,
 	}
 }
 
@@ -170,14 +193,20 @@ func judgementAlternatives(alts []ports.Alternative) []judgementAlternative {
 
 // judgementFields is the flat index fields for a judgement; the
 // distribution stays in the document alone.
-func judgementFields(subjectID string, qs []ports.Question, j ports.Judgement) map[string]string {
-	return map[string]string{
+func judgementFields(subjectID string, qs []ports.Question, j ports.Judgement, a Assessed) map[string]string {
+	fields := map[string]string{
 		"subject_id": subjectID,
 		"model":      j.Model,
 		"provider":   j.Provider,
 		"questions":  questionIDs(qs),
 		"outcome":    "pending",
 	}
+	if a.Fingerprint != "" {
+		fields["fingerprint"] = a.Fingerprint
+		fields["verdict"] = a.Verdict
+		fields["tripped"] = trippedIDs(a.Rules)
+	}
+	return fields
 }
 
 // questionIDs joins qs's ids with a comma, in order.
@@ -187,4 +216,49 @@ func questionIDs(qs []ports.Question) string {
 		ids[i] = q.ID
 	}
 	return strings.Join(ids, ",")
+}
+
+// trippedIDs joins the ids of the tripped rules with a comma, in order.
+func trippedIDs(results []RuleResult) string {
+	var ids []string
+	for _, r := range results {
+		if r.State == RuleTripped {
+			ids = append(ids, r.ID)
+		}
+	}
+	return strings.Join(ids, ",")
+}
+
+// StoredJudgement is a recorded judgement as a later run reuses it: whom it
+// was about, its answers, and the rules it was checked against.
+type StoredJudgement struct {
+	SubjectID string
+	Answers   []ports.Answer
+	Rules     []RuleResult
+}
+
+// ReadJudgement reads the judgement document at path back into answers and
+// rule results.
+func ReadJudgement(ctx context.Context, docs ports.Docs, path string) (StoredJudgement, error) {
+	body, err := docs.Get(ctx, path)
+	if err != nil {
+		return StoredJudgement{}, fmt.Errorf("judgement: read %s: %w", path, err)
+	}
+	var doc judgementDoc
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return StoredJudgement{}, fmt.Errorf("judgement: decode %s: %w", path, err)
+	}
+	answers := make([]ports.Answer, len(doc.Answers))
+	for i, a := range doc.Answers {
+		answers[i] = ports.Answer{
+			ID:           a.ID,
+			Kind:         ports.Kind(a.Kind),
+			Chosen:       a.Chosen,
+			Distribution: a.Distribution,
+			Expected:     a.Expected,
+			Confidence:   a.Confidence,
+			Coverage:     ports.Coverage{Represented: a.Coverage.Represented, Declared: a.Coverage.Declared},
+		}
+	}
+	return StoredJudgement{SubjectID: doc.SubjectID, Answers: answers, Rules: doc.Rules}, nil
 }

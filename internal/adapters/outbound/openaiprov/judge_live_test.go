@@ -31,9 +31,9 @@ func liveJudgeQuestions() []ports.Question {
 	return []ports.Question{
 		{ID: "clear", Kind: ports.KindNoul, Ask: "Is the sky clear in this report?"},
 		{ID: "warmth", Kind: ports.KindScore, Ask: "How warm is the weather described?",
-			Options: []string{"cold", "cool", "warm", "hot"}},
+			Options: []string{"freezing", "cool", "warm", "hot"}},
 		{ID: "sky", Kind: ports.KindChoice, Ask: "What is the dominant color of the sky described?",
-			Options: []string{"blue", "grey", "gold", "pink"}},
+			Options: []string{"blue", "grey", "amber", "pink"}},
 	}
 }
 
@@ -112,5 +112,49 @@ func TestJudgeAgainstALiveEngine(t *testing.T) {
 	if !slices.Contains(qs[2].Options, sky.Chosen) {
 		t.Errorf("sky chosen = %q, want one of %v even though the subject asked for %q",
 			sky.Chosen, qs[2].Options, "kaleidoscope")
+	}
+}
+
+// liveRecipe is a neutral subject whose main ingredient is plain from the
+// text, so a choice question about it has an obvious answer.
+const liveRecipe = `A recipe for a weeknight risotto: arborio rice toasted in butter, a
+splash of white wine, then hot stock added a ladle at a time for twenty
+minutes, finished with parmesan.`
+
+// TestAChoiceQuestionIsCoveredOnALiveEngine is the regression for a prompt
+// that never named a question's options: the engine's alternatives at the
+// answer then carried its own words and none of the options, so coverage
+// read 0 while the schema forced a confident-looking answer.
+func TestAChoiceQuestionIsCoveredOnALiveEngine(t *testing.T) {
+	if os.Getenv("ATLAS_LIVE_PROVIDER") == "" {
+		t.Skip("ATLAS_LIVE_PROVIDER not set")
+	}
+	baseURL := os.Getenv("ATLAS_LIVE_BASE_URL")
+	if baseURL == "" {
+		baseURL = "http://localhost:11434/v1"
+	}
+	model := os.Getenv("ATLAS_LIVE_MODEL")
+	if model == "" {
+		model = "qwen2.5-coder:7b"
+	}
+	provider := openaiprov.New(openaiprov.Config{
+		Name: "live", BaseURL: baseURL, Model: model,
+		Timeout: 3 * time.Minute, MaxBytes: 10 << 20,
+	})
+	judge := app.NewJudge(provider, app.JudgeConfig{Temperature: 0, Seed: 7, TopLogProbs: 5, MaxTokens: 200})
+
+	q := ports.Question{
+		ID: "ingredient", Kind: ports.KindChoice,
+		Ask:     "What is the main ingredient of this dish?",
+		Options: []string{"rice", "pasta", "bread", "noodles", "other"},
+	}
+	got, err := judge.Ask(context.Background(), liveRecipe, []ports.Question{q})
+	if err != nil {
+		t.Fatalf("live ask: %v", err)
+	}
+	a := got.Answers[0]
+	t.Logf("chosen=%q coverage=%d/%d confidence=%.2f alternatives=%v", a.Chosen, a.Coverage.Represented, a.Coverage.Declared, a.Confidence, a.Alternatives)
+	if a.Coverage.Represented == 0 {
+		t.Errorf("coverage 0 of %d: the engine's alternatives named none of the options", a.Coverage.Declared)
 	}
 }

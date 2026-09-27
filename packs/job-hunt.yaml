@@ -1,30 +1,37 @@
+# Scores every open role on one board against the candidate. Each role gets
+# apply, reach or skip, reasons from the same call, and every deal-breaker
+# named as tripped, clear or unknown. A role already judged with the same
+# text, questions, rules and model is reused, not asked again.
+#
+# The deal-breaker named in the profile text above is only informed context
+# for the model; it is checked as a rule, and reported tripped, clear or
+# unknown, only when -var rules=profile/dealbreakers.json is passed.
+#   atlas -pack packs/job-hunt.yaml -var board=gitlab -var rules=profile/dealbreakers.json
 name: job-hunt
 vars:
   board: gitlab
-  profile: "Backend engineer. Go, distributed systems, Kubernetes, Postgres, OpenTelemetry."
+  profile: "Backend engineer. Go, distributed systems, Kubernetes, Postgres, OpenTelemetry. Goals: senior backend role, systems with real scale, staying hands-on. Deal-breakers: no on-call or pager rotation."
+  rules: ""
 
 steps:
-  - id: role
-    tool: source.pull
+  - id: board
+    tool: judge.each
     with:
       prefix: "postings/greenhouse/{{ .vars.board }}"
       match: status=open
-      select: items.0
-
-  - id: judged
-    tool: judge.ask
-    with:
-      subject_id: "{{ .steps.role.id }}"
+      subject_id: '[[ replace .item.id "/" ":" ]]'
       subject: |
         Candidate: {{ .vars.profile }}
 
-        Role: {{ .steps.role.title }} at {{ .steps.role.company }}
+        Role: [[ .item.title ]] at [[ .item.company ]]
 
-        {{ .steps.role.description_text }}
+        [[ .item.description_text ]]
+      verdict: verdict
       questions: |
-        - id: stretch
-          type: noul
-          ask: Is this role a stretch for the candidate?
+        - id: verdict
+          type: choice
+          options: [apply, reach, skip]
+          ask: Should the candidate apply, treat it as a reach, or skip it?
         - id: seniority
           type: score
           levels: [junior, mid, senior, principal]
@@ -33,37 +40,6 @@ steps:
           type: choice
           options: [backend, frontend, platform, data, other]
           ask: What is the main focus of this role?
-
-  - id: verdict
-    tool: model.complete
-    with:
-      expect: json
-      system: |
-        You judge whether a job advertisement suits a candidate.
-        Reply with JSON only: {"decision":"apply|stretch|skip","reasons":["...","..."]}
-        decision must be exactly one of apply, stretch, or skip.
-        reasons must be short and specific to this role and this candidate.
-      user: |
-        Candidate: {{ .vars.profile }}
-
-        Role: {{ .steps.role.title }} at {{ .steps.role.company }}
-        Location: {{ .steps.role.location }}
-
-        {{ .steps.role.description_text }}
-
-  - id: documents
-    tool: model.complete
-    with:
-      system: |
-        You draft application documents.
-        Output exactly two sections separated by a line containing only ---
-        Section one is a tailored CV. Section two is a letter of application.
-        Use only facts given about the candidate. State a gap plainly rather
-        than inventing experience.
-      user: |
-        Candidate: {{ .vars.profile }}
-        Verdict was {{ .steps.verdict.decision }}.
-
-        Role: {{ .steps.role.title }} at {{ .steps.role.company }}
-
-        {{ .steps.role.description_text }}
+      rules: "{{ .vars.rules }}"
+      rule_fields: |
+        salary-floor: compensation.min

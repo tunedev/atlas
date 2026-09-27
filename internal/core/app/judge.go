@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
@@ -17,11 +18,14 @@ const judgeSystemMessage = "Answer every field in the schema. Each field's value
 // JudgeConfig pins how a Judge samples: a fixed temperature and seed so
 // repeated runs over the same subject answer the same way, TopLogProbs many
 // alternatives per token to sum mass from, and MaxTokens bounding the reply.
+// ContextTokens, when above zero, is the engine's context size: a completion
+// whose prompt reached it may have been truncated and is refused.
 type JudgeConfig struct {
-	Temperature float64
-	Seed        int
-	TopLogProbs int
-	MaxTokens   int
+	Temperature   float64
+	Seed          int
+	TopLogProbs   int
+	MaxTokens     int
+	ContextTokens int
 }
 
 // Judge answers every question about a subject in one call to a Provider,
@@ -48,6 +52,10 @@ func (j *Judge) Ask(ctx context.Context, subject string, qs []ports.Question) (p
 	completion, err := j.provider.Complete(ctx, j.promptFor(subject, qs, schema))
 	if err != nil {
 		return ports.Judgement{}, fmt.Errorf("judge: %w", err)
+	}
+
+	if j.cfg.ContextTokens > 0 && completion.Usage.PromptTokens >= j.cfg.ContextTokens {
+		return ports.Judgement{}, fmt.Errorf("judge: prompt may be truncated: %d prompt tokens reached the %d-token context", completion.Usage.PromptTokens, j.cfg.ContextTokens)
 	}
 
 	tokens, err := AnswerTokens(completion, idsOf(qs))
@@ -92,19 +100,37 @@ func (j *Judge) promptFor(subject string, qs []ports.Question, schema []byte) po
 	}
 }
 
-// promptUserMessage names the subject, then every question's id and text.
+// promptUserMessage names the subject, then every question's id, text and
+// options. The options must be in the text: the alternatives an answer's
+// mass is read from are the engine's distribution before the schema's
+// grammar applies, so an engine never told the options answers in its own
+// words and none of them is represented.
 func promptUserMessage(subject string, qs []ports.Question) string {
 	var sb strings.Builder
 	sb.WriteString("Subject: ")
 	sb.WriteString(subject)
 	sb.WriteString("\n\n")
 	for _, q := range qs {
-		sb.WriteString(q.ID)
-		sb.WriteString(": ")
-		sb.WriteString(q.Ask)
-		sb.WriteString("\n")
+		fmt.Fprintf(&sb, "%s: %s (one of: %s)\n", q.ID, q.Ask, strings.Join(OptionsFor(q), ", "))
 	}
 	return sb.String()
+}
+
+// JudgeRequest returns exactly what a call to Ask sends the provider about
+// subject and qs: the system message, the user message built by
+// promptUserMessage, and the schema built by AnswerSchema. Two calls with
+// equal subject and qs return byte-identical results, so Fingerprint can
+// hash this to detect a changed prompt or schema.
+func JudgeRequest(subject string, qs []ports.Question) ([]byte, error) {
+	schema, err := AnswerSchema(qs)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(struct {
+		System string
+		User   string
+		Schema json.RawMessage
+	}{judgeSystemMessage, promptUserMessage(subject, qs), schema})
 }
 
 // idsOf returns qs's question ids, in order.

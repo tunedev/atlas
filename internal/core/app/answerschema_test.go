@@ -136,14 +136,13 @@ func TestTwoOptionsSharingAFormIsRejected(t *testing.T) {
 }
 
 // TestShippedPackOptionSetsPassValidation proves the new guard does not
-// reject the option sets a shipped pack and the live judge test actually
-// ask with.
+// reject the option sets a shipped pack's own choice question, and the live
+// judge test's own choice and score questions, actually ask with.
 func TestShippedPackOptionSetsPassValidation(t *testing.T) {
 	qs := []ports.Question{
-		{ID: "seniority", Kind: ports.KindScore, Ask: "?", Options: []string{"junior", "mid", "senior", "staff"}},
 		{ID: "focus", Kind: ports.KindChoice, Ask: "?", Options: []string{"backend", "frontend", "platform", "data", "other"}},
-		{ID: "warmth", Kind: ports.KindScore, Ask: "?", Options: []string{"cold", "cool", "warm", "hot"}},
-		{ID: "sky", Kind: ports.KindChoice, Ask: "?", Options: []string{"blue", "grey", "gold", "pink"}},
+		{ID: "warmth", Kind: ports.KindScore, Ask: "?", Options: []string{"freezing", "cool", "warm", "hot"}},
+		{ID: "sky", Kind: ports.KindChoice, Ask: "?", Options: []string{"blue", "grey", "amber", "pink"}},
 	}
 	if _, err := app.AnswerSchema(qs); err != nil {
 		t.Fatalf("a shipped pack's own option set was rejected: %v", err)
@@ -156,5 +155,87 @@ func TestNoulDefaultsPassValidation(t *testing.T) {
 	qs := []ports.Question{{ID: "clear", Kind: ports.KindNoul, Ask: "?"}}
 	if _, err := app.AnswerSchema(qs); err != nil {
 		t.Fatalf("the noul defaults were rejected: %v", err)
+	}
+}
+
+// TestAnOptionSetSharingAFirstCharacterIsRejected covers the root cause a
+// live engine exposed: "cold" and "cool" are not a prefix relation nor a
+// shared form, so the older checks let them through, but any single
+// truncated character ("c") is still a prefix of both. Naming a question's
+// options in its prompt (docs/design/the-judge.md) makes the engine more
+// likely to emit exactly such a truncation as a low-probability
+// alternative, so the option set itself must be rejected up front rather
+// than left for a live call to discover at random.
+func TestAnOptionSetSharingAFirstCharacterIsRejected(t *testing.T) {
+	qs := []ports.Question{{
+		ID: "warmth", Kind: ports.KindScore, Ask: "?",
+		Options: []string{"cold", "cool", "warm"},
+	}}
+	_, err := app.AnswerSchema(qs)
+	if err == nil {
+		t.Fatal("an option set where two options share a first character produced a schema")
+	}
+	if !strings.Contains(err.Error(), "warmth") {
+		t.Errorf("error does not name the question: %v", err)
+	}
+	if !strings.Contains(err.Error(), "cold") || !strings.Contains(err.Error(), "cool") {
+		t.Errorf("error does not name both colliding options: %v", err)
+	}
+}
+
+// TestDistinctInitialOptionSetsPassValidation proves the new guard leaves a
+// noul's own defaults and an ordinary distinct-initial option set alone.
+func TestDistinctInitialOptionSetsPassValidation(t *testing.T) {
+	qs := []ports.Question{
+		{ID: "clear", Kind: ports.KindNoul, Ask: "?"},
+		{ID: "length", Kind: ports.KindScore, Ask: "?", Options: []string{"short", "medium", "long"}},
+	}
+	if _, err := app.AnswerSchema(qs); err != nil {
+		t.Fatalf("distinct-initial option sets were rejected: %v", err)
+	}
+}
+
+// TestPropertiesAndRequiredAppearInDeclaredOrder proves the schema's
+// property keys and required entries follow the order questions were
+// given, not alphabetical order: a model whose grammar walks the fields in
+// schema order answers zeta before alpha before mid, and each answer can
+// then only depend on the ones before it. zeta, alpha and mid are chosen
+// because alphabetical order would move zeta last.
+func TestPropertiesAndRequiredAppearInDeclaredOrder(t *testing.T) {
+	qs := []ports.Question{
+		{ID: "zeta", Kind: ports.KindChoice, Ask: "?", Options: []string{"y", "n"}},
+		{ID: "alpha", Kind: ports.KindChoice, Ask: "?", Options: []string{"y", "n"}},
+		{ID: "mid", Kind: ports.KindChoice, Ask: "?", Options: []string{"y", "n"}},
+	}
+	b, err := app.AnswerSchema(qs)
+	if err != nil {
+		t.Fatalf("schema: %v", err)
+	}
+	s := string(b)
+
+	propsStart := strings.Index(s, `"properties"`)
+	reqStart := strings.Index(s, `"required"`)
+	if propsStart == -1 || reqStart == -1 {
+		t.Fatalf("schema is missing properties or required: %s", s)
+	}
+
+	zetaProp := strings.Index(s[propsStart:], `"zeta"`)
+	alphaProp := strings.Index(s[propsStart:], `"alpha"`)
+	midProp := strings.Index(s[propsStart:], `"mid"`)
+	if zetaProp == -1 || alphaProp == -1 || midProp == -1 {
+		t.Fatalf("a property key is missing: %s", s)
+	}
+	if !(zetaProp < alphaProp && alphaProp < midProp) {
+		t.Errorf("properties are not in declared order zeta, alpha, mid: %s", s)
+	}
+
+	zetaReq := strings.Index(s[reqStart:], `"zeta"`)
+	alphaReq := strings.Index(s[reqStart:], `"alpha"`)
+	midReq := strings.Index(s[reqStart:], `"mid"`)
+	if zetaReq == -1 || alphaReq == -1 || midReq == -1 {
+		t.Fatalf("a required entry is missing: %s", s)
+	}
+	if !(zetaReq < alphaReq && alphaReq < midReq) {
+		t.Errorf("required is not in declared order zeta, alpha, mid: %s", s)
 	}
 }

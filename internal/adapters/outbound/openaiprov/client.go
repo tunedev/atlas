@@ -109,7 +109,10 @@ func (c *Client) Complete(ctx context.Context, p ports.Prompt) (ports.Completion
 }
 
 // buildRequest maps a Prompt onto the wire request, adding logprobs and a
-// JSON schema only when the prompt asks for them.
+// JSON schema only when the prompt asks for them. p.Schema is sent to the
+// engine verbatim, byte for byte, never decoded and re-marshalled, since
+// decoding it into a Go map and marshalling it back would sort its
+// "properties" keys alphabetically.
 func (c *Client) buildRequest(p ports.Prompt) ([]byte, error) {
 	req := chatRequest{
 		Model:       c.model,
@@ -125,16 +128,15 @@ func (c *Client) buildRequest(p ports.Prompt) ([]byte, error) {
 	}
 
 	if len(p.Schema) > 0 {
-		var schema map[string]any
-		if err := json.Unmarshal(p.Schema, &schema); err != nil {
-			return nil, fmt.Errorf("openaiprov: schema: %w", err)
+		if !json.Valid(p.Schema) {
+			return nil, fmt.Errorf("openaiprov: schema: not valid json")
 		}
 		req.ResponseFormat = &responseFormat{
 			Type: "json_schema",
 			JSONSchema: &namedSchema{
 				Name:   "response",
 				Strict: true,
-				Schema: schema,
+				Schema: json.RawMessage(p.Schema),
 			},
 		}
 	}
