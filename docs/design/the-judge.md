@@ -242,11 +242,14 @@ in `internal/core/app`.
   two-of-five distribution likewise now reports `Coverage: {2, 5}` rather
   than looking as resolved as a five-of-five one.
 
-  What remains open: the numbers are recorded, in both the judgement
-  document and the tool result, and nothing yet acts on them. No caller
-  rejects a thin-coverage answer or treats a low `Confidence` differently —
-  that judgment call belongs to whatever reads the record later (epic 11),
-  now that it has the numbers to make it with.
+  The numbers are recorded, in both the judgement document and the tool
+  result, and one caller now reads `Coverage`: `app.Calibrate`
+  (`judge.calibrate`) excludes an answer whose `Coverage.Represented` is zero
+  from a calibration run and counts it as `zero_coverage`, since a
+  probability that never measured real competition among the options should
+  not be scored as if it had. Nothing gates or rejects on coverage or
+  confidence at judgement time itself — `judge.ask` records both numbers and
+  writes whatever answer the schema produced regardless of either one.
 
   A purpose-built classifier (`receptron/laya`, a decision head over a
   ModernBERT encoder) was measured against this exact failure and does not
@@ -277,3 +280,9 @@ in `internal/core/app`.
   with more than one answer field; the answer-token rule's "first content
   token of the field's value" is defined for a single scalar value; it does
   not yet have a definition for a value that is itself an array or object.
+- An index rebuild (`app.Rebuild`) stamps a row's `When` from the document's
+  newest revision, while `AttachOutcome` keeps the judgement's own time. A
+  judgement row rebuilt after an outcome was attached would therefore show
+  the attach time, not the judgement time the row otherwise carries. No
+  judgement extractor exists yet, so `Rebuild` does not reach judgement rows
+  today.
