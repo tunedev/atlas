@@ -960,10 +960,13 @@ func TestServeStopsWithARunInFlight(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer stream.Close()
-	for stream.Receive() {
-		if step := stream.Msg().GetStep(); step != nil && step.StepId == "held" {
-			break
-		}
+	held := false
+	for !held && stream.Receive() {
+		step := stream.Msg().GetStep()
+		held = step != nil && step.StepId == "held"
+	}
+	if !held {
+		t.Fatalf("the run ended before its held step started: %v", stream.Err())
 	}
 
 	start := time.Now()
