@@ -1,0 +1,22 @@
+# Appends one rule to the policy and commits it, naming the decisions it
+# came from. Run policy-suggest.yaml first and pass one candidate's rule and
+# evidence:
+#   atlas -pack packs/policy-suggest.yaml
+#   atlas -pack packs/policy-promote.yaml \
+#     -var rule='{"id":"deny-when-verdict-skip","decision":"deny","when":[{"field":"verdict","op":"==","value":"skip"}]}' \
+#     -var evidence="subj-a, subj-b, subj-c"
+# The rule is checked with the parser policy.decide uses; nothing is written
+# if the resulting policy would not load.
+name: policy-promote
+vars:
+  rule: ""
+  evidence: ""
+  policy: profile/policy.json
+
+steps:
+  - id: add
+    tool: policy.add
+    with:
+      policy: "{{ .vars.policy }}"
+      rule: "{{ .vars.rule }}"
+      evidence: "{{ .vars.evidence }}"

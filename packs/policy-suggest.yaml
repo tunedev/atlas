@@ -1,0 +1,17 @@
+# Proposes policy rules from repeated apply and skip decisions, grouped by
+# the verdict each decision followed. Writes nothing. Only the choices
+# listed below count: job-hunt.yaml's automatic skips are recorded as
+# policy_skip and are ignored. Promote a candidate with policy-promote.yaml.
+#   atlas -pack packs/policy-suggest.yaml [-var min_repeats=3]
+name: policy-suggest
+vars:
+  min_repeats: "3"
+
+steps:
+  - id: suggest
+    tool: policy.suggest
+    with:
+      choices: |
+        apply: allow
+        skip: deny
+      min_repeats: "{{ .vars.min_repeats }}"

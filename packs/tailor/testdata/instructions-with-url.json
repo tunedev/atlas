@@ -1,0 +1,24 @@
+{
+  "template": "instructions.typ",
+  "data": {
+    "url": "https://boards.example.invalid/lamplight/101",
+    "subject_id": "lamplight:101",
+    "files": ["cv.pdf", "letter.pdf"],
+    "answers": [
+      {"item": "Can you trim a wick?", "sentences": [
+        {"text": "I trimmed the wicks nightly.", "citations": [{"quote": "trimmed the wicks"}], "gap": false},
+        {"text": "I invented the lens.", "citations": [], "gap": true}
+      ]},
+      {"item": "Can you read a chart?", "sentences": [{"text": "", "citations": [], "gap": true}]}
+    ],
+    "gaps": ["keeps a fog log", "I invented the lens."]
+  },
+  "expect": [
+    "https://boards.example.invalid/lamplight/101",
+    "cv.pdf", "letter.pdf",
+    "Answers to paste", "Can you trim a wick?", "I trimmed the wicks nightly.",
+    "keeps a fog log",
+    "atlas -pack packs/sent.yaml -var subject_id=lamplight:101"
+  ],
+  "absent": ["No link in the record", "Can you read a chart?", "The review sheet lists no gaps"]
+}

@@ -1,0 +1,31 @@
+{
+  "pack": "packs/job-hunt.yaml",
+  "vars": {"board": "lamplight", "rules": "profile/dealbreakers.json", "policy": "profile/policy.json"},
+  "children": {"packs/tailor.yaml": "cmd/atlas/testdata/apply-loop/draft.yaml"},
+  "docs": {
+    "profile/dealbreakers.json": {"rules": [
+      {"id": "salary-floor", "statement": "Base salary must be at least 100,000.", "kind": "comparable", "op": ">=", "value": 100000}
+    ]},
+    "profile/policy.json": {"rules": [
+      {"id": "strong-fit", "decision": "allow",
+       "when": [{"field": "verdict", "op": "==", "value": "apply"}, {"field": "p", "op": ">=", "value": 0.7}]}
+    ]}
+  },
+  "items": [
+    {"id": "postings/greenhouse/lamplight/101", "body": {"id": "greenhouse/lamplight/101", "title": "Keeper of the Northern Light", "company": "Lamplight Co", "url": "https://boards.example.invalid/lamplight/101", "description_text": "Keep the northern lamp lit.", "status": "open", "compensation": {"min": 160000}}},
+    {"id": "postings/greenhouse/lamplight/102", "body": {"id": "greenhouse/lamplight/102", "title": "Fog Signal Operator", "company": "Lamplight Co", "url": "https://boards.example.invalid/lamplight/102", "description_text": "Sound the horn in fog.", "status": "open", "compensation": {"min": 60000}}},
+    {"id": "postings/greenhouse/lamplight/103", "body": {"id": "greenhouse/lamplight/103", "title": "Lens Polisher", "company": "Lamplight Co", "url": "https://boards.example.invalid/lamplight/103", "description_text": "Polish the Fresnel lens.", "status": "open", "compensation": {"min": 70000}}},
+    {"id": "postings/greenhouse/lamplight/104", "body": {"id": "greenhouse/lamplight/104", "title": "Harbour Pilot", "company": "Lamplight Co", "url": "https://boards.example.invalid/lamplight/104", "description_text": "Guide ships to the quay.", "status": "open", "compensation": {"min": 170000}}},
+    {"id": "postings/greenhouse/lamplight/105", "body": {"id": "greenhouse/lamplight/105", "title": "Tide Clerk", "company": "Lamplight Co", "url": "https://boards.example.invalid/lamplight/105", "description_text": "Log the tides.", "status": "open", "compensation": {"min": 150000}}}
+  ],
+  "verdicts": {"Keeper": "apply", "Fog Signal": "apply", "Lens Polisher": "apply", "Harbour Pilot": "reach"},
+  "expect": {
+    "greenhouse:lamplight:101": {"stage": "drafted", "decisions": []},
+    "greenhouse:lamplight:102": {"stage": "not_applied", "decisions": ["policy_skip"]},
+    "greenhouse:lamplight:103": {"stage": "not_applied", "decisions": ["policy_skip"]},
+    "greenhouse:lamplight:104": {"stage": "", "decisions": []},
+    "greenhouse:lamplight:105": {"stage": "", "decisions": []}
+  },
+  "suggest": {"pack": "packs/policy-suggest.yaml", "vars": {"min_repeats": "2"}},
+  "declare": {"pack": "packs/sent.yaml", "vars": {"subject_id": "greenhouse:lamplight:101"}, "stage": "sent"}
+}

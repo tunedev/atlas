@@ -1,0 +1,19 @@
+# Declares that the user sent an application: the sent stage, whose sent_at
+# is the clock follow-up is measured from. Omit when to mean now; a
+# backdated when is accepted, but never earlier than the current stage.
+#   atlas -pack packs/sent.yaml -var subject_id=<id> [-var when=2026-09-28T09:00:00Z]
+name: sent
+vars:
+  subject_id: ""
+  when: ""
+  note: ""
+
+steps:
+  - id: sent
+    tool: stage.declare
+    with:
+      subject_id: "{{ .vars.subject_id }}"
+      stage: sent
+      when: "{{ .vars.when }}"
+      note: "{{ .vars.note }}"
+      declared_by: user
