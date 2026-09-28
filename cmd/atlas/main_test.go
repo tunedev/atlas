@@ -1,23 +1,36 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
+	"net/http"
+	"net/http/cookiejar"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
+
+	"github.com/tunedev/atlas/internal/adapters/inbound/web"
+	"github.com/tunedev/atlas/internal/adapters/inbound/web/uiv1"
 	"github.com/tunedev/atlas/internal/adapters/outbound/crawlsource"
 	"github.com/tunedev/atlas/internal/adapters/outbound/feedsource"
 	"github.com/tunedev/atlas/internal/adapters/outbound/gitdocs"
 	"github.com/tunedev/atlas/internal/adapters/outbound/sqlindex"
 	"github.com/tunedev/atlas/internal/config"
+	"github.com/tunedev/atlas/internal/core/app"
 	"github.com/tunedev/atlas/internal/core/domain"
 	"github.com/tunedev/atlas/internal/core/ports"
 )
@@ -507,5 +520,269 @@ func TestBuildRegistryReportsModelToolNames(t *testing.T) {
 	got := slices.Sorted(slices.Values(names))
 	if !slices.Equal(got, want) {
 		t.Errorf("model tools = %v, want %v", got, want)
+	}
+}
+
+// decisionsView is a view whose screen lists decision rows and whose action
+// records one through the repo's decide pack, reached at decidePath.
+const decisionsView = `title: Decisions
+discloses: [decision notes]
+screens:
+  - id: days
+    title: Days
+    params: [subject]
+    run: decisions.yaml
+    show:
+      - table:
+          from: rows
+          columns: [path]
+    actions:
+      - label: Record
+        run: %s
+        input:
+          - name: reason
+            text: true
+        vars:
+          subject_id: param.subject
+          choice: const.apply
+          reason: input.reason
+`
+
+const decisionsPack = `name: decisions
+steps:
+  - id: rows
+    tool: index.find
+    with:
+      kind: decision
+`
+
+// writeDecisionsView writes the decisions view and its screen pack into a
+// temp dir and returns the view's path.
+func writeDecisionsView(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	decide, err := filepath.Abs(filepath.Join("..", "..", "packs", "decide.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel, err := filepath.Rel(dir, decide)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := filepath.Join(dir, "decisions.ui.yaml")
+	if err := os.WriteFile(view, []byte(fmt.Sprintf(decisionsView, rel)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "decisions.yaml"), []byte(decisionsPack), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return view
+}
+
+// serveConfig is a -serve config over a fresh store, with the model at
+// modelURL.
+func serveConfig(t *testing.T, modelURL string) config.Config {
+	t.Helper()
+	cfg := config.Config{}
+	cfg.Store.Root = t.TempDir()
+	cfg.Store.IndexPath = filepath.Join(t.TempDir(), "index.db")
+	cfg.Model.BaseURL = modelURL
+	cfg.Model.Name = "a-model"
+	cfg.Model.Timeout = time.Second
+	cfg.Model.MaxBytes = 1 << 20
+	cfg.Pack.FileMaxBytes = 1 << 20
+	cfg.Web.Serve = true
+	cfg.Web.Addr = "127.0.0.1:0"
+	cfg.Web.Views = []string{writeDecisionsView(t)}
+	cfg.Web.RunTimeout = 10 * time.Second
+	cfg.Web.AskTimeout = time.Second
+	cfg.Web.HeaderTimeout = time.Second
+	return cfg
+}
+
+// startServe runs serve over the real registry and store in a goroutine the
+// test owns, reads the startup lines, exchanges the token and returns a
+// Connect JSON client with its Origin. Cleanup cancels serve and fails the
+// test unless it returns nil.
+func startServe(t *testing.T, cfg config.Config) (uiv1.UIServiceClient, string) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	docs, err := gitdocs.Open(ctx, cfg.Store.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	index, err := sqlindex.Open(ctx, cfg.Store.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = index.Close() })
+	registry, modelTools := buildRegistry(cfg, docs, index, feedsource.New(feedsource.Config{}), testCrawler(t))
+	runner := app.NewRunner(registry)
+
+	pr, pw := io.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		done <- serve(ctx, cfg, runner, web.NewAsker(cfg.Web.AskTimeout), egressTable(cfg, modelTools), pw)
+		_ = pw.Close()
+	}()
+	t.Cleanup(func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("serve returned %v; want nil", err)
+		}
+	})
+
+	lines := bufio.NewScanner(pr)
+	var startup []string
+	for len(startup) < 2 && lines.Scan() {
+		startup = append(startup, lines.Text())
+	}
+	go func() { _, _ = io.Copy(io.Discard, pr) }()
+	if len(startup) != 2 || startup[1] != "atlas: the CLI cannot use this store while the server runs; stop it with Ctrl-C" {
+		t.Fatalf("startup lines = %q", startup)
+	}
+	serving, ok := strings.CutPrefix(startup[0], "atlas: serving ")
+	if !ok {
+		t.Fatalf("first startup line = %q", startup[0])
+	}
+	base, token, ok := strings.Cut(serving, "/#token=")
+	if !ok || token == "" {
+		t.Fatalf("no token in %q", startup[0])
+	}
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Jar: jar}
+	req, err := http.NewRequest(http.MethodPost, base+"/session", strings.NewReader(`{"token":"`+token+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", base)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("session exchange status %d; want 204", resp.StatusCode)
+	}
+	return uiv1.NewUIServiceClient(client, base, connect.WithProtoJSON()), base
+}
+
+func withOrigin[T any](msg *T, origin string) *connect.Request[T] {
+	req := connect.NewRequest(msg)
+	req.Header().Set("Origin", origin)
+	return req
+}
+
+// runToEnd runs req and returns every event, failing the test on a stream
+// error.
+func runToEnd(t *testing.T, c uiv1.UIServiceClient, origin string, req *uiv1.RunRequest) []*uiv1.RunResponse {
+	t.Helper()
+	stream, err := c.Run(context.Background(), withOrigin(req, origin))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	var events []*uiv1.RunResponse
+	for stream.Receive() {
+		events = append(events, stream.Msg())
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("run %s/%d: %v", req.Screen, req.Action, err)
+	}
+	return events
+}
+
+// decisionRows runs the days screen and returns its rows' fields.
+func decisionRows(t *testing.T, c uiv1.UIServiceClient, origin string) []map[string]string {
+	t.Helper()
+	events := runToEnd(t, c, origin, &uiv1.RunRequest{View: "decisions", Screen: "days", Action: -1, Params: map[string]string{"subject": "s-1"}})
+	done := events[len(events)-1].GetDone()
+	if done == nil {
+		t.Fatalf("screen run ended with %v; want Done", events[len(events)-1])
+	}
+	var state struct {
+		Rows struct {
+			Rows []struct {
+				Fields map[string]string `json:"fields"`
+			} `json:"rows"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal([]byte(done.StateJson), &state); err != nil {
+		t.Fatalf("state %s: %v", done.StateJson, err)
+	}
+	rows := make([]map[string]string, len(state.Rows.Rows))
+	for i, r := range state.Rows.Rows {
+		rows[i] = r.Fields
+	}
+	return rows
+}
+
+// failingModel is a model endpoint that answers 500 to everything.
+func failingModel(t *testing.T) string {
+	t.Helper()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusInternalServerError)
+	}))
+	t.Cleanup(ts.Close)
+	return ts.URL + "/v1"
+}
+
+func TestServeEndToEnd(t *testing.T) {
+	c, origin := startServe(t, serveConfig(t, failingModel(t)))
+
+	views, err := c.Views(context.Background(), withOrigin(&uiv1.ViewsRequest{}, origin))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(views.Msg.ViewsJson, `"id":"decisions"`) {
+		t.Errorf("views = %s; want the decisions view", views.Msg.ViewsJson)
+	}
+	if len(views.Msg.Egress) != 1 || views.Msg.Egress[0].Hosted {
+		t.Errorf("egress = %v; want the model as one local endpoint", views.Msg.Egress)
+	}
+
+	if rows := decisionRows(t, c, origin); len(rows) != 0 {
+		t.Fatalf("rows before the action = %v; want none", rows)
+	}
+
+	events := runToEnd(t, c, origin, &uiv1.RunRequest{
+		View: "decisions", Screen: "days", Action: 0,
+		Params: map[string]string{"subject": "s-1"},
+		Inputs: map[string]string{"reason": "fits"},
+	})
+	if events[len(events)-1].GetDone() == nil {
+		t.Fatalf("action ended with %v; want Done", events[len(events)-1])
+	}
+
+	rows := decisionRows(t, c, origin)
+	if len(rows) != 1 || rows[0]["subject_id"] != "s-1" || rows[0]["decision"] != "apply" {
+		t.Errorf("rows after the action = %v; want one apply decision for s-1", rows)
+	}
+}
+
+// A hosted model endpoint gates every run until it is acknowledged.
+func TestServeGatesAHostedEndpoint(t *testing.T) {
+	c, origin := startServe(t, serveConfig(t, "https://api.example.invalid/v1"))
+	screen := &uiv1.RunRequest{View: "decisions", Screen: "days", Action: -1, Params: map[string]string{"subject": "s-1"}}
+
+	events := runToEnd(t, c, origin, screen)
+	if len(events) != 1 || events[0].GetNeedsAcknowledgement() == nil {
+		t.Fatalf("gated run events = %v; want only NeedsAcknowledgement", events)
+	}
+	if got := events[0].GetNeedsAcknowledgement().Endpoints; !slices.Equal(got, []string{"https://api.example.invalid"}) {
+		t.Errorf("endpoints = %v", got)
+	}
+
+	if _, err := c.Acknowledge(context.Background(), withOrigin(&uiv1.AcknowledgeRequest{Endpoint: "https://api.example.invalid"}, origin)); err != nil {
+		t.Fatal(err)
+	}
+	events = runToEnd(t, c, origin, screen)
+	if events[len(events)-1].GetDone() == nil {
+		t.Errorf("acknowledged run ended with %v; want Done", events[len(events)-1])
 	}
 }

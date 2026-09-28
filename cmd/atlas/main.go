@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"go.opentelemetry.io/otel"
 
@@ -283,13 +284,17 @@ func run() error {
 		_ = shutdown(shutdownCtx)
 	}()
 
-	blueprint, err := packfile.Load(cfg.Pack.Path)
-	if err != nil {
-		return err
-	}
-	blueprint, err = blueprint.WithVars(cfg.Pack.Vars)
-	if err != nil {
-		return err
+	// -serve has no pack; its runs name packs through the view files.
+	var blueprint domain.Blueprint
+	if !cfg.Web.Serve {
+		blueprint, err = packfile.Load(cfg.Pack.Path)
+		if err != nil {
+			return err
+		}
+		blueprint, err = blueprint.WithVars(cfg.Pack.Vars)
+		if err != nil {
+			return err
+		}
 	}
 
 	docs, err := gitdocs.Open(ctx, cfg.Store.Root)
@@ -327,7 +332,7 @@ func run() error {
 		return err
 	}
 
-	registry, _ := buildRegistry(cfg, docs, index, source, crawler)
+	registry, modelTools := buildRegistry(cfg, docs, index, source, crawler)
 
 	if cfg.Render.TypstPath != "" {
 		render, err := startRender(cfg)
@@ -337,8 +342,19 @@ func run() error {
 		registry = registry.With(render)
 	}
 
+	// The person answering the agent's permission asks is the browser in
+	// -serve mode and the terminal otherwise.
+	var asker *web.Asker
+	var human ports.Permission
+	if cfg.Web.Serve {
+		asker = web.NewAsker(cfg.Web.AskTimeout)
+		human = asker
+	} else {
+		human = termprompt.New(os.Stdin, os.Stderr)
+	}
+
 	if cfg.Agent.Command != "" {
-		agentTool, stop, err := startAgent(ctx, cfg, registry, docs, termprompt.New(os.Stdin, os.Stderr))
+		agentTool, stop, err := startAgent(ctx, cfg, registry, docs, human)
 		if err != nil {
 			return err
 		}
@@ -355,9 +371,13 @@ func run() error {
 	// SDK no-op otherwise. Obtaining it before Init runs would capture the
 	// no-op provider that is installed at startup.
 	tracer := otel.Tracer("github.com/tunedev/atlas")
-	runner := app.NewRunner(registry).WithTracer(tracer).WithProgress(progressPrinter(os.Stderr))
+	runner := app.NewRunner(registry).WithTracer(tracer)
 
-	state, err := runner.Run(ctx, blueprint)
+	if cfg.Web.Serve {
+		return serve(ctx, cfg, runner, asker, egressTable(cfg, modelTools), os.Stderr)
+	}
+
+	state, err := runner.WithProgress(progressPrinter(os.Stderr)).Run(ctx, blueprint)
 	if err != nil {
 		return err
 	}
@@ -369,5 +389,56 @@ func run() error {
 		return fmt.Errorf("encode result: %w", err)
 	}
 	fmt.Println(string(out))
+	return nil
+}
+
+// serveShutdownBudget bounds how long serve waits for open requests to
+// finish once ctx is done.
+const serveShutdownBudget = 5 * time.Second
+
+// serve loads the view files and serves the web UI on cfg.Web.Addr until
+// ctx is done. It prints the URL carrying the startup token to out, once.
+func serve(ctx context.Context, cfg config.Config, runner *app.Runner, asker *web.Asker, egress []web.Endpoint, out io.Writer) error {
+	views, err := web.LoadViews(cfg.Web.Views, packfile.Load)
+	if err != nil {
+		return err
+	}
+	ln, err := net.Listen("tcp", cfg.Web.Addr)
+	if err != nil {
+		return fmt.Errorf("serve: %w", err)
+	}
+	host := ln.Addr().String()
+	token := web.NewToken()
+	ui, err := web.New(web.Config{RunTimeout: cfg.Web.RunTimeout, FilesRoot: cfg.Web.FilesRoot}, web.Deps{
+		Views:  views,
+		Load:   packfile.Load,
+		Runner: runner,
+		Asker:  asker,
+		Egress: egress,
+		Server: map[string]string{"store_root": cfg.Store.Root, "files_root": cfg.Web.FilesRoot},
+	}, token, host)
+	if err != nil {
+		_ = ln.Close()
+		return err
+	}
+
+	fmt.Fprintf(out, "atlas: serving http://%s/#token=%s\n", host, token)
+	fmt.Fprintln(out, "atlas: the CLI cannot use this store while the server runs; stop it with Ctrl-C")
+
+	srv := &http.Server{Handler: ui.Handler(), ReadHeaderTimeout: cfg.Web.HeaderTimeout}
+	served := make(chan error, 1)
+	go func() { served <- srv.Serve(ln) }()
+	select {
+	case err := <-served:
+		return fmt.Errorf("serve: %w", err)
+	case <-ctx.Done():
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), serveShutdownBudget)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("serve: shutdown: %w", err)
+	}
+	<-served
 	return nil
 }
