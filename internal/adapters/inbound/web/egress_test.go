@@ -8,6 +8,7 @@ import (
 	"maps"
 	"slices"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"gopkg.in/yaml.v3"
@@ -202,5 +203,46 @@ func assertAcknowledgementRecord(t *testing.T, reg *fakeRegistry, endpoint strin
 	}
 	if body.Endpoint != endpoint || !slices.Equal(body.Discloses, discloses) || body.When == "" {
 		t.Errorf("body = %+v", body)
+	}
+}
+
+func TestGateAnswersWithoutTheRunSlot(t *testing.T) {
+	reg := newFakeRegistry(t, nil)
+	c, origin := serveView(t, runConfig(), oneClass, reg, web.Deps{Egress: hosted(hostedAt)})
+	if err := acknowledge(t, c, origin, hostedAt); err != nil {
+		t.Fatalf("Acknowledge: %v", err)
+	}
+
+	slow, err := c.Run(context.Background(), withOrigin(&uiv1.RunRequest{View: "shelf", Screen: "wait", Action: -1}, origin))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer slow.Close()
+	for slow.Receive() {
+		if s := slow.Msg().GetStep(); s != nil && s.Status == "started" {
+			break
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	resp, err := c.Views(ctx, withOrigin(&uiv1.ViewsRequest{}, origin))
+	if err != nil {
+		t.Fatalf("Views while a run holds the slot: %v", err)
+	}
+	if !resp.Msg.Egress[0].Acknowledged {
+		t.Error("Views reports the endpoint unacknowledged")
+	}
+
+	second, err := c.Run(ctx, withOrigin(homeRun, origin))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	if !second.Receive() {
+		t.Fatalf("second run ended: %v", second.Err())
+	}
+	if q := second.Msg().GetQueued(); q == nil || q.Ahead != 1 {
+		t.Errorf("second run's first event = %v, want Queued{ahead: 1}", second.Msg())
 	}
 }

@@ -57,6 +57,7 @@ type Server struct {
 	slot    chan struct{} // holds a token while a run executes
 	pending atomic.Int32  // runs waiting for or holding the slot
 	cache   stateCache
+	acks    acks
 }
 
 // New builds the UI server. token authenticates the browser; host is the

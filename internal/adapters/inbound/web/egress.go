@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"sync"
 	"time"
 
 	"connectrpc.com/connect"
@@ -19,7 +20,8 @@ import (
 
 // Acknowledge records the user's consent to send the loaded views'
 // disclosed classes to one endpoint of the egress table. It commits the
-// record through the runner like any other write.
+// record through the runner like any other write, then marks the endpoint
+// acknowledged in memory.
 func (s *Server) Acknowledge(ctx context.Context, req *connect.Request[uiv1.AcknowledgeRequest]) (*connect.Response[uiv1.AcknowledgeResponse], error) {
 	endpoint := req.Msg.Endpoint
 	if !slices.ContainsFunc(s.deps.Egress, func(e Endpoint) bool { return e.Endpoint == endpoint }) {
@@ -32,41 +34,87 @@ func (s *Server) Acknowledge(ctx context.Context, req *connect.Request[uiv1.Ackn
 	if _, err := s.runInternal(ctx, bp); err != nil {
 		return nil, connect.NewError(connect.CodeUnknown, err)
 	}
+	s.markAcknowledged(endpoint)
 	return connect.NewResponse(&uiv1.AcknowledgeResponse{}), nil
 }
 
-// unacknowledged returns the hosted endpoints with no acknowledgement on
-// record that covers every class the loaded views disclose.
+// acks is the acknowledgement state of the hosted endpoints: which ones
+// have a record covering every disclosed class. It is read from the record
+// once per process; afterwards only Acknowledge changes it.
+type acks struct {
+	mu     sync.Mutex
+	loaded bool
+	done   map[string]bool // endpoint -> acknowledged
+}
+
+// unacknowledged returns the hosted endpoints with no acknowledgement
+// covering every class the loaded views disclose. The first call reads the
+// record, taking the run slot; later calls answer from memory.
 func (s *Server) unacknowledged(ctx context.Context) ([]Endpoint, error) {
+	hosted := s.hosted()
+	if len(hosted) == 0 {
+		return nil, nil
+	}
+	s.acks.mu.Lock()
+	defer s.acks.mu.Unlock()
+	if !s.acks.loaded {
+		if err := s.loadAcks(ctx, hosted); err != nil {
+			return nil, err
+		}
+	}
+	var out []Endpoint
+	for _, e := range hosted {
+		if !s.acks.done[e.Endpoint] {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
+// loadAcks reads each hosted endpoint's acknowledgement from the record.
+// The caller holds s.acks.mu.
+func (s *Server) loadAcks(ctx context.Context, hosted []Endpoint) error {
+	bp, err := findAcknowledgements(hosted)
+	if err != nil {
+		return err
+	}
+	state, err := s.runInternal(ctx, bp)
+	if err != nil {
+		return err
+	}
+	discloses := s.discloses()
+	if s.acks.done == nil {
+		s.acks.done = map[string]bool{}
+	}
+	for i, e := range hosted {
+		ok, err := covers(state.Outputs()[findStep(i)], discloses)
+		if err != nil {
+			return err
+		}
+		s.acks.done[e.Endpoint] = s.acks.done[e.Endpoint] || ok
+	}
+	s.acks.loaded = true
+	return nil
+}
+
+// markAcknowledged records in memory that endpoint is acknowledged.
+func (s *Server) markAcknowledged(endpoint string) {
+	s.acks.mu.Lock()
+	defer s.acks.mu.Unlock()
+	if s.acks.done == nil {
+		s.acks.done = map[string]bool{}
+	}
+	s.acks.done[endpoint] = true
+}
+
+func (s *Server) hosted() []Endpoint {
 	var hosted []Endpoint
 	for _, e := range s.deps.Egress {
 		if e.Hosted {
 			hosted = append(hosted, e)
 		}
 	}
-	if len(hosted) == 0 {
-		return nil, nil
-	}
-	bp, err := findAcknowledgements(hosted)
-	if err != nil {
-		return nil, err
-	}
-	state, err := s.runInternal(ctx, bp)
-	if err != nil {
-		return nil, err
-	}
-	discloses := s.discloses()
-	var out []Endpoint
-	for i, e := range hosted {
-		ok, err := covers(state.Outputs()[findStep(i)], discloses)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			out = append(out, e)
-		}
-	}
-	return out, nil
+	return hosted
 }
 
 // needsAcknowledgement is the gate's refusal for endpoints.
