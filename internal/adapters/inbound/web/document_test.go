@@ -48,7 +48,7 @@ func TestDocumentServesARecordPath(t *testing.T) {
 	reg.mu.Lock()
 	reg.records = map[string]record{
 		"logbook/day-1.json": {kind: "logbook", body: `{"wind":"west"}`},
-		"notes/a.txt":         {kind: "note", body: "plain text"},
+		"notes/a.txt":        {kind: "note", body: "plain text"},
 	}
 	reg.mu.Unlock()
 	c, origin := documentClient(t, runConfig(), reg)
