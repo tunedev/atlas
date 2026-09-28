@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -25,14 +26,16 @@ type StageOf func(ctx context.Context, subjectID string) (string, error)
 //
 // with carries pack (the child pack's path), rows (a JSON array of
 // objects), match (comma-separated field=value conditions, all of which
-// must hold; a missing field is ""), and vars (YAML: child var to a [[ ]]
+// must hold; a missing field is "", a number is written out in full, and
+// a value may contain '=' but not ','), and vars (YAML: child var to a [[ ]]
 // template over the row, bound as .item). Every var template is parsed
 // before any child runs. When match has a stage condition, the row's
 // current stage is read through StageOf just before its run, and the row
 // is skipped unless it still holds.
 //
-// Each run becomes a row {vars, ok: true} or {vars, error}. The step fails
-// when every run failed.
+// Each run becomes a row {vars, ok: true} or {vars, error}; _meta counts
+// the runs and the rows the stage re-check skipped. The step fails when
+// every run failed, or when ctx is done before a row starts.
 type PackEach struct {
 	run     RunPack
 	stageOf StageOf
@@ -57,9 +60,12 @@ func (t *PackEach) Invoke(ctx context.Context, with map[string]string) (any, err
 	})
 
 	out := []any{}
-	var failed int
+	var failed, skipped int
 	var firstErr string
 	for _, row := range rows {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("pack.each: %w", err)
+		}
 		if !matches(row, conds) {
 			continue
 		}
@@ -68,6 +74,7 @@ func (t *PackEach) Invoke(ctx context.Context, with map[string]string) (any, err
 			return nil, fmt.Errorf("pack.each: %w", err)
 		}
 		if !still {
+			skipped++
 			continue
 		}
 		result := t.one(ctx, path, vars, row)
@@ -82,7 +89,7 @@ func (t *PackEach) Invoke(ctx context.Context, with map[string]string) (any, err
 	if len(out) > 0 && failed == len(out) {
 		return nil, fmt.Errorf("pack.each: every child failed; first: %s", firstErr)
 	}
-	meta := map[string]any{"count": len(out), "ok": len(out) - failed, "errors": failed}
+	meta := map[string]any{"count": len(out), "ok": len(out) - failed, "errors": failed, "skipped": skipped}
 	return map[string]any{"rows": out, "_meta": meta}, nil
 }
 
@@ -119,11 +126,12 @@ func parseMatch(match string) ([]condition, error) {
 	}
 	var conds []condition
 	for term := range strings.SplitSeq(match, ",") {
-		field, value, ok := strings.Cut(strings.TrimSpace(term), "=")
+		field, value, ok := strings.Cut(term, "=")
+		field = strings.TrimSpace(field)
 		if !ok || field == "" {
 			return nil, fmt.Errorf("match term %q must be field=value", term)
 		}
-		conds = append(conds, condition{field: field, value: value})
+		conds = append(conds, condition{field: field, value: strings.TrimSpace(value)})
 	}
 	return conds, nil
 }
@@ -138,13 +146,17 @@ func matches(row map[string]any, conds []condition) bool {
 	return true
 }
 
-// fieldString is a row field as text, "" when the field is missing.
+// fieldString is a row field as text: "" when the field is missing, and a
+// number written out in full rather than in exponent form.
 func fieldString(row map[string]any, field string) string {
-	v, ok := row[field]
-	if !ok || v == nil {
+	switch v := row[field].(type) {
+	case nil:
 		return ""
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	default:
+		return fmt.Sprint(v)
 	}
-	return fmt.Sprint(v)
 }
 
 // stageStillHolds re-reads the row's current stage when conds has a stage

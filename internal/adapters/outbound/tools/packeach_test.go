@@ -62,7 +62,7 @@ func TestPackEachRendersVarsPerRowInSubjectOrder(t *testing.T) {
 	if len(rows) != 3 || !reflect.DeepEqual(rows[0], first) {
 		t.Errorf("rows = %v", rows)
 	}
-	meta := map[string]any{"count": 3, "ok": 3, "errors": 0}
+	meta := map[string]any{"count": 3, "ok": 3, "errors": 0, "skipped": 0}
 	if !reflect.DeepEqual(result["_meta"], meta) {
 		t.Errorf("_meta = %v", result["_meta"])
 	}
@@ -108,7 +108,7 @@ func TestPackEachIsolatesAChildFailure(t *testing.T) {
 	if rows := result["rows"].([]any); !reflect.DeepEqual(rows[0], failed) {
 		t.Errorf("rows[0] = %v", rows[0])
 	}
-	meta := map[string]any{"count": 3, "ok": 2, "errors": 1}
+	meta := map[string]any{"count": 3, "ok": 2, "errors": 1, "skipped": 0}
 	if !reflect.DeepEqual(result["_meta"], meta) {
 		t.Errorf("_meta = %v", result["_meta"])
 	}
@@ -145,8 +145,9 @@ func TestPackEachSkipsARowWhoseStageBecameSetDuringTheRun(t *testing.T) {
 	if len(runner.calls) != 1 {
 		t.Errorf("calls = %v", runner.calls)
 	}
-	if got := out.(map[string]any)["_meta"].(map[string]any)["count"]; got != 1 {
-		t.Errorf("count = %v", got)
+	meta := map[string]any{"count": 1, "ok": 1, "errors": 0, "skipped": 1}
+	if got := out.(map[string]any)["_meta"]; !reflect.DeepEqual(got, meta) {
+		t.Errorf("_meta = %v", got)
 	}
 }
 
@@ -167,5 +168,57 @@ func TestPackEachRefusesAMalformedVarBeforeAnyChildRuns(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "loaf") {
 		t.Errorf("with no rows, err = %v", err)
+	}
+}
+
+func TestPackEachMatchesNumbersAndSpacedTerms(t *testing.T) {
+	rows := `[
+  {"subject_id": "order-1", "count": 1000000, "decision": "allow"},
+  {"subject_id": "order-2", "count": 12, "decision": "allow"}
+]`
+	runner := &fakeRunner{}
+	_, err := tools.NewPackEach(runner.run, noStage).Invoke(context.Background(), map[string]string{
+		"pack": "packs/bake.yaml", "rows": rows, "match": "count=1000000, decision = allow",
+		"vars": "order: '[[ .item.subject_id ]]'",
+	})
+	if err != nil {
+		t.Fatalf("pack.each: %v", err)
+	}
+	if len(runner.calls) != 1 || runner.calls[0].vars["order"] != "order-1" {
+		t.Errorf("calls = %v", runner.calls)
+	}
+}
+
+func TestPackEachSortsNumericIDsAsWrittenNumbers(t *testing.T) {
+	rows := `[{"subject_id": 1500000}, {"subject_id": 10000000}]`
+	runner := &fakeRunner{}
+	_, err := tools.NewPackEach(runner.run, noStage).Invoke(context.Background(), map[string]string{
+		"pack": "packs/bake.yaml", "rows": rows, "vars": "order: '[[ .item.subject_id ]]'",
+	})
+	if err != nil {
+		t.Fatalf("pack.each: %v", err)
+	}
+	if len(runner.calls) != 2 || runner.calls[0].vars["order"] != "10000000" {
+		t.Errorf("calls = %v", runner.calls)
+	}
+}
+
+func TestPackEachStopsWhenItsContextIsCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var calls int
+	run := func(context.Context, string, map[string]string) error {
+		calls++
+		cancel()
+		return nil
+	}
+	_, err := tools.NewPackEach(run, noStage).Invoke(ctx, map[string]string{
+		"pack": "packs/bake.yaml", "rows": orderRows, "vars": "order: '[[ .item.subject_id ]]'",
+	})
+	if !errors.Is(err, context.Canceled) || !strings.HasPrefix(err.Error(), "pack.each: ") {
+		t.Errorf("err = %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("calls = %d", calls)
 	}
 }
