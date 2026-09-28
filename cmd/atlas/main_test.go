@@ -837,3 +837,33 @@ func TestServeStopsWithARunInFlight(t *testing.T) {
 		t.Errorf("serve took %s to stop; want well under the %s shutdown budget", took, serveShutdownBudget)
 	}
 }
+
+// termprompt.New starts a goroutine that reads stdin, so run() builds it
+// only inside the branch that starts an agent; a plain pack run leaves
+// piped stdin alone.
+func TestTerminalPromptIsBuiltOnlyForAnAgent(t *testing.T) {
+	_, run := runDecl(t)
+	calls := callPositions(run, "termprompt", "New")
+	if len(calls) != 1 {
+		t.Fatalf("run() calls termprompt.New %d times; want once", len(calls))
+	}
+	var agent *ast.IfStmt
+	ast.Inspect(run, func(n ast.Node) bool {
+		ifs, ok := n.(*ast.IfStmt)
+		if !ok || agent != nil {
+			return true
+		}
+		if bin, ok := ifs.Cond.(*ast.BinaryExpr); ok {
+			if sel, ok := bin.X.(*ast.SelectorExpr); ok && sel.Sel.Name == "Command" {
+				agent = ifs
+			}
+		}
+		return true
+	})
+	if agent == nil {
+		t.Fatal("run() has no cfg.Agent.Command branch")
+	}
+	if calls[0] < agent.Body.Pos() || calls[0] > agent.Body.End() {
+		t.Error("run() builds termprompt.New outside the agent branch; it would read stdin on every run")
+	}
+}

@@ -342,18 +342,21 @@ func run() error {
 		registry = registry.With(render)
 	}
 
-	// The person answering the agent's permission asks is the browser in
-	// -serve mode and the terminal otherwise.
 	var asker *web.Asker
-	var human ports.Permission
 	if cfg.Web.Serve {
 		asker = web.NewAsker(cfg.Web.AskTimeout)
-		human = asker
-	} else {
-		human = termprompt.New(os.Stdin, os.Stderr)
 	}
 
 	if cfg.Agent.Command != "" {
+		// The agent's permission asks go to the browser in -serve mode and
+		// to the terminal otherwise; the terminal prompt reads stdin, so it
+		// exists only when an agent can ask.
+		var human ports.Permission
+		if cfg.Web.Serve {
+			human = asker
+		} else {
+			human = termprompt.New(os.Stdin, os.Stderr)
+		}
 		agentTool, stop, err := startAgent(ctx, cfg, registry, docs, human)
 		if err != nil {
 			return err
