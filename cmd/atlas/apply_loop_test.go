@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"os"
@@ -147,7 +148,7 @@ func newLoop(t *testing.T, c loopCase) loop {
 	base := buildRegistry(config.Config{}, docs, index, src, testCrawler(t)).
 		With(tools.NewJudgeEach(src, judge, docs, index, "stub", time.Hour, slog.Default()))
 	runs := 0
-	real := childRunner(base, tracer)
+	real := childRunner(base, tracer, io.Discard)
 	child := func(ctx context.Context, path string, vars map[string]string) error {
 		runs++
 		standIn, ok := c.Children[path]

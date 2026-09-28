@@ -45,8 +45,20 @@ const storeLockName = ".atlas.lock"
 // a long step reads as running rather than hung. A failure's cause is left
 // to the error run() returns.
 func progressPrinter(w io.Writer) func(domain.StepEvent) {
+	return stepPrinter(w, "atlas:")
+}
+
+// childProgressPrinter is progressPrinter for a child pack run by pack.each:
+// each line is indented and names the child's pack path, so it reads as part
+// of the parent step that ran it.
+func childProgressPrinter(w io.Writer, pack string) func(domain.StepEvent) {
+	return stepPrinter(w, "atlas:   "+pack+":")
+}
+
+// stepPrinter writes one line per step event to w, after prefix.
+func stepPrinter(w io.Writer, prefix string) func(domain.StepEvent) {
 	return func(e domain.StepEvent) {
-		fmt.Fprintf(w, "atlas: step %s (%s) %s\n", e.StepID, e.Tool, e.Status)
+		fmt.Fprintf(w, "%s step %s (%s) %s\n", prefix, e.StepID, e.Tool, e.Status)
 	}
 }
 
@@ -304,7 +316,7 @@ func run() error {
 
 	if cfg.Agent.Command != "" {
 		var stop func() error
-		registry, stop, err = withAgent(ctx, cfg, registry, tracer, index, docs)
+		registry, stop, err = withAgent(ctx, cfg, registry, tracer, index, docs, os.Stderr)
 		if err != nil {
 			return err
 		}
@@ -314,7 +326,7 @@ func run() error {
 			}
 		}()
 	} else {
-		registry = withPackEach(registry, tracer, index)
+		registry = withPackEach(registry, tracer, index, os.Stderr)
 	}
 
 	runner := app.NewRunner(registry).WithTracer(tracer).WithProgress(progressPrinter(os.Stderr))
@@ -338,8 +350,8 @@ func run() error {
 // base with pack.each and agent.do added. The agent is offered tools from
 // base only, so it never reaches pack.each, whose child runs would skip the
 // agent's per-tool permission check.
-func withAgent(ctx context.Context, cfg config.Config, base tools.Registry, tracer trace.Tracer, index ports.Index, docs ports.Docs) (tools.Registry, func() error, error) {
-	runner := withPackEach(base, tracer, index)
+func withAgent(ctx context.Context, cfg config.Config, base tools.Registry, tracer trace.Tracer, index ports.Index, docs ports.Docs, progress io.Writer) (tools.Registry, func() error, error) {
+	runner := withPackEach(base, tracer, index, progress)
 	agentTool, stop, err := startAgent(ctx, cfg, base, docs)
 	if err != nil {
 		return nil, nil, err
@@ -349,14 +361,15 @@ func withAgent(ctx context.Context, cfg config.Config, base tools.Registry, trac
 
 // withPackEach returns registry with pack.each added. Its child runs see
 // registry as given, which holds neither pack.each nor agent.do, so nesting
-// stops at one level and a child pack never reaches the agent.
-func withPackEach(registry tools.Registry, tracer trace.Tracer, index ports.Index) tools.Registry {
-	return registry.With(tools.NewPackEach(childRunner(registry, tracer), stageOf(index)))
+// stops at one level and a child pack never reaches the agent. Child steps
+// report progress to progress.
+func withPackEach(registry tools.Registry, tracer trace.Tracer, index ports.Index, progress io.Writer) tools.Registry {
+	return registry.With(tools.NewPackEach(childRunner(registry, tracer, progress), stageOf(index)))
 }
 
 // childRunner runs one pack over registry, with vars overriding its own, so
 // pack.each can run a pack per row; registry never holds pack.each.
-func childRunner(registry ports.Registry, tracer trace.Tracer) tools.RunPack {
+func childRunner(registry ports.Registry, tracer trace.Tracer, progress io.Writer) tools.RunPack {
 	return func(ctx context.Context, path string, vars map[string]string) error {
 		b, err := packfile.Load(path)
 		if err != nil {
@@ -365,7 +378,7 @@ func childRunner(registry ports.Registry, tracer trace.Tracer) tools.RunPack {
 		if b, err = b.WithVars(vars); err != nil {
 			return err
 		}
-		_, err = app.NewRunner(registry).WithTracer(tracer).Run(ctx, b)
+		_, err = app.NewRunner(registry).WithTracer(tracer).WithProgress(childProgressPrinter(progress, path)).Run(ctx, b)
 		return err
 	}
 }

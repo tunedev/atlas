@@ -7,6 +7,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
 	"maps"
 	"os"
 	"path/filepath"
@@ -113,7 +114,7 @@ func TestBuildRegistryRegistersTheTailoringTools(t *testing.T) {
 
 func TestBuildRegistryRegistersThePolicyAndStageTools(t *testing.T) {
 	docs, index := testStore(t)
-	r := withPackEach(buildRegistry(config.Config{}, docs, index, feedsource.New(feedsource.Config{}), testCrawler(t)), noop.NewTracerProvider().Tracer(""), index)
+	r := withPackEach(buildRegistry(config.Config{}, docs, index, feedsource.New(feedsource.Config{}), testCrawler(t)), noop.NewTracerProvider().Tracer(""), index, io.Discard)
 	for _, name := range []string{"policy.decide", "policy.suggest", "policy.add", "stage.declare", "stage.attach", "pack.each"} {
 		if _, ok := r.Lookup(name); !ok {
 			t.Errorf("registry has no %s", name)
@@ -160,7 +161,7 @@ func TestPackEachChildCannotRunPackEach(t *testing.T) {
 	_, index := testStore(t)
 	leaf, nested, _ := writePacks(t)
 	calls := 0
-	reg := withPackEach(tools.NewRegistry(echo{calls: &calls}), noop.NewTracerProvider().Tracer(""), index)
+	reg := withPackEach(tools.NewRegistry(echo{calls: &calls}), noop.NewTracerProvider().Tracer(""), index, io.Discard)
 	each, ok := reg.Lookup("pack.each")
 	if !ok {
 		t.Fatal("registry has no pack.each")
@@ -185,7 +186,7 @@ func TestPackEachTracesChildStepsUnderTheParent(t *testing.T) {
 	rec := tracetest.NewSpanRecorder()
 	tracer := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec)).Tracer("test")
 	calls := 0
-	reg := withPackEach(tools.NewRegistry(echo{calls: &calls}), tracer, index)
+	reg := withPackEach(tools.NewRegistry(echo{calls: &calls}), tracer, index, io.Discard)
 
 	b, err := packfile.Load(top)
 	if err != nil {
@@ -285,7 +286,7 @@ func TestAgentIsNeverOfferedPackEach(t *testing.T) {
 	cfg.Permission.SummaryBytes = 200
 	base := buildRegistry(cfg, docs, index, feedsource.New(feedsource.Config{}), testCrawler(t))
 
-	_, _, err := withAgent(context.Background(), cfg, base, noop.NewTracerProvider().Tracer(""), index, docs)
+	_, _, err := withAgent(context.Background(), cfg, base, noop.NewTracerProvider().Tracer(""), index, docs, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), `no tool named "pack.each" to offer the agent`) {
 		t.Errorf("err = %v; want pack.each refused as an agent tool", err)
 	}
@@ -518,5 +519,31 @@ func TestProgressPrinterWritesOneLinePerEvent(t *testing.T) {
 		"atlas: step judge (judge.ask) failed\n"
 	if b.String() != want {
 		t.Errorf("progress output =\n%q\nwant\n%q", b.String(), want)
+	}
+}
+
+// TestPackEachPrintsChildProgressUnderTheParent runs a parent pack whose
+// pack.each step runs a child: each child step's line sits inside the
+// parent step's lines, indented and prefixed with the child pack's path.
+func TestPackEachPrintsChildProgressUnderTheParent(t *testing.T) {
+	_, index := testStore(t)
+	leaf, _, top := writePacks(t)
+	var b bytes.Buffer
+	calls := 0
+	reg := withPackEach(tools.NewRegistry(echo{calls: &calls}), noop.NewTracerProvider().Tracer(""), index, &b)
+
+	bp, err := packfile.Load(top)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.NewRunner(reg).WithProgress(progressPrinter(&b)).Run(context.Background(), bp); err != nil {
+		t.Fatal(err)
+	}
+	want := "atlas: step each (pack.each) started\n" +
+		"atlas:   " + leaf + ": step say (echo) started\n" +
+		"atlas:   " + leaf + ": step say (echo) done\n" +
+		"atlas: step each (pack.each) done\n"
+	if b.String() != want {
+		t.Errorf("progress output =\n%s\nwant\n%s", b.String(), want)
 	}
 }
