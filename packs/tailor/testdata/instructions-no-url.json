@@ -1,0 +1,16 @@
+{
+  "template": "instructions.typ",
+  "data": {
+    "url": "",
+    "subject_id": "lamplight:102",
+    "files": ["cv.pdf", "letter.pdf"],
+    "answers": [],
+    "gaps": []
+  },
+  "expect": [
+    "No link in the record: find it on the board.",
+    "The review sheet lists no gaps.",
+    "atlas -pack packs/sent.yaml -var subject_id=lamplight:102"
+  ],
+  "absent": ["https://", "Answers to paste"]
+}

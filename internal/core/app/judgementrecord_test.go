@@ -361,7 +361,7 @@ func TestAnAssessedJudgementRecordsItsFingerprintRulesAndIndexFields(t *testing.
 			{ID: "language", State: app.RuleClear, Evidence: "language is en, rule needs == en"},
 		},
 	}
-	path, err := app.RecordAssessedJudgement(ctx, docs, index, "shelf:fiction:42", recordQuestions(), j, a)
+	path, err := app.RecordAssessedJudgement(ctx, docs, index, "shelf~fiction~42", recordQuestions(), j, a)
 	if err != nil {
 		t.Fatalf("record: %v", err)
 	}
@@ -375,7 +375,7 @@ func TestAnAssessedJudgementRecordsItsFingerprintRulesAndIndexFields(t *testing.
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	if stored.SubjectID != "shelf:fiction:42" || len(stored.Rules) != 3 || stored.Rules[0] != a.Rules[0] {
+	if stored.SubjectID != "shelf~fiction~42" || len(stored.Rules) != 3 || stored.Rules[0] != a.Rules[0] {
 		t.Errorf("stored = %+v", stored)
 	}
 	if len(stored.Answers) != 1 || stored.Answers[0].Chosen != "yes" || stored.Answers[0].Distribution["yes"] != 0.94 {
@@ -386,7 +386,7 @@ func TestAnAssessedJudgementRecordsItsFingerprintRulesAndIndexFields(t *testing.
 func TestAPlainJudgementCarriesNoFingerprintOrRules(t *testing.T) {
 	ctx := context.Background()
 	docs, index := newFakeDocs(), &fakeIndex{}
-	path, err := app.RecordJudgement(ctx, docs, index, "shelf:fiction:43", recordQuestions(), aJudgement())
+	path, err := app.RecordJudgement(ctx, docs, index, "shelf~fiction~43", recordQuestions(), aJudgement())
 	if err != nil {
 		t.Fatalf("record: %v", err)
 	}

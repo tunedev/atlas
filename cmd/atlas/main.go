@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/tunedev/atlas/internal/adapters/inbound/mcpserve"
 	"github.com/tunedev/atlas/internal/adapters/inbound/packfile"
@@ -48,8 +49,20 @@ const storeLockName = ".atlas.lock"
 // a long step reads as running rather than hung. A failure's cause is left
 // to the error run() returns.
 func progressPrinter(w io.Writer) func(domain.StepEvent) {
+	return stepPrinter(w, "atlas:")
+}
+
+// childProgressPrinter is progressPrinter for a child pack run by pack.each:
+// each line is indented and names the child's pack path, so it reads as part
+// of the parent step that ran it.
+func childProgressPrinter(w io.Writer, pack string) func(domain.StepEvent) {
+	return stepPrinter(w, "atlas:   "+pack+":")
+}
+
+// stepPrinter writes one line per step event to w, after prefix.
+func stepPrinter(w io.Writer, prefix string) func(domain.StepEvent) {
 	return func(e domain.StepEvent) {
-		fmt.Fprintf(w, "atlas: step %s (%s) %s\n", e.StepID, e.Tool, e.Status)
+		fmt.Fprintf(w, "%s step %s (%s) %s\n", prefix, e.StepID, e.Tool, e.Status)
 	}
 }
 
@@ -110,6 +123,11 @@ func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index, source
 		tools.NewOutcome(docs, index),
 		tools.NewCalibrate(docs, index),
 		tools.NewAgreement(index),
+		tools.NewPolicyDecide(docs),
+		tools.NewPolicySuggest(index),
+		tools.NewPolicyAdd(docs, index),
+		tools.NewStageDeclare(docs, index),
+		tools.NewStageAttach(index),
 	)...)
 	return registry, toolNames(modelTools)
 }
@@ -284,6 +302,12 @@ func run() error {
 		_ = shutdown(shutdownCtx)
 	}()
 
+	// telemetry.Init has already installed the tracer provider, so the
+	// tracer obtained here is the real one when tracing is enabled and the
+	// SDK no-op otherwise. Obtaining it before Init runs would capture the
+	// no-op provider that is installed at startup.
+	tracer := otel.Tracer("github.com/tunedev/atlas")
+
 	// -serve has no pack; its runs name packs through the view files.
 	var blueprint domain.Blueprint
 	if !cfg.Web.Serve {
@@ -357,7 +381,8 @@ func run() error {
 		} else {
 			human = termprompt.New(os.Stdin, os.Stderr)
 		}
-		agentTool, stop, err := startAgent(ctx, cfg, registry, docs, human)
+		var stop func() error
+		registry, stop, err = withAgent(ctx, cfg, registry, tracer, index, docs, human, os.Stderr)
 		if err != nil {
 			return err
 		}
@@ -366,14 +391,10 @@ func run() error {
 				fmt.Fprintf(os.Stderr, "atlas: %v\n", err)
 			}
 		}()
-		registry = registry.With(agentTool)
+	} else {
+		registry = withPackEach(registry, tracer, index, os.Stderr)
 	}
 
-	// telemetry.Init has already installed the tracer provider, so the
-	// tracer obtained here is the real one when tracing is enabled and the
-	// SDK no-op otherwise. Obtaining it before Init runs would capture the
-	// no-op provider that is installed at startup.
-	tracer := otel.Tracer("github.com/tunedev/atlas")
 	runner := app.NewRunner(registry).WithTracer(tracer)
 
 	if cfg.Web.Serve {
@@ -450,4 +471,49 @@ func serve(ctx context.Context, cfg config.Config, runner *app.Runner, asker *we
 	}
 	<-served
 	return nil
+}
+
+// withAgent starts the agent over base and returns the runner's registry:
+// base with pack.each and agent.do added. The agent is offered tools from
+// base only, so it never reaches pack.each, whose child runs would skip the
+// agent's per-tool permission check. human decides the tool calls the
+// permission rules ask about.
+func withAgent(ctx context.Context, cfg config.Config, base tools.Registry, tracer trace.Tracer, index ports.Index, docs ports.Docs, human ports.Permission, progress io.Writer) (tools.Registry, func() error, error) {
+	runner := withPackEach(base, tracer, index, progress)
+	agentTool, stop, err := startAgent(ctx, cfg, base, docs, human)
+	if err != nil {
+		return nil, nil, err
+	}
+	return runner.With(agentTool), stop, nil
+}
+
+// withPackEach returns registry with pack.each added. Its child runs see
+// registry as given, which holds neither pack.each nor agent.do, so nesting
+// stops at one level and a child pack never reaches the agent. Child steps
+// report progress to progress.
+func withPackEach(registry tools.Registry, tracer trace.Tracer, index ports.Index, progress io.Writer) tools.Registry {
+	return registry.With(tools.NewPackEach(childRunner(registry, tracer, progress), stageOf(index)))
+}
+
+// childRunner runs one pack over registry, with vars overriding its own, so
+// pack.each can run a pack per row; registry never holds pack.each.
+func childRunner(registry ports.Registry, tracer trace.Tracer, progress io.Writer) tools.RunPack {
+	return func(ctx context.Context, path string, vars map[string]string) error {
+		b, err := packfile.Load(path)
+		if err != nil {
+			return err
+		}
+		if b, err = b.WithVars(vars); err != nil {
+			return err
+		}
+		_, err = app.NewRunner(registry).WithTracer(tracer).WithProgress(childProgressPrinter(progress, path)).Run(ctx, b)
+		return err
+	}
+}
+
+// stageOf reads a subject's current stage from index.
+func stageOf(index ports.Index) tools.StageOf {
+	return func(ctx context.Context, subjectID string) (string, error) {
+		return app.CurrentStage(ctx, index, subjectID)
+	}
 }

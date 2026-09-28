@@ -68,7 +68,7 @@ func eachWith() map[string]string {
 	return map[string]string{
 		"prefix":     "shelf",
 		"match":      "state=open",
-		"subject_id": `[[ replace .item.id "/" ":" ]]`,
+		"subject_id": `[[ replace .item.id "/" "~" ]]`,
 		"subject":    "Book: [[ .item.title ]]",
 		"verdict":    "verdict",
 		"questions":  eachQuestions,
@@ -116,6 +116,17 @@ func TestJudgeEachJudgesEverySelectedItemInIDOrder(t *testing.T) {
 	if r["verdict"] != "keep" || r["p"] != 0.8 || r["reused"] != false || r["judgement_path"] == "" {
 		t.Errorf("row = %v", r)
 	}
+	if r["source_id"] != "shelf/a" {
+		t.Errorf("source_id = %v, want shelf/a", r["source_id"])
+	}
+	answers, ok := r["answers"].(map[string]any)
+	if !ok || answers["verdict"] != "keep" || answers["genre"] != "fiction" {
+		t.Errorf("answers = %v", r["answers"])
+	}
+	item, ok := r["item"].(map[string]any)
+	if !ok || item["title"] != "Dune" {
+		t.Errorf("item = %v", r["item"])
+	}
 	if got.meta["count"] != 2 || got.meta["judged"] != 2 || got.meta["reused"] != 0 || got.meta["errors"] != 0 || judge.calls != 2 {
 		t.Errorf("meta = %v, calls = %d", got.meta, judge.calls)
 	}
@@ -129,12 +140,25 @@ func TestASecondRunReusesEveryJudgementWithoutAsking(t *testing.T) {
 	if judge.calls != 2 {
 		t.Fatalf("calls = %d, want 2: the second run must ask nothing", judge.calls)
 	}
+	wantSourceID := []string{"shelf/a", "shelf/c"}
+	wantTitle := []string{"Dune", "Ulysses"}
 	for i, r := range second.rows {
 		if r["reused"] != true || r["verdict"] != first.rows[i]["verdict"] || r["judgement_path"] != first.rows[i]["judgement_path"] {
 			t.Errorf("row %d = %v, want the first run's judgement reused", i, r)
 		}
 		if strings.Join(anyStrings(r["reasons"]), "|") != strings.Join(anyStrings(first.rows[i]["reasons"]), "|") {
 			t.Errorf("row %d reasons changed on reuse", i)
+		}
+		if r["source_id"] != wantSourceID[i] {
+			t.Errorf("row %d source_id = %v, want %s", i, r["source_id"], wantSourceID[i])
+		}
+		answers, ok := r["answers"].(map[string]any)
+		if !ok || answers["verdict"] != "keep" || answers["genre"] != "fiction" {
+			t.Errorf("row %d answers = %v", i, r["answers"])
+		}
+		item, ok := r["item"].(map[string]any)
+		if !ok || item["title"] != wantTitle[i] {
+			t.Errorf("row %d item = %v, want title %s", i, r["item"], wantTitle[i])
 		}
 	}
 	if second.meta["reused"] != 2 || second.meta["judged"] != 0 {
@@ -159,6 +183,12 @@ func TestOneFailingItemBecomesAnErrorRow(t *testing.T) {
 	got := invokeEach(t, tool, eachWith())
 	if len(got.rows) != 3 || got.rows[1]["subject_id"] != "b" || !strings.Contains(got.rows[1]["error"].(string), "engine refused") {
 		t.Fatalf("rows = %v", got.rows)
+	}
+	if got.rows[1]["source_id"] != "shelf/b" {
+		t.Errorf("error row source_id = %v, want shelf/b", got.rows[1]["source_id"])
+	}
+	if item, ok := got.rows[1]["item"].(map[string]any); !ok || item["title"] != "FAIL" {
+		t.Errorf("error row item = %v, want title FAIL", got.rows[1]["item"])
 	}
 	if got.rows[0]["verdict"] != "keep" || got.rows[2]["verdict"] != "keep" || got.meta["errors"] != 1 {
 		t.Errorf("rows = %v, meta = %v", got.rows, got.meta)

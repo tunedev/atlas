@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -92,19 +93,29 @@ func ParseRules(body []byte) ([]Rule, error) {
 // it: none at all, a non-number under an ordering operator, or, under ==
 // or !=, a value that is neither a number nor a string.
 func checkComparableValue(r Rule) error {
-	if r.Value == nil {
-		return fmt.Errorf("rules: %s: comparable rule has no value", r.ID)
+	if err := comparableValueError(r.Op, r.Value); err != nil {
+		return fmt.Errorf("rules: %s: %w", r.ID, err)
 	}
-	_, isNumber := r.Value.(float64)
-	switch r.Op {
+	return nil
+}
+
+// comparableValueError reports why value can never trip a comparable rule
+// under op, or nil when it can. It carries no component prefix, so a caller
+// outside this file wraps it with its own.
+func comparableValueError(op string, value any) error {
+	if value == nil {
+		return errors.New("comparable rule has no value")
+	}
+	_, isNumber := value.(float64)
+	switch op {
 	case ">=", "<=", ">", "<":
 		if !isNumber {
-			return fmt.Errorf("rules: %s: %s needs a number, got %v", r.ID, r.Op, r.Value)
+			return fmt.Errorf("%s needs a number, got %v", op, value)
 		}
 	case "==", "!=":
-		_, isString := r.Value.(string)
+		_, isString := value.(string)
 		if !isNumber && !isString {
-			return fmt.Errorf("rules: %s: %s needs a number or a string, got %v", r.ID, r.Op, r.Value)
+			return fmt.Errorf("%s needs a number or a string, got %v", op, value)
 		}
 	}
 	return nil

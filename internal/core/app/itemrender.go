@@ -26,7 +26,7 @@ func ParseItemTemplate(tmpl string) (*template.Template, error) {
 // delimiters are [[ and ]], so a step's own {{ }} has already been rendered
 // by the runner and the two passes never meet. As with Render, a missing key
 // or a null is an error rather than "<no value>". replace is
-// strings.ReplaceAll: [[ replace .item.id "/" ":" ]].
+// strings.ReplaceAll: [[ replace .item.id "/" "~" ]].
 func RenderItem(tmpl string, item any) (string, error) {
 	t, err := ParseItemTemplate(tmpl)
 	if err != nil {

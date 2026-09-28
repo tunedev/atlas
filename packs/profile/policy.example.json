@@ -1,0 +1,7 @@
+{"rules": [
+  {"id": "strong-fit", "decision": "allow",
+   "when": [{"field": "verdict", "op": "==", "value": "apply"},
+            {"field": "p", "op": ">=", "value": 0.7}]},
+  {"id": "no-frontend", "decision": "deny",
+   "when": [{"field": "answers.focus", "op": "==", "value": "frontend"}]}
+]}

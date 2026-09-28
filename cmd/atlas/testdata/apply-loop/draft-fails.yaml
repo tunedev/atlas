@@ -1,0 +1,18 @@
+# Stands in for packs/tailor.yaml in the apply-loop test when every draft
+# fails: it takes the vars the loop passes to the real pack and fails reading
+# a file that is never written.
+name: draft-fails-stand-in
+vars:
+  subject_id: ""
+  url: ""
+  posting: ""
+  store_root: ""
+  out_dir: ""
+  templates: ""
+  declared_by: ""
+
+steps:
+  - id: fail
+    tool: file.read
+    with:
+      path: "{{ .vars.out_dir }}/never-written"

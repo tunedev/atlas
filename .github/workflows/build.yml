@@ -5,8 +5,45 @@ on:
   pull_request:
 
 jobs:
+  # Always runs, regardless of what changed, so the "build" checks below are
+  # never left pending by a path filter (the classic trap: a check skipped
+  # by paths-ignore blocks branch protection forever once it is required).
+  classify:
+    name: classify
+    runs-on: ubuntu-latest
+    outputs:
+      tier: ${{ steps.classify.outputs.tier }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so merge-base can be computed below; classify is a
+          # single cheap job, so the extra fetch cost is not repeated per OS.
+          fetch-depth: 0
+      - id: classify
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            .github/scripts/classify-ci.sh - - full "push to main always runs the full matrix"
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            # Diff against the merge base, not the previous commit, so a
+            # multi-commit PR is classified by its whole diff into main
+            # rather than by whatever the latest commit happened to touch.
+            base_sha=$(git merge-base "origin/${{ github.base_ref }}" "${{ github.event.pull_request.head.sha }}")
+            .github/scripts/classify-ci.sh "$base_sha" "${{ github.event.pull_request.head.sha }}"
+          else
+            before="${{ github.event.before }}"
+            if [ -z "$before" ] || [ "$before" = "0000000000000000000000000000000000000000" ]; then
+              .github/scripts/classify-ci.sh - - full "new branch push, no previous commit to diff against"
+            else
+              .github/scripts/classify-ci.sh "$before" "${{ github.sha }}"
+            fi
+          fi
+
   build:
+    name: build
+    needs: classify
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
@@ -15,27 +52,55 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.27"
+      - name: Report CI classification
+        shell: bash
+        run: |
+          tier="${{ needs.classify.outputs.tier }}"
+          echo "CI tier for this run: $tier"
+          if [ "$tier" = "docs" ]; then
+            echo "Docs/specs/notes/plans-only change: build and test skipped on every OS."
+          elif [ "$tier" = "code" ] && [ "${{ matrix.os }}" != "ubuntu-latest" ]; then
+            echo "Go-code change, not cgo/platform-specific: build and test run on ubuntu-latest only; this leg is a no-op by design."
+          else
+            echo "Running build, vet and race tests on ${{ matrix.os }}."
+          fi
       # DuckDB requires cgo, so a binary for one OS/arch cannot be produced by
       # cross-compiling from another; each platform must build and test on
       # its own runner. windows-latest does not ship a C toolchain by
       # default, and cgo needs one; this is a known unknown for this matrix,
       # unverified here, and the windows-latest job may need an explicit C
       # toolchain setup step added once it has actually been run.
-      - run: go build ./...
-      - run: go test ./... -race
+      - name: Build
+        if: needs.classify.outputs.tier == 'full' || (needs.classify.outputs.tier == 'code' && matrix.os == 'ubuntu-latest')
+        run: go build ./...
+      - name: Vet
+        if: needs.classify.outputs.tier == 'full' || (needs.classify.outputs.tier == 'code' && matrix.os == 'ubuntu-latest')
+        run: go vet ./...
+      - name: Test
+        if: needs.classify.outputs.tier == 'full' || (needs.classify.outputs.tier == 'code' && matrix.os == 'ubuntu-latest')
+        run: go test ./... -race
 
+  # Steps are gated rather than the job, so the "web" check always reports.
   web:
+    name: web
+    needs: classify
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
+        if: needs.classify.outputs.tier != 'docs'
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - run: npm ci
+      - name: Install
+        if: needs.classify.outputs.tier != 'docs'
+        run: npm ci
         working-directory: web
-      - run: npm run build
+      - name: Build
+        if: needs.classify.outputs.tier != 'docs'
+        run: npm run build
         working-directory: web
       - name: The committed bundle matches the source
+        if: needs.classify.outputs.tier != 'docs'
         run: git diff --exit-code -- internal/adapters/inbound/web/dist

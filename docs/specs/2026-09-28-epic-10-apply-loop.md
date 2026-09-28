@@ -103,8 +103,9 @@ The platform cannot see the boundary between drafted and sent, so the user decla
   bound, as `judge.each` does); shared values pass through the parent's `{{ }}`. Each matching row
   gets a fresh run of the child pack, one at a time, in id order. A child failure becomes an error
   row; the rest continue. Output: one row per child run with its vars, `ok` or `error`, and the
-  child's final state. The child registry is the parent's without `pack.each`, so nesting is one
-  level by construction. Pack loading and the runner are injected at the composition root, so the
+  child's final state. The child registry is the parent's without `pack.each` or `agent.do`, so
+  nesting is one level by construction. `pack.each` is not offered to the agent, so a pack the agent
+  writes cannot run tools outside its allowlist. Pack loading and the runner are injected at the composition root, so the
   tools package does not import the pack-file adapter. Child steps are traced under the parent's
   span.
 - **`stage.attach`** (generic tool) adds each row's current `stage` from the index, so
@@ -119,8 +120,8 @@ The platform cannot see the boundary between drafted and sent, so the user decla
      the exact `packs/sent.yaml` command to run afterwards;
   4. `stage.declare drafted`.
 - **`packs/job-hunt.yaml`** becomes: `judge.each` → `policy.decide` → `stage.attach` →
-  `pack.each apply.yaml` over `decision=allow,stage=` → `pack.each skip.yaml` over
-  `decision=deny,stage=`. Ask rows are listed in its output; the user runs `apply.yaml` or
+  `pack.each skip.yaml` over `decision=deny,stage=` → `pack.each apply.yaml` over
+  `decision=allow,stage=`, so a failed draft cannot block a skip. Ask rows are listed in its output; the user runs `apply.yaml` or
   `skip.yaml` on them by hand. Re-running it redrafts and re-skips nothing.
 
 ## Testing
@@ -144,7 +145,7 @@ Every test runs offline except the live run.
 | Field | Where | Meaning |
 |---|---|---|
 | `stage` | index, kind `stage`, path `applications/<subject_id>/stage.json` | The current stage, a pack-defined string |
-| `<stage>_at` | same row | RFC 3339 time each stage was reached; `sent_at` is the clock |
+| `<stage>_at` | same row | RFC 3339 time each stage was last reached; `sent_at` is the clock |
 | `declared_by` | the document | Who declared the current stage (`user` or the pack's name) |
 
 ## Deliberately not in this increment
