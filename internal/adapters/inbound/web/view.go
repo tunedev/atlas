@@ -86,13 +86,13 @@ type widgetSpec struct {
 }
 
 // UnmarshalYAML reads a widget from its single-key map: the key names the
-// kind, the value decodes as its spec.
+// kind, the value decodes strictly as its spec, so an unknown key is an error.
 func (w *Widget) UnmarshalYAML(value *yaml.Node) error {
 	if value.Kind != yaml.MappingNode || len(value.Content) != 2 {
 		return fmt.Errorf("a widget must be a single-key map")
 	}
-	var spec widgetSpec
-	if err := value.Content[1].Decode(&spec); err != nil {
+	spec, err := decodeWidgetSpec(value.Content[1])
+	if err != nil {
 		return fmt.Errorf("widget %q: %w", value.Content[0].Value, err)
 	}
 	w.Kind = value.Content[0].Value
@@ -101,6 +101,23 @@ func (w *Widget) UnmarshalYAML(value *yaml.Node) error {
 	w.Keys = spec.Keys
 	w.Open = spec.Open
 	return nil
+}
+
+// decodeWidgetSpec decodes node as a widgetSpec, refusing unknown keys at
+// any depth. yaml.Node.Decode has no strict mode, so the node is re-encoded
+// and read back through a strict decoder.
+func decodeWidgetSpec(node *yaml.Node) (widgetSpec, error) {
+	raw, err := yaml.Marshal(node)
+	if err != nil {
+		return widgetSpec{}, err
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(raw))
+	dec.KnownFields(true)
+	var spec widgetSpec
+	if err := dec.Decode(&spec); err != nil {
+		return widgetSpec{}, err
+	}
+	return spec, nil
 }
 
 var widgetKinds = map[string]bool{

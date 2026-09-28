@@ -108,6 +108,30 @@ screens:
 `,
 		},
 		{
+			name: "a typo in a widget's spec",
+			yaml: `
+title: Logbook
+screens:
+  - id: days
+    run: days.yaml
+    vars: {port: const.shelf}
+    show:
+      - table: {form: rows}
+`,
+		},
+		{
+			name: "a typo in a widget's open",
+			yaml: `
+title: Logbook
+screens:
+  - id: days
+    run: days.yaml
+    vars: {port: const.shelf}
+    show:
+      - table: {from: rows, open: {screen: days, parm: {day: day}}}
+`,
+		},
+		{
 			name: "a var the pack does not declare",
 			yaml: `
 title: Logbook
