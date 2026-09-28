@@ -59,14 +59,16 @@ screens:
 `
 
 // fakeRegistry holds an echo tool that returns its config, a slow tool
-// that blocks until release closes or its context ends, and an ask tool
-// that asks asker for permission. It records every invocation.
+// that blocks until release closes or its context ends, an ask tool that
+// asks asker for permission, and in-memory index.find and docs.put. It
+// records every invocation of the first three.
 type fakeRegistry struct {
 	release   chan struct{}
 	asker     *web.Asker
 	decisions chan ports.PermissionDecision
 	mu        sync.Mutex
 	calls     []string
+	records   map[string]record // path -> record, written by docs.put
 }
 
 func (r *fakeRegistry) Lookup(name string) (ports.Tool, bool) {
@@ -75,6 +77,8 @@ func (r *fakeRegistry) Lookup(name string) (ports.Tool, bool) {
 		return fakeTool{name: name, reg: r}, true
 	case "ask":
 		return askTool{reg: r}, true
+	case "index.find", "docs.put":
+		return recordTool{name: name, reg: r}, true
 	}
 	return nil, false
 }
@@ -138,8 +142,25 @@ func newRunClient(t *testing.T, cfg web.Config) (uiv1.UIServiceClient, string, *
 // asker.
 func serveShelf(t *testing.T, cfg web.Config, asker *web.Asker) (uiv1.UIServiceClient, string, *fakeRegistry) {
 	t.Helper()
+	reg := newFakeRegistry(t, asker)
+	c, origin := serveView(t, cfg, shelfView, reg, web.Deps{Asker: asker})
+	return c, origin, reg
+}
+
+func newFakeRegistry(t *testing.T, asker *web.Asker) *fakeRegistry {
+	t.Helper()
+	reg := &fakeRegistry{release: make(chan struct{}), asker: asker, decisions: make(chan ports.PermissionDecision, 1)}
+	t.Cleanup(func() { close(reg.release) })
+	return reg
+}
+
+// serveView loads view as a view file and serves it over reg, keeping
+// deps' Asker and Egress, and returns an authenticated client and its
+// Origin.
+func serveView(t *testing.T, cfg web.Config, view string, reg *fakeRegistry, deps web.Deps) (uiv1.UIServiceClient, string) {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "shelf.ui.yaml")
-	if err := os.WriteFile(path, []byte(shelfView), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(view), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	views, err := web.LoadViews([]string{path}, runLoader)
@@ -147,18 +168,13 @@ func serveShelf(t *testing.T, cfg web.Config, asker *web.Asker) (uiv1.UIServiceC
 		t.Fatalf("LoadViews: %v", err)
 	}
 
-	reg := &fakeRegistry{release: make(chan struct{}), asker: asker, decisions: make(chan ports.PermissionDecision, 1)}
-	t.Cleanup(func() { close(reg.release) })
-	deps := web.Deps{
-		Views:  views,
-		Load:   runLoader,
-		Runner: app.NewRunner(reg),
-		Asker:  asker,
-		Server: map[string]string{"store_root": "/store"},
-	}
+	deps.Views = views
+	deps.Load = runLoader
+	deps.Runner = app.NewRunner(reg)
+	deps.Server = map[string]string{"store_root": "/store"}
 	ts, host, token := newTestServer(t, deps, cfg)
 	client, origin := authedClient(t, ts.URL, host, token)
-	return uiv1.NewUIServiceClient(client, ts.URL), origin, reg
+	return uiv1.NewUIServiceClient(client, ts.URL), origin
 }
 
 // collect runs req to completion and returns every event and the stream's

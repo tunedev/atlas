@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -19,6 +21,7 @@ import (
 
 	"github.com/tunedev/atlas/internal/adapters/inbound/mcpserve"
 	"github.com/tunedev/atlas/internal/adapters/inbound/packfile"
+	"github.com/tunedev/atlas/internal/adapters/inbound/web"
 	"github.com/tunedev/atlas/internal/adapters/outbound/acpagent"
 	"github.com/tunedev/atlas/internal/adapters/outbound/crawlsource"
 	"github.com/tunedev/atlas/internal/adapters/outbound/feedsource"
@@ -56,7 +59,9 @@ func main() {
 	}
 }
 
-func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index, source ports.Source, crawler *crawlsource.Crawler) tools.Registry {
+// buildRegistry builds every shipped tool and returns, beside the registry,
+// the names of the tools that send data to the model endpoint.
+func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index, source ports.Source, crawler *crawlsource.Crawler) (tools.Registry, []string) {
 	provider := openaiprov.New(openaiprov.Config{
 		Name:     cfg.Model.Name,
 		BaseURL:  cfg.Model.BaseURL,
@@ -76,33 +81,73 @@ func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index, source
 		Temperature: cfg.Extract.Temperature,
 		MaxTokens:   cfg.Extract.MaxTokens,
 	})
-	return tools.NewRegistry(
-		tools.NewHTTP(cfg.Pack.HTTPTimeout, cfg.Pack.HTTPMaxBytes),
+	modelTools := []ports.Tool{
 		tools.NewModel(provider),
 		tools.NewJudge(judge, docs, index),
+		tools.NewExtract(extractor),
+		tools.NewCitationsJudge(judge, docs, index),
+		tools.NewJudgeEach(source, judge, docs, index, cfg.Model.Name, cfg.Feed.StaleAfter, slog.Default()),
+	}
+	registry := tools.NewRegistry(append(modelTools,
+		tools.NewHTTP(cfg.Pack.HTTPTimeout, cfg.Pack.HTTPMaxBytes),
 		tools.NewFileRead(cfg.Pack.FileMaxBytes),
 		tools.NewFileText(cfg.Pack.FileMaxBytes),
 		tools.NewDocsPut(docs, index),
 		tools.NewIndexFind(index),
 		tools.NewDocsGet(docs, cfg.Pack.FileMaxBytes),
 		tools.NewQuoteGround(),
-		tools.NewExtract(extractor),
 		tools.NewDecision(docs, index),
 		tools.NewSourcePull(source, cfg.Feed.StaleAfter, slog.Default()),
 		tools.NewTextSpans(cfg.Pack.FileMaxBytes),
 		tools.NewSpanResolve(),
-		tools.NewCitationsJudge(judge, docs, index),
 		tools.NewClaimsSettle(),
 		tools.NewItemsCite(),
 		tools.NewItemsGather(),
 		tools.NewTextLines(),
-		tools.NewJudgeEach(source, judge, docs, index, cfg.Model.Name, cfg.Feed.StaleAfter, slog.Default()),
 		tools.NewDedupe(),
 		tools.NewCrawlPull(crawler, slog.Default()),
 		tools.NewOutcome(docs, index),
 		tools.NewCalibrate(docs, index),
 		tools.NewAgreement(index),
-	)
+	)...)
+	return registry, toolNames(modelTools)
+}
+
+func toolNames(list []ports.Tool) []string {
+	names := make([]string, len(list))
+	for i, t := range list {
+		names[i] = t.Name()
+	}
+	return names
+}
+
+// egressTable names each endpoint the registry sends data to. The model
+// endpoint is hosted unless its host is localhost or a loopback IP literal;
+// an agent is always hosted, since atlas cannot see where it sends data.
+func egressTable(cfg config.Config, modelTools []string) []web.Endpoint {
+	table := []web.Endpoint{modelEndpoint(cfg.Model.BaseURL, modelTools)}
+	if cfg.Agent.Command != "" {
+		table = append(table, web.Endpoint{Endpoint: "agent:" + cfg.Agent.Command, Hosted: true, Tools: []string{"agent.do"}})
+	}
+	return table
+}
+
+func modelEndpoint(baseURL string, modelTools []string) web.Endpoint {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return web.Endpoint{Endpoint: baseURL, Hosted: true, Tools: modelTools}
+	}
+	return web.Endpoint{Endpoint: u.Scheme + "://" + u.Host, Hosted: !loopbackHost(u.Hostname()), Tools: modelTools}
+}
+
+// loopbackHost reports whether host is localhost or a loopback IP literal.
+// A name is never resolved.
+func loopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // startRender builds render.run over the configured typst binary. A binary
@@ -282,7 +327,7 @@ func run() error {
 		return err
 	}
 
-	registry := buildRegistry(cfg, docs, index, source, crawler)
+	registry, _ := buildRegistry(cfg, docs, index, source, crawler)
 
 	if cfg.Render.TypstPath != "" {
 		render, err := startRender(cfg)

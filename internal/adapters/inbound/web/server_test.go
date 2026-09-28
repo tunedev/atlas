@@ -10,11 +10,13 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 
 	"github.com/tunedev/atlas/internal/adapters/inbound/web"
 	"github.com/tunedev/atlas/internal/adapters/inbound/web/uiv1"
+	"github.com/tunedev/atlas/internal/core/app"
 )
 
 // newTestServer starts a guarded web.Server on 127.0.0.1:0 and returns it
@@ -252,7 +254,8 @@ func TestViewsReturnsTheLoadedViews(t *testing.T) {
 	}}
 	egress := []web.Endpoint{{Endpoint: "https://api.example", Hosted: true, Tools: []string{"shelf.scan"}}}
 
-	ts, host, token := newTestServer(t, web.Deps{Views: views, Egress: egress}, web.Config{FilesRoot: "/data"})
+	deps := web.Deps{Views: views, Egress: egress, Runner: app.NewRunner(newFakeRegistry(t, nil))}
+	ts, host, token := newTestServer(t, deps, web.Config{FilesRoot: "/data", RunTimeout: time.Second})
 	client, origin := authedClient(t, ts.URL, host, token)
 	uiClient := uiv1.NewUIServiceClient(client, ts.URL)
 

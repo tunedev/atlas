@@ -8,6 +8,7 @@ import (
 	"go/parser"
 	"go/token"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -68,7 +69,7 @@ func TestBuildRegistryRegistersBothShippedTools(t *testing.T) {
 	cfg.Judge.MaxTokens = 256
 
 	docs, index := testStore(t)
-	reg := buildRegistry(cfg, docs, index, feedsource.New(feedsource.Config{}), testCrawler(t))
+	reg, _ := buildRegistry(cfg, docs, index, feedsource.New(feedsource.Config{}), testCrawler(t))
 
 	if _, ok := reg.Lookup("http.request"); !ok {
 		t.Error("http.request is not registered")
@@ -83,7 +84,7 @@ func TestBuildRegistryRegistersBothShippedTools(t *testing.T) {
 
 func TestBuildRegistryRegistersTheJudgeTool(t *testing.T) {
 	docs, index := testStore(t)
-	r := buildRegistry(config.Config{}, docs, index, feedsource.New(feedsource.Config{}), testCrawler(t))
+	r, _ := buildRegistry(config.Config{}, docs, index, feedsource.New(feedsource.Config{}), testCrawler(t))
 	for _, name := range []string{"http.request", "model.complete", "judge.ask", "source.pull", "file.read", "file.text", "docs.put", "index.find", "docs.get", "quote.ground", "extract.run", "decision.record", "judge.each", "items.dedupe", "crawl.pull", "judge.outcome", "judge.calibrate", "decision.agreement"} {
 		if _, ok := r.Lookup(name); !ok {
 			t.Errorf("registry has no %s", name)
@@ -93,7 +94,7 @@ func TestBuildRegistryRegistersTheJudgeTool(t *testing.T) {
 
 func TestBuildRegistryRegistersTheTailoringTools(t *testing.T) {
 	docs, index := testStore(t)
-	r := buildRegistry(config.Config{}, docs, index, feedsource.New(feedsource.Config{}), testCrawler(t))
+	r, _ := buildRegistry(config.Config{}, docs, index, feedsource.New(feedsource.Config{}), testCrawler(t))
 	for _, name := range []string{"text.spans", "span.resolve", "citations.judge", "claims.settle", "items.cite", "items.gather", "text.lines"} {
 		if _, ok := r.Lookup(name); !ok {
 			t.Errorf("registry has no %s", name)
@@ -158,7 +159,8 @@ func TestStartAgentFailsLoudlyForAMissingCommand(t *testing.T) {
 	cfg.Agent.MaxToolResultBytes = 1 << 20
 	cfg.Permission.SummaryBytes = 200
 
-	_, _, err := startAgent(context.Background(), cfg, buildRegistry(cfg, docs, index, feedsource.New(feedsource.Config{}), testCrawler(t)), docs, nil)
+	reg, _ := buildRegistry(cfg, docs, index, feedsource.New(feedsource.Config{}), testCrawler(t))
+	_, _, err := startAgent(context.Background(), cfg, reg, docs, nil)
 	if err == nil || !strings.Contains(err.Error(), "no-such-agent") {
 		t.Errorf("err = %v; want one naming the command", err)
 	}
@@ -391,5 +393,119 @@ func TestProgressPrinterWritesOneLinePerEvent(t *testing.T) {
 		"atlas: step judge (judge.ask) failed\n"
 	if b.String() != want {
 		t.Errorf("progress output =\n%q\nwant\n%q", b.String(), want)
+	}
+}
+
+func TestEgressTableMarksLoopbackAsLocal(t *testing.T) {
+	cases := []struct {
+		baseURL, endpoint string
+		hosted            bool
+	}{
+		{"http://localhost:11434/v1", "http://localhost:11434", false},
+		{"http://127.0.0.1:1", "http://127.0.0.1:1", false},
+		{"http://[::1]:1", "http://[::1]:1", false},
+		{"https://api.example.com/v1", "https://api.example.com", true},
+		{"http://10.0.0.5:11434", "http://10.0.0.5:11434", true},
+	}
+	for _, tc := range cases {
+		cfg := config.Config{}
+		cfg.Model.BaseURL = tc.baseURL
+		table := egressTable(cfg, []string{"model.complete"})
+		if len(table) != 1 {
+			t.Fatalf("%s: table = %v, want one row", tc.baseURL, table)
+		}
+		row := table[0]
+		if row.Endpoint != tc.endpoint || row.Hosted != tc.hosted || !slices.Equal(row.Tools, []string{"model.complete"}) {
+			t.Errorf("%s: row = %+v, want endpoint %s, hosted %v, tools [model.complete]", tc.baseURL, row, tc.endpoint, tc.hosted)
+		}
+	}
+}
+
+func TestEgressTableAddsTheAgentAsHosted(t *testing.T) {
+	cfg := config.Config{}
+	cfg.Model.BaseURL = "http://localhost:11434/v1"
+	cfg.Agent.Command = "some-agent"
+	table := egressTable(cfg, nil)
+	if len(table) != 2 {
+		t.Fatalf("table = %v, want a model row and an agent row", table)
+	}
+	agent := table[1]
+	if agent.Endpoint != "agent:some-agent" || !agent.Hosted || !slices.Equal(agent.Tools, []string{"agent.do"}) {
+		t.Errorf("agent row = %+v", agent)
+	}
+}
+
+// Every tool built over a model client must be in the modelTools literal,
+// or the egress table would not name it. A call that builds a model client
+// itself is not a tool.
+func TestEgressTableCoversModelTools(t *testing.T) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "main.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse main.go: %v", err)
+	}
+	clients := []string{"provider", "judge", "extractor"}
+	fn := funcDecl(t, f, "buildRegistry")
+	var lit *ast.CompositeLit
+	builders := map[*ast.CallExpr]bool{}
+	ast.Inspect(fn, func(n ast.Node) bool {
+		assign, ok := n.(*ast.AssignStmt)
+		if !ok || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
+			return true
+		}
+		id, _ := assign.Lhs[0].(*ast.Ident)
+		switch {
+		case id == nil:
+		case id.Name == "modelTools":
+			lit, _ = assign.Rhs[0].(*ast.CompositeLit)
+		case slices.Contains(clients, id.Name):
+			if call, ok := assign.Rhs[0].(*ast.CallExpr); ok {
+				builders[call] = true
+			}
+		}
+		return true
+	})
+	if lit == nil || len(lit.Elts) == 0 {
+		t.Fatal("buildRegistry has no modelTools composite literal")
+	}
+	ast.Inspect(fn, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || builders[call] || !takesAny(call, clients) {
+			return true
+		}
+		if call.Pos() < lit.Pos() || call.End() > lit.End() {
+			t.Errorf("%s: a call over a model client sits outside modelTools", fset.Position(call.Pos()))
+		}
+		return true
+	})
+}
+
+func takesAny(call *ast.CallExpr, names []string) bool {
+	for _, arg := range call.Args {
+		if id, ok := arg.(*ast.Ident); ok && slices.Contains(names, id.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+func funcDecl(t *testing.T, f *ast.File, name string) *ast.FuncDecl {
+	t.Helper()
+	for _, decl := range f.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == name {
+			return fn
+		}
+	}
+	t.Fatalf("%s not found", name)
+	return nil
+}
+
+func TestBuildRegistryReportsModelToolNames(t *testing.T) {
+	docs, index := testStore(t)
+	_, names := buildRegistry(config.Config{}, docs, index, feedsource.New(feedsource.Config{}), testCrawler(t))
+	want := []string{"citations.judge", "extract.run", "judge.ask", "judge.each", "model.complete"}
+	got := slices.Sorted(slices.Values(names))
+	if !slices.Equal(got, want) {
+		t.Errorf("model tools = %v, want %v", got, want)
 	}
 }

@@ -16,8 +16,9 @@ import (
 )
 
 // Run executes a declared screen or action: it resolves the request against
-// the view files, waits for the single run slot, streams each step's
-// progress and ends with Done carrying the run's state. While it holds the
+// the view files, refuses with NeedsAcknowledgement while any hosted
+// endpoint is unacknowledged, waits for the single run slot, streams each
+// step's progress and ends with Done carrying the run's state. While it holds the
 // slot, the Asker sends its permission asks on this run's stream. A screen's
 // state is cached for its actions to bind.
 func (s *Server) Run(ctx context.Context, req *connect.Request[uiv1.RunRequest], stream *connect.ServerStream[uiv1.RunResponse]) error {
@@ -33,12 +34,19 @@ func (s *Server) Run(ctx context.Context, req *connect.Request[uiv1.RunRequest],
 	if err != nil {
 		return err
 	}
+	out := &runStream{stream: stream}
+	pending, err := s.unacknowledged(ctx)
+	if err != nil {
+		return connect.NewError(connect.CodeInternal, err)
+	}
+	if len(pending) > 0 {
+		return out.send(s.needsAcknowledgement(pending))
+	}
 	bp, err := s.blueprint(t, vars)
 	if err != nil {
 		return connect.NewError(connect.CodeInternal, err)
 	}
 
-	out := &runStream{stream: stream}
 	release, err := s.queue(ctx, out)
 	if err != nil {
 		return err
@@ -181,14 +189,23 @@ func (s *Server) queue(ctx context.Context, out *runStream) (func(), error) {
 		s.pending.Add(-1)
 		return nil, err
 	}
+	release, err := s.hold(ctx)
+	if err != nil {
+		s.pending.Add(-1)
+		return nil, err
+	}
+	return func() {
+		release()
+		s.pending.Add(-1)
+	}, nil
+}
+
+// hold waits for the run slot. The returned func gives it back.
+func (s *Server) hold(ctx context.Context) (func(), error) {
 	select {
 	case s.slot <- struct{}{}:
-		return func() {
-			<-s.slot
-			s.pending.Add(-1)
-		}, nil
+		return func() { <-s.slot }, nil
 	case <-ctx.Done():
-		s.pending.Add(-1)
 		return nil, fmt.Errorf("web: %w", ctx.Err())
 	}
 }

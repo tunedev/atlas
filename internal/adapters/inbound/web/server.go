@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"sync/atomic"
 	"time"
 
@@ -20,8 +21,8 @@ import (
 	"github.com/tunedev/atlas/internal/core/app"
 )
 
-// Endpoint is one model endpoint the UI may disclose data to, and whether
-// the user has acknowledged sending it there.
+// Endpoint is one endpoint the registry sends data to: the tools that send
+// there, and whether it is off this machine.
 type Endpoint struct {
 	Endpoint string
 	Hosted   bool
@@ -91,12 +92,16 @@ func NewToken() string {
 	return hex.EncodeToString(b)
 }
 
-// Views reports the loaded view files, the egress table and whether file
-// downloads are enabled.
-func (s *Server) Views(_ context.Context, _ *connect.Request[uiv1.ViewsRequest]) (*connect.Response[uiv1.ViewsResponse], error) {
+// Views reports the loaded view files, the egress table with each hosted
+// endpoint's acknowledgement state, and whether file downloads are enabled.
+func (s *Server) Views(ctx context.Context, _ *connect.Request[uiv1.ViewsRequest]) (*connect.Response[uiv1.ViewsResponse], error) {
 	viewsJSON, err := json.Marshal(s.deps.Views)
 	if err != nil {
 		return nil, fmt.Errorf("web: %w", err)
+	}
+	pending, err := s.unacknowledged(ctx)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 
 	egress := make([]*uiv1.Endpoint, len(s.deps.Egress))
@@ -105,8 +110,9 @@ func (s *Server) Views(_ context.Context, _ *connect.Request[uiv1.ViewsRequest])
 			Endpoint: e.Endpoint,
 			Hosted:   e.Hosted,
 			Tools:    e.Tools,
-			// Acknowledged is filled in by Task 8's egress check.
-			Acknowledged: false,
+			Acknowledged: e.Hosted && !slices.ContainsFunc(pending, func(p Endpoint) bool {
+				return p.Endpoint == e.Endpoint
+			}),
 		}
 	}
 
