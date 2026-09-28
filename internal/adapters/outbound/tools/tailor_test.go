@@ -159,3 +159,31 @@ func TestASendableRenderFailsWhenAGapIsPrinted(t *testing.T) {
 		}
 	}
 }
+
+// TestInstructionsRenderFromSettledOutput renders the shipped instructions
+// template from claims.settle's real output, bound the way the pack binds
+// it: every gap reaches the check list, and a question with no kept answer
+// sentence is not offered for pasting.
+func TestInstructionsRenderFromSettledOutput(t *testing.T) {
+	r := renderer(t)
+	settled := tailorCanned(t)
+	letter := settled["fields"].(map[string]any)["letter"].(map[string]any)
+	data := js(map[string]any{
+		"url":        "https://example.invalid/lamp/7",
+		"subject_id": "lamp:7",
+		"files":      []string{"a.pdf"},
+		"answers":    letter["answers"],
+		"gaps":       settled["gaps_all"],
+	})
+	expect := append([]string{"https://example.invalid/lamp/7"}, settled["gaps_all"].([]string)...)
+	_, err := r.Invoke(context.Background(), map[string]string{
+		"template": filepath.Join("..", "..", "..", "..", "packs", "tailor", "instructions.typ"),
+		"data":     data,
+		"output":   filepath.Join(t.TempDir(), "instructions.pdf"),
+		"expect":   js(expect),
+		"absent":   js([]string{"Can you pilot a harbour?", "Can you trim a wick?"}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

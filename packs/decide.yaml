@@ -1,9 +1,9 @@
 # Records an apply or skip. When a judgement preceded it, pass its path and
 # the question whose answer is the verdict, so a later reader can see where
 # the person overrode the model.
-#   atlas -pack packs/decide.yaml -var subject_id=greenhouse:gitlab:12345 \
+#   atlas -pack packs/decide.yaml -var subject_id=greenhouse~gitlab~12345 \
 #     -var choice=apply -var reason="Remote, strong backend focus" \
-#     -var judgement_path=judgements/greenhouse:gitlab:12345/<ts>.json \
+#     -var judgement_path=judgements/greenhouse~gitlab~12345/<ts>.json \
 #     -var verdict_question=verdict
 name: decide
 vars:

@@ -62,11 +62,18 @@ func RecordDocument(ctx context.Context, docs ports.Docs, index ports.Index, d D
 	return rev, nil
 }
 
-// CheckSubjectID rejects a subject id that could carry a document outside
-// its own directory: one containing a path separator or a ".." segment.
+// CheckSubjectID rejects a subject id that is not one folder name every OS
+// can create: one containing "..", a path separator, a character Windows
+// refuses in a file name, or a control character.
 func CheckSubjectID(id string) error {
-	if strings.Contains(id, "/") || strings.Contains(id, "..") {
+	if strings.Contains(id, "..") || strings.ContainsFunc(id, notInFolderName) {
 		return fmt.Errorf("subject id %q is not a plain name", id)
 	}
 	return nil
+}
+
+// notInFolderName reports whether r cannot appear in a folder name on
+// every OS.
+func notInFolderName(r rune) bool {
+	return r < 0x20 || strings.ContainsRune(`/\:*?"<>|`, r)
 }

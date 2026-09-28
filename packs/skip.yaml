@@ -1,0 +1,33 @@
+# Records that a posting is not being applied to: a skip decision, then the
+# not_applied stage. job-hunt.yaml runs it on every posting the policy
+# denies, passing choice=policy_skip so its automatic skips never count as
+# evidence for policy.suggest. Run it by hand on an asked posting; pass the
+# judgement path so the decision snapshots the verdict it overrode.
+#   atlas -pack packs/skip.yaml -var subject_id=<id> -var reason="On-site only" \
+#     -var judgement_path=judgements/<id>/<ts>.json
+name: skip
+vars:
+  subject_id: ""
+  reason: ""
+  judgement_path: ""
+  verdict_question: verdict
+  choice: skip
+  declared_by: user
+
+steps:
+  - id: decision
+    tool: decision.record
+    with:
+      subject_id: "{{ .vars.subject_id }}"
+      choice: "{{ .vars.choice }}"
+      reason: "{{ .vars.reason }}"
+      judgement_path: "{{ .vars.judgement_path }}"
+      verdict_question: "{{ if .vars.judgement_path }}{{ .vars.verdict_question }}{{ end }}"
+
+  - id: not_applied
+    tool: stage.declare
+    with:
+      subject_id: "{{ .vars.subject_id }}"
+      stage: not_applied
+      note: "{{ .vars.reason }}"
+      declared_by: "{{ .vars.declared_by }}"

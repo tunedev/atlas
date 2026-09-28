@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -15,6 +16,7 @@ import (
 // select into it by path; anything else is returned as text under "body".
 // A response body over maxBytes fails the call rather than being truncated:
 // a downstream step must never act on partial data believing it complete.
+// Only GET and HEAD are allowed: atlas drafts and never submits.
 type HTTP struct {
 	client   *http.Client
 	maxBytes int64
@@ -31,9 +33,12 @@ func (h *HTTP) Invoke(ctx context.Context, with map[string]string) (any, error) 
 	if url == "" {
 		return nil, fmt.Errorf("http.request: no url")
 	}
-	method := with["method"]
+	method := strings.ToUpper(with["method"])
 	if method == "" {
 		method = http.MethodGet
+	}
+	if method != http.MethodGet && method != http.MethodHead {
+		return nil, fmt.Errorf("http.request: %s refused: only GET and HEAD are allowed; atlas never submits", method)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, url, nil)

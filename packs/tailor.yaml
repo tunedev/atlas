@@ -3,8 +3,11 @@
 # Which requirements exist comes from the posting alone (the asked step), and
 # which questions exist from the questions var alone, one per line, so a
 # requirement or question the record cannot support becomes a gap instead of
-# vanishing. Writes three PDFs to out_dir: cv.pdf and letter.pdf carry only
-# supported content; review.pdf lists every gap and dropped count.
+# vanishing. Writes four PDFs to out_dir: cv.pdf and letter.pdf carry only
+# supported content; review.pdf lists every gap and dropped count;
+# instructions.pdf says where to submit (url), which file goes where, each
+# answer to paste, and the sent.yaml command to run once sent. Only then is
+# the drafted stage declared. Nothing is submitted.
 # Rendering needs ATLAS_RENDER_TYPST (or -render-typst) set to a typst binary.
 #   ATLAS_RENDER_TYPST=typst atlas -pack packs/tailor.yaml \
 #     -var store_root="$HOME/.atlas/workspace" -var subject_id=acme-backend \
@@ -17,7 +20,9 @@ vars:
   posting: ""
   questions: ""
   subject_id: ""
+  url: ""
   out_dir: ""
+  declared_by: tailor
   templates: "packs/tailor"
   relevance_threshold: "0.6"
   min_chars: "25"
@@ -180,14 +185,16 @@ steps:
         dropped_requirements: "{{ .steps.cite_items.dropped }}"
 
   # cv.pdf and letter.pdf are sendable: they carry only kept content, and a
-  # render fails if any gap text reaches them. review.pdf lists every gap.
+  # render fails if any gap text reaches them. With nothing kept, expect names
+  # a sentence the document cannot contain, so the render fails, nothing is
+  # written and drafted is never declared. review.pdf lists every gap.
   - id: cv
     tool: render.run
     with:
       template: "{{ .vars.templates }}/cv.typ"
       data: '{"history": {{ .steps.history.body }}, "tailored": {{ json .steps.settle.fields }}}'
       output: "{{ .vars.out_dir }}/cv.pdf"
-      expect: "{{ json .steps.settle.kept.bullets }}"
+      expect: '{{ if .steps.settle.kept.bullets }}{{ json .steps.settle.kept.bullets }}{{ else }}["a CV with at least one supported bullet"]{{ end }}'
       absent: "{{ json .steps.settle.gaps_text.requirements }}"
 
   - id: letter_pdf
@@ -196,7 +203,7 @@ steps:
       template: "{{ .vars.templates }}/letter.typ"
       data: '{"tailored": {{ json .steps.settle.fields }}}'
       output: "{{ .vars.out_dir }}/letter.pdf"
-      expect: "{{ json .steps.settle.kept.letter }}"
+      expect: '{{ if .steps.settle.kept.letter }}{{ json .steps.settle.kept.letter }}{{ else }}["a letter with at least one supported sentence"]{{ end }}'
       absent: "{{ json .steps.settle.gaps_text.letter }}"
 
   - id: review
@@ -208,3 +215,23 @@ steps:
          "dropped": {"requirements": {{ .steps.cite_items.dropped }}}}
       output: "{{ .vars.out_dir }}/review.pdf"
       expect: "{{ json .steps.settle.gaps_all }}"
+
+  - id: instructions
+    tool: render.run
+    with:
+      template: "{{ .vars.templates }}/instructions.typ"
+      data: |
+        {"url": {{ json .vars.url }},
+         "subject_id": {{ json .vars.subject_id }},
+         "files": ["cv.pdf", "letter.pdf"],
+         "answers": {{ json .steps.settle.fields.letter.answers }},
+         "gaps": {{ json .steps.settle.gaps_all }}}
+      output: "{{ .vars.out_dir }}/instructions.pdf"
+      expect: '{{ if .vars.url }}[{{ json .vars.url }}]{{ else }}[]{{ end }}'
+
+  - id: drafted
+    tool: stage.declare
+    with:
+      subject_id: "{{ .vars.subject_id }}"
+      stage: drafted
+      declared_by: "{{ .vars.declared_by }}"
