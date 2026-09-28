@@ -88,8 +88,7 @@ func (c *Client) Complete(ctx context.Context, p ports.Prompt) (ports.Completion
 	latency := time.Since(start)
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, errorSnippetMaxBytes))
-		return ports.Completion{}, fmt.Errorf("openaiprov: %s returned status %d: %s", c.name, resp.StatusCode, snippet)
+		return ports.Completion{}, fmt.Errorf("openaiprov: %s returned status %d: %s", c.name, resp.StatusCode, c.errorSnippet(resp.Body))
 	}
 
 	body, err := readLimited(resp.Body, c.maxBytes)
@@ -106,6 +105,28 @@ func (c *Client) Complete(ctx context.Context, p ports.Prompt) (ports.Completion
 	}
 
 	return toCompletion(chat, latency), nil
+}
+
+// errorSnippet returns the first errorSnippetMaxBytes of a non-2xx body
+// with every occurrence of the API key replaced by "[redacted]". A key that
+// starts inside the cap is read and replaced whole, so no part of it
+// survives truncation.
+func (c *Client) errorSnippet(body io.Reader) string {
+	raw, _ := io.ReadAll(io.LimitReader(body, int64(errorSnippetMaxBytes+len(c.apiKey))))
+	if c.apiKey == "" {
+		return string(raw[:min(len(raw), errorSnippetMaxBytes)])
+	}
+	var out strings.Builder
+	for i := 0; i < len(raw) && i < errorSnippetMaxBytes; {
+		if bytes.HasPrefix(raw[i:], []byte(c.apiKey)) {
+			out.WriteString("[redacted]")
+			i += len(c.apiKey)
+			continue
+		}
+		out.WriteByte(raw[i])
+		i++
+	}
+	return out.String()
 }
 
 // buildRequest maps a Prompt onto the wire request, adding logprobs and a

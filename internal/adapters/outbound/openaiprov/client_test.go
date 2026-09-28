@@ -284,6 +284,53 @@ func TestANonSuccessStatusErrorCarriesTheResponseBody(t *testing.T) {
 	}
 }
 
+func TestAnErrorBodyEchoingTheKeyIsRedacted(t *testing.T) {
+	const key = "sk-echoed-secret-7f3a"
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"error":"Incorrect API key provided: `+token+`, and again `+token+`"}`)
+	}))
+	t.Cleanup(s.Close)
+	c := openaiprov.New(openaiprov.Config{
+		Name: "test", BaseURL: s.URL, Model: "a-model", APIKey: key,
+		Timeout: 5 * time.Second, MaxBytes: 1 << 20,
+	})
+	_, err := c.Complete(context.Background(), ports.Prompt{User: "q"})
+	if err == nil {
+		t.Fatal("a 401 returned no error")
+	}
+	if strings.Contains(err.Error(), key) {
+		t.Errorf("error carries the API key: %v", err)
+	}
+	if !strings.Contains(err.Error(), "[redacted]") {
+		t.Errorf("error does not mark the redaction: %v", err)
+	}
+}
+
+func TestAKeyNearTheErrorCapLeavesNoFragment(t *testing.T) {
+	const key = "sk-straddling-secret-abcdefghijklmnop"
+	for name, body := range map[string]string{
+		"straddling the cap":       strings.Repeat("a", 500) + key,
+		"pulled in by a redaction": key + strings.Repeat("a", 483) + key,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := serve(t, http.StatusUnauthorized, body, nil)
+			c := openaiprov.New(openaiprov.Config{
+				Name: "test", BaseURL: s.URL, Model: "a-model", APIKey: key,
+				Timeout: 5 * time.Second, MaxBytes: 1 << 20,
+			})
+			_, err := c.Complete(context.Background(), ports.Prompt{User: "q"})
+			if err == nil {
+				t.Fatal("a 401 returned no error")
+			}
+			if strings.Contains(err.Error(), key[:8]) {
+				t.Errorf("error carries a fragment of the API key: %v", err)
+			}
+		})
+	}
+}
+
 func TestAnOverLongBodyIsRefusedRatherThanTruncated(t *testing.T) {
 	big := `{"model":"a-model","choices":[{"message":{"content":"` + strings.Repeat("x", 4096) + `"}}]}`
 	s := serve(t, http.StatusOK, big, nil)

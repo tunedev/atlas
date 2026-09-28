@@ -267,7 +267,7 @@ rendered inline.
 | Reachable from another local user or process without the token | 32 random bytes per start, printed once; the session cookie is checked on every RPC |
 | Readable or writable from a web page the user visits | Host check, Origin check on every write, no CORS headers, `frame-ancestors 'none'` |
 | A pack, tool, var or filesystem path chosen by the browser | Closed binding sources; `Run` takes ids and declared values only; files only under the files root |
-| The model API key | The web package never receives config. The egress table carries scheme and host only. |
+| The model API key | The web package never receives config, and the egress table carries scheme and host only. A model error body that echoes the key has it replaced by `[redacted]` in the provider adapter, so no surface (Run stream, CLI stderr, log, commit) sees it. |
 | Data sent to a hosted endpoint without the user agreeing | The consent gate |
 | Script from the record running in the UI's origin | Text-only rendering, no `{@html}`, downloads as attachments, CSP `default-src 'self'` |
 
