@@ -5,4 +5,4 @@ plugins:
     opt: module=github.com/tunedev/atlas
   - local: [go, tool, protoc-gen-connect-go]
     out: .
-    opt: module=github.com/tunedev/atlas
+    opt: [module=github.com/tunedev/atlas, package_suffix]

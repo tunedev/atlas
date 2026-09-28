@@ -2,13 +2,12 @@
 //
 // Source: atlas/web/v1/ui.proto
 
-package uiv1connect
+package uiv1
 
 import (
 	connect "connectrpc.com/connect"
 	context "context"
 	errors "errors"
-	uiv1 "github.com/tunedev/atlas/internal/adapters/inbound/web/uiv1"
 	http "net/http"
 	strings "strings"
 )
@@ -47,11 +46,11 @@ const (
 
 // UIServiceClient is a client for the atlas.web.v1.UIService service.
 type UIServiceClient interface {
-	Views(context.Context, *connect.Request[uiv1.ViewsRequest]) (*connect.Response[uiv1.ViewsResponse], error)
-	Run(context.Context, *connect.Request[uiv1.RunRequest]) (*connect.ServerStreamForClient[uiv1.RunResponse], error)
-	Answer(context.Context, *connect.Request[uiv1.AnswerRequest]) (*connect.Response[uiv1.AnswerResponse], error)
-	Acknowledge(context.Context, *connect.Request[uiv1.AcknowledgeRequest]) (*connect.Response[uiv1.AcknowledgeResponse], error)
-	Document(context.Context, *connect.Request[uiv1.DocumentRequest]) (*connect.Response[uiv1.DocumentResponse], error)
+	Views(context.Context, *connect.Request[ViewsRequest]) (*connect.Response[ViewsResponse], error)
+	Run(context.Context, *connect.Request[RunRequest]) (*connect.ServerStreamForClient[RunResponse], error)
+	Answer(context.Context, *connect.Request[AnswerRequest]) (*connect.Response[AnswerResponse], error)
+	Acknowledge(context.Context, *connect.Request[AcknowledgeRequest]) (*connect.Response[AcknowledgeResponse], error)
+	Document(context.Context, *connect.Request[DocumentRequest]) (*connect.Response[DocumentResponse], error)
 }
 
 // NewUIServiceClient constructs a client for the atlas.web.v1.UIService service. By default, it
@@ -63,33 +62,33 @@ type UIServiceClient interface {
 // http://api.acme.com or https://acme.com/grpc).
 func NewUIServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) UIServiceClient {
 	baseURL = strings.TrimRight(baseURL, "/")
-	uIServiceMethods := uiv1.File_atlas_web_v1_ui_proto.Services().ByName("UIService").Methods()
+	uIServiceMethods := File_atlas_web_v1_ui_proto.Services().ByName("UIService").Methods()
 	return &uIServiceClient{
-		views: connect.NewClient[uiv1.ViewsRequest, uiv1.ViewsResponse](
+		views: connect.NewClient[ViewsRequest, ViewsResponse](
 			httpClient,
 			baseURL+UIServiceViewsProcedure,
 			connect.WithSchema(uIServiceMethods.ByName("Views")),
 			connect.WithClientOptions(opts...),
 		),
-		run: connect.NewClient[uiv1.RunRequest, uiv1.RunResponse](
+		run: connect.NewClient[RunRequest, RunResponse](
 			httpClient,
 			baseURL+UIServiceRunProcedure,
 			connect.WithSchema(uIServiceMethods.ByName("Run")),
 			connect.WithClientOptions(opts...),
 		),
-		answer: connect.NewClient[uiv1.AnswerRequest, uiv1.AnswerResponse](
+		answer: connect.NewClient[AnswerRequest, AnswerResponse](
 			httpClient,
 			baseURL+UIServiceAnswerProcedure,
 			connect.WithSchema(uIServiceMethods.ByName("Answer")),
 			connect.WithClientOptions(opts...),
 		),
-		acknowledge: connect.NewClient[uiv1.AcknowledgeRequest, uiv1.AcknowledgeResponse](
+		acknowledge: connect.NewClient[AcknowledgeRequest, AcknowledgeResponse](
 			httpClient,
 			baseURL+UIServiceAcknowledgeProcedure,
 			connect.WithSchema(uIServiceMethods.ByName("Acknowledge")),
 			connect.WithClientOptions(opts...),
 		),
-		document: connect.NewClient[uiv1.DocumentRequest, uiv1.DocumentResponse](
+		document: connect.NewClient[DocumentRequest, DocumentResponse](
 			httpClient,
 			baseURL+UIServiceDocumentProcedure,
 			connect.WithSchema(uIServiceMethods.ByName("Document")),
@@ -100,45 +99,45 @@ func NewUIServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...c
 
 // uIServiceClient implements UIServiceClient.
 type uIServiceClient struct {
-	views       *connect.Client[uiv1.ViewsRequest, uiv1.ViewsResponse]
-	run         *connect.Client[uiv1.RunRequest, uiv1.RunResponse]
-	answer      *connect.Client[uiv1.AnswerRequest, uiv1.AnswerResponse]
-	acknowledge *connect.Client[uiv1.AcknowledgeRequest, uiv1.AcknowledgeResponse]
-	document    *connect.Client[uiv1.DocumentRequest, uiv1.DocumentResponse]
+	views       *connect.Client[ViewsRequest, ViewsResponse]
+	run         *connect.Client[RunRequest, RunResponse]
+	answer      *connect.Client[AnswerRequest, AnswerResponse]
+	acknowledge *connect.Client[AcknowledgeRequest, AcknowledgeResponse]
+	document    *connect.Client[DocumentRequest, DocumentResponse]
 }
 
 // Views calls atlas.web.v1.UIService.Views.
-func (c *uIServiceClient) Views(ctx context.Context, req *connect.Request[uiv1.ViewsRequest]) (*connect.Response[uiv1.ViewsResponse], error) {
+func (c *uIServiceClient) Views(ctx context.Context, req *connect.Request[ViewsRequest]) (*connect.Response[ViewsResponse], error) {
 	return c.views.CallUnary(ctx, req)
 }
 
 // Run calls atlas.web.v1.UIService.Run.
-func (c *uIServiceClient) Run(ctx context.Context, req *connect.Request[uiv1.RunRequest]) (*connect.ServerStreamForClient[uiv1.RunResponse], error) {
+func (c *uIServiceClient) Run(ctx context.Context, req *connect.Request[RunRequest]) (*connect.ServerStreamForClient[RunResponse], error) {
 	return c.run.CallServerStream(ctx, req)
 }
 
 // Answer calls atlas.web.v1.UIService.Answer.
-func (c *uIServiceClient) Answer(ctx context.Context, req *connect.Request[uiv1.AnswerRequest]) (*connect.Response[uiv1.AnswerResponse], error) {
+func (c *uIServiceClient) Answer(ctx context.Context, req *connect.Request[AnswerRequest]) (*connect.Response[AnswerResponse], error) {
 	return c.answer.CallUnary(ctx, req)
 }
 
 // Acknowledge calls atlas.web.v1.UIService.Acknowledge.
-func (c *uIServiceClient) Acknowledge(ctx context.Context, req *connect.Request[uiv1.AcknowledgeRequest]) (*connect.Response[uiv1.AcknowledgeResponse], error) {
+func (c *uIServiceClient) Acknowledge(ctx context.Context, req *connect.Request[AcknowledgeRequest]) (*connect.Response[AcknowledgeResponse], error) {
 	return c.acknowledge.CallUnary(ctx, req)
 }
 
 // Document calls atlas.web.v1.UIService.Document.
-func (c *uIServiceClient) Document(ctx context.Context, req *connect.Request[uiv1.DocumentRequest]) (*connect.Response[uiv1.DocumentResponse], error) {
+func (c *uIServiceClient) Document(ctx context.Context, req *connect.Request[DocumentRequest]) (*connect.Response[DocumentResponse], error) {
 	return c.document.CallUnary(ctx, req)
 }
 
 // UIServiceHandler is an implementation of the atlas.web.v1.UIService service.
 type UIServiceHandler interface {
-	Views(context.Context, *connect.Request[uiv1.ViewsRequest]) (*connect.Response[uiv1.ViewsResponse], error)
-	Run(context.Context, *connect.Request[uiv1.RunRequest], *connect.ServerStream[uiv1.RunResponse]) error
-	Answer(context.Context, *connect.Request[uiv1.AnswerRequest]) (*connect.Response[uiv1.AnswerResponse], error)
-	Acknowledge(context.Context, *connect.Request[uiv1.AcknowledgeRequest]) (*connect.Response[uiv1.AcknowledgeResponse], error)
-	Document(context.Context, *connect.Request[uiv1.DocumentRequest]) (*connect.Response[uiv1.DocumentResponse], error)
+	Views(context.Context, *connect.Request[ViewsRequest]) (*connect.Response[ViewsResponse], error)
+	Run(context.Context, *connect.Request[RunRequest], *connect.ServerStream[RunResponse]) error
+	Answer(context.Context, *connect.Request[AnswerRequest]) (*connect.Response[AnswerResponse], error)
+	Acknowledge(context.Context, *connect.Request[AcknowledgeRequest]) (*connect.Response[AcknowledgeResponse], error)
+	Document(context.Context, *connect.Request[DocumentRequest]) (*connect.Response[DocumentResponse], error)
 }
 
 // NewUIServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -147,7 +146,7 @@ type UIServiceHandler interface {
 // By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
 // and JSON codecs. They also support gzip compression.
 func NewUIServiceHandler(svc UIServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
-	uIServiceMethods := uiv1.File_atlas_web_v1_ui_proto.Services().ByName("UIService").Methods()
+	uIServiceMethods := File_atlas_web_v1_ui_proto.Services().ByName("UIService").Methods()
 	uIServiceViewsHandler := connect.NewUnaryHandler(
 		UIServiceViewsProcedure,
 		svc.Views,
@@ -199,22 +198,22 @@ func NewUIServiceHandler(svc UIServiceHandler, opts ...connect.HandlerOption) (s
 // UnimplementedUIServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedUIServiceHandler struct{}
 
-func (UnimplementedUIServiceHandler) Views(context.Context, *connect.Request[uiv1.ViewsRequest]) (*connect.Response[uiv1.ViewsResponse], error) {
+func (UnimplementedUIServiceHandler) Views(context.Context, *connect.Request[ViewsRequest]) (*connect.Response[ViewsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("atlas.web.v1.UIService.Views is not implemented"))
 }
 
-func (UnimplementedUIServiceHandler) Run(context.Context, *connect.Request[uiv1.RunRequest], *connect.ServerStream[uiv1.RunResponse]) error {
+func (UnimplementedUIServiceHandler) Run(context.Context, *connect.Request[RunRequest], *connect.ServerStream[RunResponse]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("atlas.web.v1.UIService.Run is not implemented"))
 }
 
-func (UnimplementedUIServiceHandler) Answer(context.Context, *connect.Request[uiv1.AnswerRequest]) (*connect.Response[uiv1.AnswerResponse], error) {
+func (UnimplementedUIServiceHandler) Answer(context.Context, *connect.Request[AnswerRequest]) (*connect.Response[AnswerResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("atlas.web.v1.UIService.Answer is not implemented"))
 }
 
-func (UnimplementedUIServiceHandler) Acknowledge(context.Context, *connect.Request[uiv1.AcknowledgeRequest]) (*connect.Response[uiv1.AcknowledgeResponse], error) {
+func (UnimplementedUIServiceHandler) Acknowledge(context.Context, *connect.Request[AcknowledgeRequest]) (*connect.Response[AcknowledgeResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("atlas.web.v1.UIService.Acknowledge is not implemented"))
 }
 
-func (UnimplementedUIServiceHandler) Document(context.Context, *connect.Request[uiv1.DocumentRequest]) (*connect.Response[uiv1.DocumentResponse], error) {
+func (UnimplementedUIServiceHandler) Document(context.Context, *connect.Request[DocumentRequest]) (*connect.Response[DocumentResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("atlas.web.v1.UIService.Document is not implemented"))
 }
