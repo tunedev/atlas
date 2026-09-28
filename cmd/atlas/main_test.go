@@ -708,21 +708,20 @@ steps:
       kind: decision
 `
 
-// writeDecisionsView writes the decisions view and its screen pack into a
-// temp dir and returns the view's path.
+// writeDecisionsView writes the decisions view, its screen packs and a copy
+// of the shipped decide pack into a temp dir and returns the view's path.
 func writeDecisionsView(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	decide, err := filepath.Abs(filepath.Join("..", "..", "packs", "decide.yaml"))
+	decide, err := os.ReadFile(filepath.Join("..", "..", "packs", "decide.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	rel, err := filepath.Rel(dir, decide)
-	if err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "decide.yaml"), decide, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	view := filepath.Join(dir, "decisions.ui.yaml")
-	if err := os.WriteFile(view, []byte(fmt.Sprintf(decisionsView, rel)), 0o600); err != nil {
+	if err := os.WriteFile(view, []byte(fmt.Sprintf(decisionsView, "decide.yaml")), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "decisions.yaml"), []byte(decisionsPack), 0o600); err != nil {

@@ -186,12 +186,20 @@ func TestModelAPIKeyNeverAppearsInUsageOutput(t *testing.T) {
 	orig := os.Stderr
 	os.Stderr = w
 
+	// The pipe is drained while Load writes: usage text larger than the
+	// pipe's buffer (4 KiB on Windows) would otherwise block Load forever.
+	var out bytes.Buffer
+	drained := make(chan struct{})
+	go func() {
+		io.Copy(&out, r)
+		close(drained)
+	}()
+
 	_, loadErr := config.Load([]string{"-pack", "p.yaml", "-bogus-flag"})
 
 	os.Stderr = orig
 	w.Close()
-	var out bytes.Buffer
-	io.Copy(&out, r)
+	<-drained
 
 	if loadErr == nil {
 		t.Fatal("Load succeeded with an unknown flag")
