@@ -6,9 +6,16 @@ and rests on Epic 2's `Provider` (`docs/design/the-provider.md`'s stories, deliv
 `internal/core/ports/provider.go`), Epic 1's record (`Docs`/`Index`), and Epic 12's `Runner`
 seam. It is written against code that exists today, not against a future increment.
 
-**Goal:** two questions nothing in atlas answers today — what a run cost, and what left the
-machine — answered from the record, without turning either measurement into a reason a run
-can fail.
+**Goal, restated.** The first draft of this design scoped itself to what a run cost in
+dollars and what left the machine. The human's actual ask is wider and more precise: "I want
+all the turns and all the calls to any external dependencies especially LLMs to have a ledger
+from day one so we can easily look back at areas we can optimize for a more efficient call, or
+preempted [sic] exhaustive options." That is not a spend report that happens to count tokens.
+It is an **optimisation record** — every call this process makes to something outside itself,
+kept from the day the calling code is written, so the questions in §"Six questions this
+schema answers" can be asked of real traffic instead of retrofitted onto it later. Spend in
+USD is one column of that record, not its purpose; §1 and §2.1 below are the model-pricing
+slice of a design that now covers every outbound dependency.
 
 ## What exists today
 
@@ -62,6 +69,57 @@ Checked by reading, not assumed:
   would diverge (several named engines, one chain), so this design keys pricing by both axes
   now rather than forcing a breaking change to the table's shape when that chain exists.
 
+**What else reaches outside the process.** `Provider` is one of five paths, read one by one
+rather than assumed:
+
+- **`crawlsource.Source.Pull`** (`internal/adapters/outbound/crawlsource/source.go:147-175`)
+  loops over every configured target and, per target, either fetches it with Colly through a
+  shared `Conduct` (robots check, per-host pacing, `Conduct.send`'s own retry-with-backoff loop
+  — `retry.go:20-37` — and conditional-GET revalidation against a local ETag/Last-Modified
+  cache — `revalidate.go`) or renders it in a headless Chrome `chrome.render` navigates
+  (`render.go:49-119`). One `Pull` call therefore makes as many outbound requests as it has
+  targets, each with its own retry count and its own cache outcome — a single number on `Pull`
+  itself cannot represent that. `Source.LastReport().Revalidated` already exists as a
+  Pull-wide revalidation count (`source.go:66-71`, read by `tools.CrawlPull` into its own
+  `_meta.revalidated` — `tools/crawl.go:65`); the failure taxonomy `crawlsource` already
+  computes per target — `KindDisallowed`, `KindFetch`, `KindStale`, `KindNeedsRendering`,
+  `KindRenderingUnavailable` (`source.go:kindOf`, lines 276-290) — is a ready-made error
+  classification, independent of and older than PR #52's `ports.ErrRejected`. None of this
+  reaches a span, a log, or a record today.
+- **`feedsource.Source.Pull`** (`internal/adapters/outbound/feedsource/source.go:45-68`) makes
+  exactly one outbound call per `Pull`: a depth-one `git.FetchContext` of one pinned ref from
+  one remote. When the tip has not moved, `go-git` returns `git.NoErrAlreadyUpToDate` and no
+  new objects are transferred — the git-native equivalent of an HTTP 304. Nothing records
+  whether a Pull actually moved bytes or found nothing new.
+- **`acpagent.Client.Do`** (`internal/adapters/outbound/acpagent/client.go`, `turn.go`) speaks
+  ACP to a subprocess over stdio. The design already found (below, §2.4) that atlas cannot see
+  what that subprocess itself sends over the network; what it can see — the turn's wall time and
+  whether it errored — is recorded nowhere but the step span the runner already opens.
+- **`tools.HTTP`** (`internal/adapters/outbound/tools/http.go`, tool name `http.request`) is a
+  raw `net/http` `GET`/`HEAD` a pack calls directly. It implements `ports.Tool`, not
+  `ports.Provider` or `ports.Source` — there is no port to decorate here, because there is no
+  port at all between this tool and the network. It has no cache and no retry.
+- **`app.Extractor.Extract`** (`internal/core/app/extract.go:54`) — the "extractor" a first
+  read of the brief might expect to be a sixth path — calls `provider.Complete` directly, the
+  same call `app.Judge.Ask` makes. It is not a separate outbound dependency; it is already
+  covered the moment `Provider` is decorated once (§2.1), which is exactly what line 24 above
+  already found missing usage attributes for.
+
+**Recording is not free.** `ports.Docs.Put`'s own contract — "a write that changes a path's
+body produces a new revision" (`internal/core/ports/docs.go`) — is, on `gitdocs.Store`, one git
+commit. Every `RecordDocument` call is a commit. This bounds how granular a *recorded* ledger
+entry can be without the record itself becoming the thing that needs optimising (§3's volume
+analysis).
+
+**Coverage already exists and is already flagged as under-used.** `ports.Answer.Coverage`
+(`internal/core/ports/judge.go:59-69`) carries `Represented`/`Declared` on every answer a
+`Judgement` holds; `docs/notes/2026-09-24-epic-3-closing.md`, quoted in full by
+`docs/specs/2026-09-27-epic-11-tracking.md`, already names the gap this design closes for the
+ledger: "a coverage-0 judgement should probably be excluded from any calibration sample built
+later... but nothing marks it as such today; `Coverage` sits on the record, unused by anything
+that reads it." §2.6 below is that marking, at the call level rather than only the judgement
+level.
+
 ## Approaches considered
 
 **Where to meter a call.**
@@ -71,6 +129,30 @@ Checked by reading, not assumed:
 | A | Teach every tool that calls `Provider` (`model.go`, `judge.go`, `extract.go`, `citejudge.go`, and whatever Epic 9/10 add) to record its own usage and cost | Rejected. This is the exact incident `../CLAUDE.md`'s "Fix placement" section warns about: it fixes today's four call sites and leaves every future one a landmine, and it is precisely how `judge.each` went unmeasured — `model.complete` was taught, nothing else was. |
 | B | Decorate `ports.Provider` once, at `buildRegistry`'s one construction site, the same shape `Chain` already uses (a `Provider` implemented over another `Provider`) | **Chosen.** Every current and future consumer of `Provider` is metered without a line changing in `model.go`, `judge.go`, `extract.go`, or whichever tool Epic 9 or 10 adds. |
 | C | Have `Runner.execStep` inspect a tool's returned `map[string]any` for a conventional `usage` key | Rejected. `execStep`'s own doc comment is "nothing here knows what any tool does"; reading a tool's result shape by convention breaks that, and it still only sees one number per step, not one per call inside `judge.each`'s loop. |
+
+**The same choice, widened to `Source` and `Agent`, with one caveat `Provider` does not have.**
+`Provider.Complete` is one call in, one `Completion` out — a decorator over the port sees
+exactly what happened, every time. `Agent.Do` is the same shape: one turn in, one `AgentResult`
+out, so a `MeteredAgent` decorating `ports.Agent` (§2.4) works exactly like `Metered` does, with
+the same zero-cost guarantee for whichever agent adapter runs next. `Source.Pull`, on
+`feedsource`, is also 1:1 with its one outbound git fetch, so a port-level decorator would work
+there too — but on `crawlsource`, `Pull` fans out internally over every target (above), and a
+decorator sitting outside `Pull` cannot see a single target's URL, retry count, or cache
+outcome; `Pull`'s own return shape (`[]ports.Item`, one `Failures` error) does not carry them
+out. Recording `crawlsource`'s per-target detail can therefore only happen inside
+`crawlsource` itself, at `Source.fetch`/`s.fetched`/`s.rendered`, exactly where those facts are
+already computed and nowhere else. §2.2 records both adapters the same way — inside the
+adapter, at its real call site — rather than splitting `Source` into "the port gets a decorator"
+for one implementation and "the adapter records itself" for the other; a reader should not have
+to learn two mechanisms for one interface. This is not Approach A's rejected pattern: Approach A
+was teaching every *consumer* of a port (`model.go`, `judge.go`, `extract.go`, and whichever
+tool comes next) to record itself, which grows one entry at a time forever. `crawlsource` and
+`feedsource` are the *adapters*, not consumers — there are exactly two `Source` implementations
+today, recording lives in both of them once, and a third `Source` a future epic adds either
+follows the same one-line pattern or, if it is 1:1 like `feedsource`, could be covered by a
+generic wrapper with no code of its own. `tools.HTTP` has no port beneath it at all (above), so
+recording is a small addition to that one file — the narrowest case, not a precedent for
+teaching tools in general to record themselves.
 
 **Where to record the roll-up.**
 
@@ -94,6 +176,12 @@ either: `agent.do` is one step's tool inside a run, the same as `model.complete`
 **A run is one `Runner.Run` call.** The roll-up this design adds is scoped to it.
 
 ## 1. Pricing
+
+**Scope: the model provider only.** A dollar price table means something for `Provider` —
+vendors sell tokens. It means nothing for a crawl fetch, a git fetch, an HTTP fetch or an agent
+turn: nobody bills atlas per request for those, on the free-laptop-or-free-tier stack the Forge
+constrains this project to. §2.2–§2.4 record their cost in time and bytes instead, the same
+non-dollar column §"Local models are not free" below already establishes for local compute.
 
 ```go
 // PriceMToken is USD per one million tokens, kept at that scale to avoid
@@ -183,139 +271,245 @@ laptop GPU — is exactly the number this column would have shown.
 future runs. A recorded run's USD figures are not re-derived from the table on read; re-pricing
 history is not supported, the same immutability the rest of the record already has.
 
-## 2. Metering every call, once
+## 2. Metering every call, once — every dependency, at its own boundary
 
-```go
-// internal/core/app/meter.go
-
-// CallSpend is what one Provider.Complete call cost, priced against the
-// table in force when it was made.
-type CallSpend struct {
-    StepID, Tool               string
-    Provider, Model             string
-    InputTokens, OutputTokens   int
-    USD                         float64
-    Priced                      bool
-    Hosted                      bool
-    Endpoint                    string
-    LatencyMS                   int64
-    PromptHash                  string // sha256 of System+User, never the text itself
-}
-
-// Metered wraps a Provider, adding no behavior to Complete beyond recording
-// what it cost: onto the run's Ledger, when the call's context carries one,
-// and as a span event on whatever span is already open. It never changes
-// what next returns.
-type Metered struct {
-    next     ports.Provider
-    prices   PricingTable
-    hosted   bool
-    endpoint string
-}
-
-func NewMetered(next ports.Provider, prices PricingTable, hosted bool, endpoint string) *Metered {
-    return &Metered{next: next, prices: prices, hosted: hosted, endpoint: endpoint}
-}
-
-func (m *Metered) Name() string { return m.next.Name() }
-
-func (m *Metered) Complete(ctx context.Context, p ports.Prompt) (ports.Completion, error) {
-    c, err := m.next.Complete(ctx, p)
-    if err != nil {
-        return c, err // no Usage on a failed call; see "Deliberately not in this increment"
-    }
-    price := m.prices.Lookup(m.next.Name(), c.Model)
-    cs := CallSpend{
-        StepID: stepIDFrom(ctx), Tool: toolFrom(ctx),
-        Provider: m.next.Name(), Model: c.Model,
-        InputTokens: c.Usage.PromptTokens, OutputTokens: c.Usage.CompletionTokens,
-        USD: Cost(c.Usage, price), Priced: price.Known,
-        Hosted: m.hosted, Endpoint: m.endpoint,
-        LatencyMS: c.Latency.Milliseconds(),
-        PromptHash: promptHash(p),
-    }
-    if l := ledgerFrom(ctx); l != nil {
-        l.Add(cs)
-    }
-    trace.SpanFromContext(ctx).AddEvent("atlas.model.call", trace.WithAttributes(
-        attribute.String("gen_ai.response.model", c.Model),
-        attribute.Int("gen_ai.usage.input_tokens", c.Usage.PromptTokens),
-        attribute.Int("gen_ai.usage.output_tokens", c.Usage.CompletionTokens),
-        attribute.Int64("atlas.model.latency_ms", c.Latency.Milliseconds()),
-        attribute.Float64("atlas.model.usd", cs.USD),
-        attribute.Bool("atlas.model.priced", cs.Priced),
-        attribute.Bool("atlas.model.hosted", cs.Hosted),
-    ))
-    return c, nil
-}
-```
-
-**Why an event, not `SetAttributes`.** `tools.Model.Invoke` today calls `span.SetAttributes`
-(model.go:46-51), which overwrites a key on repeated calls. That is harmless for
-`model.complete` (one call per step) and wrong for `judge.each` (many calls, one span): the
-second call would silently erase the first's numbers. `Metered.Complete` uses `AddEvent`
-instead — one timestamped, independent record per call, on however many calls one step span
-covers. `model.go`'s own `SetAttributes` call is deleted: `Metered` now sets these four
-attributes for every call, `model.complete` included, so the tool no longer needs to.
-
-**Wired once, at the one place `Provider` is built:**
-
-```go
-// cmd/atlas/main.go, buildRegistry
-provider := openaiprov.New(openaiprov.Config{ /* unchanged */ })
-metered := app.NewMetered(provider, pricingTable, app.IsHostedEndpoint(cfg.Model.BaseURL), cfg.Model.BaseURL)
-judge := app.NewJudge(metered, app.JudgeConfig{ /* unchanged */ })
-extractor := app.NewExtractor(metered, app.ExtractorConfig{ /* unchanged */ })
-// tools.NewModel(metered) in place of tools.NewModel(provider)
-```
-
-Zero lines change in `judge.go`, `extract.go`, `model.go`, `each.go`, `citejudge.go`. A future
-tool Epic 9 or 10 adds, built over `judge` or `extractor` or a fresh `tools.NewModel(metered)`
-call, is metered from the day it is written, the same way it will be traced from the day it is
-written — no one has to remember.
-
-`app.IsHostedEndpoint` (a host/loopback check) is new in this epic and is exactly the rule
-`docs/specs/2026-09-27-epic-13-web-ui.md` §13.5 already describes for its egress table
-("`hosted`... true unless the host is `localhost` or resolves to a loopback IP") but does not
-yet implement. This epic builds it once, in `internal/core/app`; Epic 13 should import it for
-the egress table rather than reimplementing the same check a second time.
-
-**An agent's calls are structurally invisible here, same as to Epic 13.5.** `agent.do` runs a
-subprocess over ACP; it never calls `ports.Provider`. Nothing in this design can price or meter
-what a configured agent sends — atlas cannot see inside it, the same finding §13.5 already
-states for its egress table ("atlas cannot see where an agent sends what it is given"). The
-roll-up records an agent step's wall-clock time (already on its span) and nothing about tokens
-or cost. This is not a gap this epic leaves open by choice; it is what "an agent is a
-subprocess we hand a prompt to" already means.
-
-## 3. The per-run roll-up
+One shape, one `LedgerEntry`, used by all five paths so a reader learns one schema, not five:
 
 ```go
 // internal/core/app/ledger.go
 
-// Ledger accumulates one run's CallSpends as they happen. It is created
-// fresh per Run call, never reused across runs and never shared as a
-// Runner field, so two runs sharing a registry (Epic 13.1's server) never
-// interleave.
-type Ledger struct {
-    mu    sync.Mutex
-    calls []CallSpend
-}
-
-func (l *Ledger) Add(c CallSpend) { l.mu.Lock(); defer l.mu.Unlock(); l.calls = append(l.calls, c) }
-func (l *Ledger) Snapshot() []CallSpend { l.mu.Lock(); defer l.mu.Unlock(); return append([]CallSpend{}, l.calls...) }
-
-// RunSpend is every call a Ledger recorded over one Runner.Run.
-type RunSpend struct {
-    Blueprint string
-    Calls     []CallSpend
+// LedgerEntry is one call to something outside this process. Dependency and
+// Operation say what kind of call it was ("provider"/"complete",
+// "crawl"/"fetch", "crawl"/"render", "feed"/"pull", "agent"/"do",
+// "http"/"request"); every other field is zero-valued when it does not
+// apply to that kind, which is a fact about the call, not a gap in the
+// record — InputTokens/OutputTokens/USD/Priced mean nothing for a git
+// fetch, RetryCount and Cached mean nothing for a model call today because
+// no retrying decorator exists yet (RetryCount stays real, and stays 0,
+// until PR #52's classification gives Metered something to retry on).
+type LedgerEntry struct {
+    Dependency, Operation     string
+    StepID, Tool              string
+    Endpoint                  string // host only, never a full URL
+    Hosted                    bool
+    RequestHash                string // sha256; see per-dependency notes below
+    Bytes                      int    // response/rendered-page size; 0 for a model call, priced in tokens instead
+    InputTokens, OutputTokens int
+    USD                        float64
+    Priced                     bool
+    LatencyMS                  int64
+    RetryCount                 int
+    Cached                     bool   // served from a local cache, or answered "not modified" / "already up to date"
+    ErrorClass                 string // "" on success
+    ZeroCoverageAnswers, TotalAnswers int // set only by Judge.Ask; see §2.6
 }
 ```
 
-**How the ledger reaches `Metered` without changing any tool's signature.** The same way a
-span already does: `Run` attaches a fresh `Ledger` to the context it passes down, and
-`execStep` attaches the current step's id and tool name alongside it, right where it already
-opens that step's span:
+### 2.1 The model provider — `Metered` over `ports.Provider`
+
+Unchanged in shape from the first draft of this design; `CallSpend` above is renamed
+`LedgerEntry` and gains the fields the other four paths need, all zero here except:
+
+```go
+func (m *Metered) Complete(ctx context.Context, p ports.Prompt) (ports.Completion, error) {
+    start := time.Now()
+    c, err := m.next.Complete(ctx, p)
+    e := LedgerEntry{
+        Dependency: "provider", Operation: "complete",
+        StepID: stepIDFrom(ctx), Tool: toolFrom(ctx),
+        Endpoint: m.endpoint, Hosted: m.hosted,
+        RequestHash: promptHash(p),
+        LatencyMS: time.Since(start).Milliseconds(),
+    }
+    if err != nil {
+        e.ErrorClass = classify(err) // ports.ErrRejected's classification, PR #52 — referenced, not redesigned
+        ledgerFrom(ctx).Add(e)
+        return c, err // still no USD on a failed call: Completion is zero-valued, there is no Usage to price
+    }
+    price := m.prices.Lookup(m.next.Name(), c.Model)
+    e.InputTokens, e.OutputTokens = c.Usage.PromptTokens, c.Usage.CompletionTokens
+    e.USD, e.Priced = Cost(c.Usage, price), price.Known
+    ledgerFrom(ctx).Add(e)
+    trace.SpanFromContext(ctx).AddEvent("atlas.model.call", /* same four attributes as before */)
+    return c, nil
+}
+```
+
+**What changes from the first draft: a failed call is now recorded.** The original design
+recorded nothing on error ("no Usage on a failed call"). That was correct about pricing — it
+still is, `Completion` is zero-valued on error, there is no `Usage` to charge for — but it
+meant a retried or refused call left no trace at all, which is exactly the data
+"which calls were retried, and why" (§"Six questions") needs. The entry's cost fields stay
+zero and unpriced on error; its `ErrorClass` and `LatencyMS` do not.
+
+**`RequestHash` covers `System`, `User` and `Schema` — never `Temperature`, `Seed`,
+`MaxTokens`, `TopLogProbs`, `Provider` or `Model`.** This resolves the open question the first
+draft of this design left for the human ("whether `PromptHash` should also cover the schema").
+It does, and here is why the boundary sits exactly there:
+
+- **`Schema` is in, because it changes what is being asked.** The same `System`+`User` text
+  sent once unconstrained and once against a JSON Schema are different requests — a reader
+  who saw them hash the same would wrongly read two answers to one question as duplicate work.
+  `openaiprov` never re-marshals `p.Schema` (`client.go`'s own comment: it would reorder
+  `properties`), so hashing it as the exact bytes sent, not a decoded-and-re-encoded form,
+  matches what actually left the process.
+- **Sampling params are out, because they don't change the question.** Two calls with
+  identical `System`/`User`/`Schema` under different `Temperature` or `Seed` are still the
+  identical question asked twice — collapsing them under one hash is the point: it is exactly
+  the duplicate-work signal §"Six questions" question 2 asks for, whether the duplication was
+  a bug or a deliberate resample.
+- **`Provider` and `Model` are out, because hiding them would hide the case that matters
+  most.** Epic 2.4's ordered provider chain will send the identical prompt first to a primary
+  engine and, on failure, to a fallback. A hash that folded the model in would make those two
+  attempts look unrelated; a hash that ignores it lets a reader filter by `RequestHash` first
+  and read `Provider`/`Model` per matching row — seeing the fallback happen, not hiding it.
+
+Two entries with the same `RequestHash` are, by this definition, the same question asked more
+than once — a cache or dedupe candidate regardless of which engine answered or how it was
+told to sample.
+
+### 2.2 The crawler — recorded inside `crawlsource`, not through a port decorator
+
+Per §"Approaches considered," `Pull`'s fan-out means the entry has to be built where the
+per-target facts already live: `Source.fetch` (`crawlsource/source.go:208-216`), around the
+call to `s.fetched` or `s.rendered`.
+
+```go
+func (s *Source) fetch(ctx context.Context, t Target, revalidated *revalidationCounter) (*goquery.Selection, *url.URL, error) {
+    start := time.Now()
+    page, u, err := /* existing fetched/rendered dispatch, unchanged */
+    e := LedgerEntry{
+        Dependency: "crawl", Operation: crawlOperation(t), // "fetch" or "render"
+        StepID: stepIDFrom(ctx), Tool: toolFrom(ctx),
+        Endpoint: hostOf(t.URL), Hosted: app.IsHostedEndpoint(t.URL),
+        RequestHash: sha256Hex(t.URL),
+        LatencyMS: time.Since(start).Milliseconds(),
+        RetryCount: retriesFor(t), // Conduct.send's own attempt count, already computed; render never retries
+        Cached: revalidated.sawNotModified(t.URL), // false for a render, which never consults the revalidation cache
+        Bytes: bytesOf(page),
+    }
+    if err != nil {
+        e.ErrorClass = kindOf(err) // crawlsource's own taxonomy (source.go), unchanged by this epic
+    }
+    ledgerFrom(ctx).Add(e)
+    return page, u, err
+}
+```
+
+`RequestHash` is `sha256(t.URL)`: two targets that resolve to the identical URL in one run —
+whether because a pack lists it twice or because two boards happen to share a posting — made
+the identical outbound request, cache or no cache. `feedsource.Source.Pull` follows the same
+shape at its one call site (`repo.FetchContext`, `source.go:53-59`):
+`Dependency: "feed", Operation: "pull"`, `RequestHash: sha256(RemoteURL+Ref)`,
+`Cached: errors.Is(err, git.NoErrAlreadyUpToDate)`, `RetryCount: 0` (`go-git`'s `FetchContext`
+is not retried). One `Pull` is one entry, because one `Pull` is one outbound call — the same
+1:1 shape `Metered` already has for `Provider`, just recorded inside the adapter instead of
+through a wrapper, since nothing outside `feedsource` needs to compose a second `Source`
+implementation underneath it the way `Chain` composes several `Provider`s.
+
+### 2.3 `tools.HTTP` — recorded in the one file that makes the call
+
+`http.request` has no port beneath it (§"What exists today"), so the entry is added directly
+in `Invoke`, around `h.client.Do(req)`: `Dependency: "http", Operation: "request"`,
+`RequestHash: sha256(method+" "+url)`, `Bytes` from the read body, `Cached: false`,
+`RetryCount: 0` — both real today, since this tool has neither mechanism, and both ready to
+become real the day it grows one.
+
+### 2.4 The ACP agent subprocess — `MeteredAgent` over `ports.Agent`
+
+`Agent.Do` is 1:1 with one turn, the same shape as `Provider.Complete`, so it gets the same
+kind of decorator, wired at `startAgent`'s one construction of `acpagent.New`
+(`cmd/atlas/main.go:169-178`):
+
+```go
+type MeteredAgent struct{ next ports.Agent }
+
+func (m *MeteredAgent) Do(ctx context.Context, task ports.AgentTask, sessionID string, onEvent func(ports.AgentEvent)) (ports.AgentResult, string, error) {
+    start := time.Now()
+    res, sid, err := m.next.Do(ctx, task, sessionID, onEvent)
+    e := LedgerEntry{
+        Dependency: "agent", Operation: "do",
+        StepID: stepIDFrom(ctx), Tool: toolFrom(ctx),
+        RequestHash: sha256Hex(task.Prompt),
+        LatencyMS: time.Since(start).Milliseconds(),
+    }
+    if err != nil {
+        e.ErrorClass = classify(err)
+    }
+    ledgerFrom(ctx).Add(e)
+    return res, sid, err
+}
+```
+
+**What this does and does not see, unchanged from the first draft.** `agent.do` runs a
+subprocess over ACP; it never calls `ports.Provider`, so `InputTokens`/`OutputTokens`/`USD`
+stay zero here always — the same finding `docs/specs/2026-09-27-epic-13-web-ui.md` §13.5
+already states for its egress table ("atlas cannot see where an agent sends what it is
+given"). What `MeteredAgent` adds beyond what the step's own span already shows is the
+`RequestHash` — proof of whether the identical instruction was handed to the agent twice —
+and a record that survives with no collector running, the same reason §3 puts the whole
+roll-up in `Docs`/`Index` rather than only on a span. `Endpoint`/`Hosted`/`Bytes` stay empty:
+there is no single endpoint to name for a subprocess, and it is genuinely not this epic's to
+know.
+
+### 2.5 What is not a sixth path
+
+`app.Extractor.Extract` calls `provider.Complete` (`extract.go:54`), so it is metered the
+moment `Provider` is decorated (§2.1) — zero additional code, the same way `judge.go` needed
+none. `internal/adapters/outbound/crawlsource/extract.go`'s own `extract` function (confusingly
+same name, different layer) reads an already-fetched `goquery.Selection` with no network call
+at all; it is not a dependency, it is parsing.
+
+### 2.6 Coverage-0: which model calls measured nothing
+
+`Coverage` is computed in exactly one place, `app.Judge.Ask`
+(`internal/core/app/judge.go`, feeding on `internal/core/app/mass.go`'s option matching), from
+the `Question`s the call answered — data `Metered` never sees, since `Metered` sits below
+`Provider` and knows nothing about questions. `Metered` therefore cannot compute `Coverage`
+itself, and should not be taught to: that would mean importing judgement vocabulary into a
+decorator whose whole value is not knowing what any caller does with a `Completion`. Instead,
+`Judge.Ask` — the one place `Coverage` already exists — annotates the entry `Metered` already
+wrote, through the same `Ledger` both reach via `ctx`:
+
+```go
+// Ledger.AnnotateLastCoverage records, on the most recently added entry,
+// how many of a judgement's answers had zero coverage against how many
+// there were. Safe because one context makes one Provider call at a time
+// before reading its own ledger back — the same sequential-context
+// constraint §"How the ledger reaches every recorder" (below) names for
+// every recorder, not a new one this adds.
+func (l *Ledger) AnnotateLastCoverage(zero, total int) { /* ... */ }
+```
+
+```go
+// internal/core/app/judge.go, at the end of Ask, after answers is built
+zero := 0
+for _, a := range answers {
+    if a.Coverage.Declared > 0 && a.Coverage.Represented == 0 {
+        zero++
+    }
+}
+if l := ledgerFrom(ctx); l != nil {
+    l.AnnotateLastCoverage(zero, len(answers))
+}
+```
+
+This is one call site, `Judge.Ask`, the same one that already computes `Coverage` and nothing
+else — not Approach A's pattern of teaching every consumer, since there is exactly one
+consumer that could ever know this. A `LedgerEntry` with `TotalAnswers > 0` and
+`ZeroCoverageAnswers == TotalAnswers` is a call that came back with a number and measured
+nothing with it: the model named none of the declared options among its alternatives for any
+question asked, the "single-option fallback made visible" `ports.Coverage`'s own doc comment
+already describes, now visible at the call that produced it rather than only inside the
+judgement document it produced. The entry never duplicates `Coverage.Represented`/`Declared`
+per answer — that stays exactly where `judgementDoc` already keeps it (§"Relation to a
+judgement document," below); the ledger holds only the two counts a reader needs to filter for
+waste without opening every judgement in a run.
+
+### How the ledger reaches every recorder
+
+`Runner.Run` attaches one fresh `Ledger` to the context it passes down, `execStep` attaches
+the step's id and tool alongside it — unchanged from the first draft:
 
 ```go
 func (r *Runner) Run(ctx context.Context, b domain.Blueprint) (*domain.State, error) {
@@ -324,98 +518,232 @@ func (r *Runner) Run(ctx context.Context, b domain.Blueprint) (*domain.State, er
     ctx, span := r.tracer.Start(ctx, "blueprint."+b.Name)
     defer span.End()
     ...
-    state, err := /* existing step loop, unchanged */
-    r.spend(RunSpend{Blueprint: b.Name, Calls: ledger.Snapshot()})
-    return state, err
 }
 ```
 
-`withLedger`/`ledgerFrom` are an unexported context key and accessor pair, exactly the
-mechanism `otel` itself already uses to carry the active span through this codebase's own
-`ctx` (`trace.SpanFromContext` in `model.go:45` reads back what `tracer.Start` put there). This
-is not a new idiom for this codebase's `ctx`; it is the second use of the one already in it.
-This also names the constraint plainly: a tool that calls `Provider` from a `context.Context`
-not derived from the one `Invoke` received would go unmetered. Nothing does this today —
-`judge.each`'s calls run one after another on the same context, a decision Epic 7 made for
-measured throughput reasons, not for this one — but it is a real constraint on the mechanism,
-not an oversight to paper over.
+`withLedger`/`ledgerFrom` are the same unexported context key and accessor pair `otel` itself
+already models in this codebase's `ctx` (`trace.SpanFromContext`, `model.go:45`). Every one of
+§2.1–§2.4's recorders reaches the run's one `Ledger` this same way, so `crawlsource`,
+`feedsource`, `acpagent` and `tools.HTTP` need no new plumbing beyond importing
+`internal/core/app` for the accessor — already a permitted, inward-pointing import for an
+adapter, the same direction `crawlsource` and `feedsource` already import `internal/core/ports`.
+The constraint this names plainly, once for every path rather than once for `Provider` alone:
+a call made from a `context.Context` not derived from the one `Runner`/`Invoke` handed down goes
+unmetered. Nothing today calls outside that context.
 
-**`Runner` gains a spend sink, exactly as it gained progress in Epic 12.1:**
+`app.IsHostedEndpoint` (a host/loopback check) is new in this epic, used identically for a
+model endpoint (§2.1), a crawl target (§2.2), and, once Epic 13 imports it, its own egress
+table (`docs/specs/2026-09-27-epic-13-web-ui.md` §13.5, which currently describes this rule but
+does not implement it) — one function, three callers, no second implementation to keep in sync.
+
+## 3. The per-run roll-up
 
 ```go
-// WithSpend returns a copy of the Runner that reports each run's totals to
+// internal/core/app/ledger.go
+
+// Ledger accumulates one run's LedgerEntrys as they happen. It is created
+// fresh per Run call, never reused across runs and never shared as a
+// Runner field, so two runs sharing a registry (Epic 13.1's server) never
+// interleave.
+type Ledger struct {
+    mu      sync.Mutex
+    entries []LedgerEntry
+}
+
+func (l *Ledger) Add(e LedgerEntry) { l.mu.Lock(); defer l.mu.Unlock(); l.entries = append(l.entries, e) }
+func (l *Ledger) Snapshot() []LedgerEntry { l.mu.Lock(); defer l.mu.Unlock(); return append([]LedgerEntry{}, l.entries...) }
+
+// RunLedger is every call every dependency made over one Runner.Run.
+type RunLedger struct {
+    Blueprint string
+    Entries   []LedgerEntry
+}
+```
+
+**How the ledger reaches every recorder without changing any tool's signature** is described
+in full in §2's closing subsection; `Run` attaches one fresh `Ledger` to the context it passes
+down, `execStep` attaches the step's id and tool name alongside it, and every one of §2.1–§2.4's
+recorders reads it back from `ctx`.
+
+**`Runner` gains a ledger sink, exactly as it gained progress in Epic 12.1:**
+
+```go
+// WithLedger returns a copy of the Runner that reports each run's entries to
 // f once Run finishes, success or failure. The receiver is unchanged. f
 // runs synchronously after every step has been attempted, so a run that
-// fails partway is still reported with whatever it actually spent.
-func (r *Runner) WithSpend(f func(RunSpend)) *Runner
+// fails partway is still reported with whatever it actually called.
+func (r *Runner) WithLedger(f func(RunLedger)) *Runner
 ```
 
 Default: a no-op, so a caller that does not wire one pays nothing, the same guarantee
 `WithProgress` already makes.
 
-**Where it is recorded.** The composition root wires `WithSpend` to a function that writes a
-document through `RecordDocument`, the same call `RecordJudgement` already makes:
+**Where it is recorded — once per run, regardless of how many dependencies it called.** The
+composition root wires `WithLedger` to a function that writes one document through
+`RecordDocument`, the same call `RecordJudgement` already makes:
 
 ```go
 Document{
-    Path:    fmt.Sprintf("spend/%s/%s.json", b.Blueprint, time.Now().UTC().Format(recordTimeFormat)),
-    Body:    /* RunSpend, plus one Totals row per (provider, model) computed from Calls */,
-    Message: "Record spend for " + b.Blueprint,
-    Kind:    "spend_run",
+    Path:    fmt.Sprintf("ledger/%s/%s.json", b.Blueprint, time.Now().UTC().Format(recordTimeFormat)),
+    Body:    /* RunLedger, plus one Totals row per (dependency, provider, model) computed from Entries */,
+    Message: "Record ledger for " + b.Blueprint,
+    Kind:    "ledger_run",
     Fields:  map[string]string{
-        "blueprint":       b.Blueprint,
-        "total_usd":       fmt.Sprintf("%.4f", totalUSD),
-        "unpriced_calls":  strconv.Itoa(unpricedCount),
-        "hosted":          strconv.FormatBool(anyHosted),
+        "blueprint":            b.Blueprint,
+        "total_usd":            fmt.Sprintf("%.4f", totalUSD),
+        "unpriced_calls":       strconv.Itoa(unpricedCount),
+        "hosted":               strconv.FormatBool(anyHosted),
+        "zero_coverage_calls":  strconv.Itoa(zeroCoverageCount),
     },
 }
 ```
 
-Git holds every call's full detail (provider, model, tokens, USD, priced, hosted, endpoint,
-latency, prompt hash); the index row is the four flat fields above, queryable without reading
-the repository — the same split `docs/design/the-record.md` already describes for a judgement.
-A per-(provider, model) breakdown, and the local-engine time column, live in the document body;
-"per what dimension" in the brief's own words is answered there, not by adding more index
-fields no query needs.
+Git holds every entry's full detail (dependency, operation, provider, model, tokens, USD,
+priced, hosted, endpoint, latency, retry count, cached, error class, request hash, coverage
+counts); the index row is the five flat fields above, queryable without reading the
+repository — the same split `docs/design/the-record.md` already describes for a judgement. A
+per-(dependency, provider, model) breakdown, and the local-engine time column, live in the
+document body; "per what dimension" in the brief's own words is answered there, not by adding
+more index fields no query needs. One document per run, one commit per run, regardless of
+whether it made three model calls or three hundred model calls plus forty crawl fetches and
+one agent turn — §"Volume" below is why that stays true.
+
+### Six questions this schema answers
+
+The brief asks that the schema be designed around what it must answer, not around the fields
+it happens to have. Each of the following reads `Docs.Get`/`Index.Find` over `ledger_run`
+documents already recorded; none needs a new reader tool, the same as `spend_run` needed none.
+
+1. **Which step costs the most, within a run and across runs.** Within one run: group
+   `RunLedger.Entries` by `StepID`, sum `USD` (model calls) or `LatencyMS` (every dependency) —
+   the local-compute-time column (§1, "Local models are not free") makes this answerable even
+   when every call is `$0`. Across runs: `Index.Find(Kind: "ledger_run", Match:
+   {"blueprint": "..."})` returns every run's `total_usd`/index row without reading a single
+   document body, then a reader opens the specific runs worth reading in full.
+2. **Which calls repeat an identical prompt.** `RequestHash` (§2.1) groups exact-duplicate
+   requests within or across a run's entries; a `Dependency`/`Operation` filter narrows to one
+   kind (identical prompts, identical crawl targets, identical agent instructions) before
+   grouping.
+3. **Which calls were retried, and why.** `RetryCount > 0` finds them; `ErrorClass` on a
+   failed entry says why, sourced from `ports.ErrRejected`'s classification for a model call
+   (PR #52, referenced not redesigned here) and from `crawlsource`'s own existing `kindOf`
+   taxonomy for a crawl. A model call's `RetryCount` reads 0 across the board until a retrying
+   decorator exists to increment it — a true zero, not a missing one, and this schema does not
+   invent that decorator to answer the question early.
+4. **Which prompts are large relative to the model's context window.** `InputTokens` against
+   `app.JudgeConfig.ContextTokens` (already configured, `cmd/atlas/main.go:86`) for a model
+   call; `Bytes` against the adapter's own configured `MaxBytes` (`crawlsource.Config.MaxBytes`,
+   `openaiprov.Config.MaxBytes`, `tools.HTTP`'s own bound) for everything else — the same
+   "oversized relative to a known bound" shape, answered per dependency with the bound each
+   dependency already carries rather than one new global constant.
+5. **Which LLM calls measured nothing.** `ZeroCoverageAnswers == TotalAnswers && TotalAnswers >
+   0` (§2.6) finds a `provider`/`complete` entry whose resulting judgement never saw a
+   declared option among its alternatives for any question it answered — detectable waste
+   `docs/notes/2026-09-24-epic-3-closing.md` already named and nothing before this design
+   marked.
+6. **Anything the record already answers.** `Priced`/`Hosted`/`Cached` are booleans a reader
+   filters on directly (unpriced calls, hosted egress, cache misses) the same way
+   `docs/specs/2026-09-27-epic-11-tracking.md`'s `ExclusionCounts` are already filtered rather
+   than silently folded into a total.
+
+### Relation to a judgement document: a pointer, never a copy
+
+A `provider`/`complete` `LedgerEntry` that fed a `Judge.Ask` call shares its run's `StepID` and
+its call's timestamp with the judgement `RecordAssessedJudgement` writes moments later
+(`judgementrecord.go:139-141`); it does not carry `Chosen`, `Distribution`, `Alternatives`, or
+per-question `Coverage` — those stay exactly where `judgementDoc` already keeps them
+(`judgementrecord.go:31-46`). The two counts §2.6 adds (`ZeroCoverageAnswers`/`TotalAnswers`)
+are a derived summary, the same discipline `total_usd`/`unpriced_calls` already use for the
+roll-up itself: a number computed from the record, not a second copy of it. A reader who wants
+the full per-answer picture behind a `zero-coverage` entry follows `StepID`+time to the
+judgement `Index.Find(Kind: "judgement", ...)` already finds; the ledger's job stops at making
+that judgement worth looking at.
 
 **Where a user sees it.** Two places, neither of them a new UI:
 
 - The CLI already prints one line per step as it runs (Epic 0.1's own acceptance). It gains one
-  line after a run finishes: total USD, unpriced call count if any, and total model time,
-  written from the same `RunSpend` `WithSpend` receives — no new print path.
-- The record itself, queryable today: `ports.Index.Find(ctx, ports.Query{Kind: "spend_run",
-  Match: map[string]string{"blueprint": "job-hunt"}})` answers "what has this pack cost me,"
-  available since Epic 1, no new tool required. Once Epic 13's `index.find`/`docs.get`
+  line after a run finishes: total USD, unpriced call count if any, zero-coverage call count if
+  any, and total dependency time, written from the same `RunLedger` `WithLedger` receives — no
+  new print path.
+- The record itself, queryable today: `ports.Index.Find(ctx, ports.Query{Kind: "ledger_run",
+  Match: map[string]string{"blueprint": "job-hunt"}})` answers "what has this pack cost me, and
+  where," available since Epic 1, no new tool required. Once Epic 13's `index.find`/`docs.get`
   generic tools land, the same rows surface through them for free, the same way a judgement
   does — this design adds no reader of its own to duplicate that.
 
-## 4. Reliability posture: spend is never load-bearing
+### Volume: what a busy run produces, and what bounds it
+
+Epic 7's own measurement — 200 roles judged in about 9 minutes (`docs/specs/2026-09-27-epic-7-fit.md`)
+— is the real number to size against, now with crawl fetches added to the same run rather than
+guessed at. A `judge.each` step over 200 roles produces 200 `provider`/`complete` entries; a
+`crawl.pull`/`source.pull` step that gathered those roles' postings first might add tens to a
+few hundred `crawl` entries, one per target; one `feed`/`pull` entry per feed source pulled;
+zero or a handful of `agent`/`do` entries, since an agent turn is comparatively rare and
+expensive by design. A large run's `RunLedger.Entries` therefore sits in the low thousands at
+the extreme, not the millions — nothing in this system calls an outbound dependency in a hot
+per-request loop the way a served web handler would.
+
+**One document per run is what bounds it, and this does not change with the widening.** Every
+entry's fields are scalars and one hash — no prompt text, no page HTML, no agent transcript
+(§6) — so even a few thousand entries stay a JSON document in the hundreds of kilobytes, not
+megabytes: comparable to, and smaller than, many blueprint or crawl-target files already
+committed to the same store. `Docs.Put` is one git commit per call (§"What exists today"); this
+design commits once per run by construction (`Ledger` accumulates in memory across the whole
+`Run`, `WithLedger` fires once at the end), the same way the first draft's `spend_run` already
+did for model calls alone — widening to five dependencies grows the document's array, not the
+number of commits a run produces. A design that instead wrote one document per call — the
+naturally tempting shape for "per-call detail" — would turn a 200-role run into 200 commits
+plus however many crawl and feed commits, which is the volume problem the brief warned against,
+not a variant of the intended design; §"Deliberately not in this increment" names it explicitly
+so a future increment does not reach for it by habit.
+
+**What is not built to bound it further, and what is lost by not building it.** No retention
+policy and no cross-run aggregation ship in this increment — a `ledger_run` document is never
+deleted, compacted, or rolled up into a weekly total. What is lost by not building that: nothing
+today, since git history growth from one document per run is the same growth rate every other
+record kind in this store already has (judgements, decisions, agent sessions), and this design
+adds no new *rate* of documents, only a wider one each. What would be lost by building
+aggregation now: the ability to open one run and see exactly which call happened when, replaced
+by a lossy summary — the same trade-off Budgets (§7) is deliberately deferred past, for the
+same reason: a real need for it has not yet appeared, and building it before it does means
+guessing at the aggregation a real question will actually want.
+
+## 4. Reliability posture: the ledger is never load-bearing
 
 The reference gap analysis this epic translates from (`qonstrue-guardrail-gaps.scratchpad.md`
 gap 27: agent traffic partly unobserved because the recording path was allowed to matter) states
-the rule this design follows: a cost ledger is best-effort and never blocks serving traffic.
-Concretely:
+the rule this design follows: a ledger is best-effort and never blocks the call it observes.
+Concretely, for all five dependencies, not the model provider alone:
 
-- `Metered.Complete` never fails a call because pricing or recording had a problem — pricing is
-  a pure function that cannot error (§1), and `Ledger.Add` cannot fail.
-- The one place recording *can* fail is `WithSpend`'s function writing the roll-up document
+- No recorder in §2.1–§2.4 can fail the call it wraps. `Metered.Complete`,
+  `crawlsource`'s per-target recording, `feedsource.Source.Pull`'s, `tools.HTTP.Invoke`'s and
+  `MeteredAgent.Do`'s all call `Ledger.Add` (or `AnnotateLastCoverage`) after the real call has
+  already returned its result, and none of those methods can error — pricing is a pure function
+  that cannot error (§1), and appending to a mutex-guarded slice cannot fail. A future
+  dependency's recorder inherits the same shape by construction, since there is nothing to wire
+  it to but `Ledger.Add`.
+- The one place recording *can* fail is `WithLedger`'s function writing the roll-up document
   (`RecordDocument`'s `docs.Put`/`index.Upsert`, over a git repository and SQLite file that can
   themselves be full, locked, or briefly unavailable). That function logs the failure at `warn`
   and returns nothing; `Run`'s own return value — the state or the error the pack's steps
-  actually produced — is entirely unaffected. A run that judged 190 of 200 postings and then
-  failed to write its spend summary still returns its real result to the caller.
+  actually produced — is entirely unaffected. A run that judged 190 of 200 postings, crawled
+  forty pages and ran one agent turn, then failed to write its ledger, still returns its real
+  result to the caller.
 - Recording happens **after** every step has been attempted (success or failure), not only on a
-  clean run, so a run that fails partway is not reported as free — it wasn't.
+  clean run, so a run that fails partway is not reported as free — it wasn't, and neither is a
+  crawl that only reached some of its targets or an agent turn that timed out.
 
 ## 5. Exposure: what leaves the machine
 
 **What Go can know without knowing what a CV is.** `internal/arch/vocabulary_test.go` forbids
-use-case vocabulary in `internal/`; Go cannot classify a prompt's content. What it *can* state,
-mechanically, on every call: which endpoint it went to, whether that endpoint is hosted
-(§2's `IsHostedEndpoint`), the provider and model, and — via `PromptHash` (§2) — a SHA-256 over
-the exact `System`+`User` text sent, the same technique `internal/core/app/fingerprint.go`
-already uses to prove "was this exact text sent" without storing the text. That hash is what
-this epic can offer as evidence; it cannot say "this contained a CV."
+use-case vocabulary in `internal/`; Go cannot classify a prompt's, a page's, or an agent turn's
+content. What it *can* state, mechanically, on every call to every dependency: which endpoint
+it went to, whether that endpoint is hosted (§2's `IsHostedEndpoint`, now shared by the model
+provider, the crawler, and Epic 13's own egress table), the provider and model when there is
+one, and — via `RequestHash` (§2.1–§2.4) — a SHA-256 over the exact request content sent, the
+same technique `internal/core/app/fingerprint.go` already uses to prove "was this exact text
+sent" without storing the text. That hash is what this epic can offer as evidence for a model
+prompt, a crawl target, or an agent instruction alike; it cannot say "this contained a CV."
 
 **What Epic 13.5 already owns, and this epic does not rebuild.** §13.5 answers "does the user
 consent" with a pack-declared, per-endpoint `discloses:` list ("profile summary and CV text,
@@ -439,59 +767,94 @@ that gate is explicitly out of scope here (§7 and "Deliberately not in this inc
 
 ## 6. Redaction
 
-**The rule.** A span, a span event, a log line, or a recorded document produced by this epic
-may carry: counts, durations, byte lengths, hashes, model/provider/endpoint identifiers, and
-booleans. **Never prompt text, never completion text, never a field's raw value.** This is not
-a new restriction — §"What exists today" found that nothing in `internal/` puts text on
-telemetry today — it is the rule this design must not be the first thing to break, since
-`CallSpend`/`RunSpend` are the first place a call's *content* (via `PromptHash`) is referenced
-by this epic's own code, and a hash is the boundary that must hold.
+**The rule, unchanged in substance and now stated over five dependencies.** A span, a span
+event, a log line, or a recorded document produced by this epic may carry: counts, durations,
+byte lengths, hashes, model/provider/endpoint identifiers, and booleans. **Never prompt text,
+never completion text, never a crawled page's body, never an agent's turn text, never an HTTP
+response body, never a field's raw value.** This is not a new restriction — §"What exists
+today" found that nothing in `internal/` puts text on telemetry today — it is the rule this
+design must not be the first thing to break, since `LedgerEntry` is the first place a call's
+*content* (via `RequestHash`) is referenced by this epic's own code across every dependency,
+and a hash is the boundary that must hold for all five, not only the model provider.
 
 **How it is enforced, not promised.** A test in `internal/core/app`, in the shape
 `docs/specs/2026-09-27-epic-13-web-ui.md`'s own `TestNoResponseCarriesTheAPIKey` already uses
-for a different secret: run a blueprint whose rendered prompt contains a sentinel string
-(`"CANARY-38f2..."`, unique per test run) through a real `Runner` with a
-`tracetest.NewInMemoryExporter` (`go.opentelemetry.io/otel/sdk/trace/tracetest`, already
-available — `otel/sdk` is already a module dependency, no new one needed) in place of the OTLP
-exporter, then scan every recorded span's attributes and every event's attributes, across every
-span, for the sentinel substring. The test fails the moment any future change — a debug
-`AddEvent`, a verbose error wrap, a well-meaning "let's log the prompt for once" — puts prompt
-text back on a span. The same sentinel is checked against the spend document `RecordSpend`
-writes, so a future field added to `CallSpend` that captures more than a hash is caught before
-it reaches git.
+for a different secret: run a blueprint whose rendered prompt, crawl target page, and agent
+task each contain a sentinel string (`"CANARY-38f2..."`, unique per test run) through a real
+`Runner` with a `tracetest.NewInMemoryExporter`
+(`go.opentelemetry.io/otel/sdk/trace/tracetest`, already available — `otel/sdk` is already a
+module dependency, no new one needed) in place of the OTLP exporter, then scan every recorded
+span's attributes and every event's attributes, across every span, for the sentinel substring.
+The test fails the moment any future change — a debug `AddEvent`, a verbose error wrap, a
+well-meaning "let's log the crawled page for once" — puts content back on a span, for any of
+the five dependencies alike. The same sentinel is checked against the `ledger_run` document
+`RecordDocument` writes, so a future field added to `LedgerEntry` that captures more than a
+hash — by any of §2.1–§2.4's recorders — is caught before it reaches git.
 
-**A residual risk, named rather than solved.** `openaiprov`'s own `errorSnippetMaxBytes`
-(`client.go`) already truncates a non-2xx response body into an error message; if a vendor's
-own error response happens to echo request content, that snippet — bounded, but not redacted —
-reaches `err.Error()`, and from there a step's `span.SetStatus(codes.Error, err.Error())`
-(`runner.go:69,104,110,116,122`). This predates this design and is not solved by it; it is
-recorded here because §"Redaction" asked what is enforced versus promised, and this is a case
-that is neither yet.
+**A residual risk, named rather than solved, and now shared by two adapters.** `openaiprov`'s
+own `errorSnippetMaxBytes` (`client.go`) already truncates a non-2xx response body into an
+error message; if a vendor's own error response happens to echo request content, that
+snippet — bounded, but not redacted — reaches `err.Error()`, and from there a step's
+`span.SetStatus(codes.Error, err.Error())` (`runner.go:69,104,110,116,122`). `crawlsource`'s
+own error paths (`fmt.Errorf("%s: status %d: %w", ...)` in `source.go`, and the HTML-fetch
+errors `chrome.render` produces) carry a target URL into an error message the same way, though
+never a page's body. Both predate this design and are not solved by it; recorded here because
+§"Redaction" asked what is enforced versus promised, and both are cases that are neither yet.
 
 ## 7. Budgets are explicitly not this epic
 
-Measuring what was spent and refusing to spend more are different jobs with different failure
-postures. This epic's posture is §4: spend recording must never block a run. A budget's entire
+Measuring what was called and refusing to call more are different jobs with different failure
+postures. This epic's posture is §4: ledger recording must never block a run. A budget's entire
 point is the opposite — it must be allowed to block a run, deliberately, the way Epic 10's
 allow/ask/deny already blocks a submission. Building both in one epic would mean one code path
-serving two contradictory reliability rules. If a budget is ever wanted, it is a policy decision
-over the roll-up this epic already records (`spend_run` rows queried by `Index.Find`, the same
-way Epic 10's rules read Epic 6's deal-breakers) — sequenced after this epic, and after Epic 10
-for the allow/ask/deny vocabulary it would reuse. Nothing in this design forecloses it; nothing
-in this design builds it.
+serving two contradictory reliability rules. If a budget is ever wanted — over dollars, over
+crawl request counts, over agent turns, or over calls to any dependency this design now
+records — it is a policy decision over the roll-up this epic already records (`ledger_run`
+rows queried by `Index.Find`, the same way Epic 10's rules read Epic 6's deal-breakers) —
+sequenced after this epic, and after Epic 10 for the allow/ask/deny vocabulary it would reuse.
+Nothing in this design forecloses it; nothing in this design builds it.
 
 ## Sequencing (proposed; the roadmap itself is not edited here)
 
-Epic 14 needs only Epic 2 (`Provider` exists to decorate). It does not need Epic 3, 7, 9, 10,
-11, 12 or 13 — `Metered` wraps a port that exists after Epic 2 alone, and the roll-up uses
-`Docs`/`Index` from Epic 1. Unlike Epic 12 ("needs only 4, and nothing from 5-11; it can land
-any time afterward"), Epic 14 can land any time after 2, including *before* 3. Landing it before
-Epic 7's board-scoring sees real traffic buys retroactive observability over the epic that
-generates the most calls in the system, at zero cost to Epic 7's own design — `Metered` is a
-composition-root change, transparent to every tool built on `Provider`. Recommended slot:
-directly after Epic 2, in parallel with Epic 3 the way Epic 4 already runs in parallel with it.
-Epic 13 §13.5 should be re-read once this lands, since `app.IsHostedEndpoint` (§2) is built here
-first and 13's own egress table should import it rather than reimplement it.
+Epic 14 needs `Provider` (Epic 2), `feedsource` (Epic 5) and `crawlsource` (Epic 8) to exist,
+since §2.1–§2.2 attach to each of them by reading their real code — all three already built,
+per §"What exists today." It does not need Epic 3, 7, 9, 10, 11, 12 or 13: nothing in §2–§3
+reads a judgement, a decision, or a UI. Unlike Epic 12 ("needs only 4, and nothing from 5-11;
+it can land any time afterward"), Epic 14 can land any time after 2, 5 and 8, including
+*before* 3.
+
+**"From day one" means before Epic 13 and before Epic 11's remaining stories, not just "soon."**
+The human's own framing — a ledger from day one so later work is measured as it is built rather
+than retrofitted — is a sequencing constraint, not only a design preference:
+
+- **Before Epic 13.** §13.5 already names "per-run disclosure, computed from the actual prompt"
+  and the egress table's `hosted` rule as things it wants but has not built
+  (`docs/specs/2026-09-27-epic-13-web-ui.md`). This epic builds `IsHostedEndpoint` once (§2) and
+  the per-call facts §5 hands to §13.5; building Epic 13's own version first would mean this
+  epic either duplicating that check or refactoring Epic 13 to import it after the fact — the
+  same "fix it once at the source" argument `../CLAUDE.md`'s Fix Placement section makes about
+  restoring an invariant at its origin rather than teaching a later consumer to route around a
+  gap in an earlier one.
+- **Before Epic 11's remaining stories (11.2–11.4).** Epic 11's own design already found the
+  coverage-0 gap this epic closes (§2.6, §"What exists today": `docs/notes/2026-09-24-epic-3-closing.md`,
+  quoted by `docs/specs/2026-09-27-epic-11-tracking.md`) and left it unmarked. 11.4, the first
+  calibration check, scores predicted probability against observed outcome — exactly the
+  computation a coverage-0 judgement should not be allowed to silently enter. Landing this
+  epic's `ZeroCoverageAnswers`/`TotalAnswers` marking before 11.4 is built means 11.4 can exclude
+  those judgements from its very first calibration sample rather than being retrofitted to filter
+  them out once a wrong number has already shipped.
+- **Before Epic 9 and Epic 10 generate the traffic that most needs optimising.** Epic 9's
+  tailoring (one CV variant and one cited letter per posting) and Epic 10's apply loop are, by
+  the roadmap's own description, where per-posting model and crawl traffic multiplies past
+  Epic 7's already-measured 200-role baseline. A ledger recording that traffic from its first
+  call, rather than from whenever this epic happens to land, is the concrete meaning of "so we
+  can look back at areas we can optimize" — there is nothing to look back at for calls made
+  before the ledger existed.
+
+Recommended slot: directly after Epic 8, in parallel with Epic 3 the way Epic 4 already runs in
+parallel with it — and, on the current state of this worktree, immediately implementable, since
+2, 5 and 8 are the only prerequisites and all three already exist. Epic 13 §13.5 and Epic 11's
+remaining stories should each be re-read once this epic lands, for the two reasons above.
 
 ## Testing
 
@@ -502,26 +865,38 @@ No network, no engine, per the discipline every other epic's design already foll
 | `Cost` table-driven over `(Usage, Price)` pairs, including `Known: false` | A priced call that should read 0 does not, or an unpriced call silently costs something |
 | `PricingTable.Lookup` | The `provider:model` exact key, the `provider:*` fallback, and an unknown provider returning `Known: false` |
 | `Ledger` under concurrent `Add` (`go test -race`) | A lost call from two goroutines writing to one run's ledger — relevant once a future step type parallelizes calls, not today |
-| `Metered.Complete` against a stub `Provider` | One call adds exactly one `CallSpend`; a failing call adds none; the span gains one event per call, not an overwritten attribute, across three calls in one span |
-| `Runner.WithSpend` | A run of N steps, M of which call `Provider` a known number of times, reports a `RunSpend` with exactly that many `CallSpend`s; a run that fails on step 2 of 3 still reports step 1's calls |
-| `RecordSpend` against real `gitdocs`/`sqlindex` (mirrors `judgementrecord_test.go`) | The document round-trips, the index row's four fields are findable by `Index.Find`, and a failing `docs.Put` (a locked test repo) does not change `Run`'s own returned error |
-| `TestSpendNeverBlocksARun` | A `Ledger`/record path forced to fail still returns the run's real state or error unchanged — the reliability posture of §4, asserted, not asserted-by-reading-the-code |
-| `TestNoSpanOrRecordCarriesPromptText` | The sentinel-scanning test of §6: a canary string in a rendered prompt appears in no span attribute, no span event attribute, and no recorded `spend_run` document |
-| `IsHostedEndpoint` | `localhost`, `127.0.0.1`, `::1`, a bare hostname that resolves to a loopback address, and a real hosted URL, each classified correctly |
+| `Metered.Complete` against a stub `Provider` | One call adds exactly one `LedgerEntry`; a failing call adds one entry with `ErrorClass` set and zero cost, not none; the span gains one event per call, not an overwritten attribute, across three calls in one span |
+| `RequestHash` for `Provider` | Identical `System`/`User`/`Schema` hash equal regardless of `Temperature`/`Seed`; a changed `Schema` alone changes the hash; the same text to two different `Model`s hashes equal, with `Provider`/`Model` distinguishing the rows |
+| `Judge.Ask`'s `AnnotateLastCoverage` | A judgement whose every answer has `Coverage.Represented == 0` (with `Declared > 0`) marks its entry `ZeroCoverageAnswers == TotalAnswers`; a normal judgement marks `ZeroCoverageAnswers == 0`; a question with `Declared == 0` is not counted as zero-coverage |
+| `crawlsource`'s per-target recording against a stub HTTP server | One entry per target, in `Pull`'s target order; a 304 response marks `Cached: true`; a forced 429-then-200 sequence marks `RetryCount == 1`; a disallowed-by-robots target's entry carries `ErrorClass == KindDisallowed` |
+| `feedsource`'s per-`Pull` recording | One entry per `Pull`; a second `Pull` against an unchanged remote marks `Cached: true` via `git.NoErrAlreadyUpToDate` |
+| `tools.HTTP`'s recording | One entry per `Invoke`; `RequestHash` differs for the same URL under `GET` versus `HEAD` |
+| `MeteredAgent.Do` against a stub `Agent` | One entry per turn; `InputTokens`/`OutputTokens`/`USD` stay zero on success; a failed turn's entry carries `ErrorClass` |
+| `Runner.WithLedger` | A run of N steps, calling M different dependencies a known number of times each, reports a `RunLedger` with exactly that many `LedgerEntry`s, tagged with the right `Dependency`/`Operation`; a run that fails on step 2 of 3 still reports step 1's entries |
+| `RecordDocument` for `ledger_run`, against real `gitdocs`/`sqlindex` (mirrors `judgementrecord_test.go`) | The document round-trips, the index row's five fields are findable by `Index.Find`, and a failing `docs.Put` (a locked test repo) does not change `Run`'s own returned error |
+| `TestLedgerNeverBlocksARun` | A `Ledger`/record path forced to fail — for any of the five dependencies — still returns the run's real state or error unchanged — the reliability posture of §4, asserted, not asserted-by-reading-the-code |
+| `TestNoSpanOrRecordCarriesPromptText` | The sentinel-scanning test of §6: a canary string in a rendered prompt, a crawled page, an HTTP response, or an agent turn appears in no span attribute, no span event attribute, and no recorded `ledger_run` document |
+| `IsHostedEndpoint` | `localhost`, `127.0.0.1`, `::1`, a bare hostname that resolves to a loopback address, and a real hosted URL, each classified correctly, called identically from `Metered` and from `crawlsource`'s recorder |
 | `TestEmbeddedDefaultsCoverOnlyLocalEngines` | A hosted provider is never `Known: true` from the embedded table alone — a mutation adding one would be the exact regression §1 warns against |
+| `TestOneCommitPerRun` | A run that makes N calls across every dependency still produces exactly one `docs.Put` for its ledger — the volume claim in §3 asserted, not asserted-by-reading-the-code |
 
 ## Deliberately not in this increment
 
 | Out | Why |
 |---|---|
-| Budgets, limits, or any enforcement over spend | §7. A policy decision with an opposite reliability posture, for a later epic |
-| Pricing an agent's (`agent.do`) calls | Structurally invisible: an agent is a subprocess atlas hands a prompt to and cannot see inside, exactly as Epic 13.5 already found for its egress table |
+| Budgets, limits, or any enforcement over spend or call count, for any dependency | §7. A policy decision with an opposite reliability posture, for a later epic |
+| Pricing a crawl fetch, a git fetch, an HTTP fetch, or an agent turn in USD | §1: nobody bills atlas per request for these on the free-laptop-or-free-tier stack; only the model provider has a per-token price table |
+| Pricing an agent's (`agent.do`) own model calls | Structurally invisible: an agent is a subprocess atlas hands a prompt to and cannot see inside, exactly as Epic 13.5 already found for its egress table |
 | A CLI-side consent gate reading this epic's exposure facts | Epic 13.5's own "Not built" list already names this; this epic supplies the facts, not the gate |
-| Per-run disclosure computed from the actual prompt content (what data class was sent) | Go must not know what a CV is (the vocabulary rule); `PromptHash` proves *which* text was sent, never *what kind* of text it was |
+| Per-run disclosure computed from the actual request content (what data class was sent) | Go must not know what a CV is (the vocabulary rule); `RequestHash` proves *which* content was sent, never *what kind* of content it was |
 | Re-pricing a past run when `Spend.PricingPath` changes | The record is immutable, like every other document in it; a roll-up freezes the price it computed |
-| A new generic reader tool for spend records | `ports.Index.Find` already answers it since Epic 1; Epic 13's `index.find`/`docs.get` will surface it for free without this epic adding a duplicate |
-| Costing a failed `Provider.Complete` call that still consumed input tokens on the vendor's side | `Completion` is zero-valued on error; there is no `Usage` to read. A known, named gap, not a silent one |
-| Redacting an error message that echoes a vendor's own truncated response snippet | Named in §6 as a residual risk; fixing it is a change to `openaiprov`'s error path, not to this epic's scope |
+| A new generic reader tool for ledger records | `ports.Index.Find` already answers it since Epic 1; Epic 13's `index.find`/`docs.get` will surface it for free without this epic adding a duplicate |
+| Costing a failed `Provider.Complete` call that still consumed input tokens on the vendor's side | `Completion` is zero-valued on error; there is no `Usage` to read. A known, named gap, not a silent one — narrower than the first draft's version of this row, since the failed call is now recorded (§2.1), just not priced |
+| A retrying decorator over `Provider` | §2.1's `RetryCount` field is real and ready; the decorator that would make it non-zero is PR #52's `ports.ErrRejected` classification and whatever retry policy is built over it, referenced here and not designed |
+| One `LedgerEntry` per crawl target as its own committed document | §3's volume analysis: a document per call turns a 200-role run into hundreds of commits; one document per run holds every entry instead |
+| Retention, expiry, or cross-run aggregation of `ledger_run` documents | §3's volume analysis: no evidence yet that git history growth from one document per run needs bounding beyond what every other record kind already accepts; building an aggregation now means guessing at the shape a real need would actually want |
+| A one-word cache field distinguishing "served from local disk cache" from "served after a revalidation round-trip" | `Cached` collapses both under one bool for now; both are "the network was not asked to resend the body," which is what the optimisation question actually wants to know |
+| Redacting an error message that echoes a vendor's or a crawl target's own truncated response snippet | Named in §6 as a residual risk; fixing it is a change to `openaiprov`'s and `crawlsource`'s error paths, not to this epic's scope |
 | A hosted price list embedded in the binary | §1: a fact that goes stale the moment it is written; the file is the update path |
 
 ## Open for the human
@@ -530,10 +905,23 @@ No network, no engine, per the discipline every other epic's design already foll
   everything hand-edited; a pricing table is also hand-edited (§1: "updating the table is
   editing that file"), which favors YAML for consistency, but nothing in this design depends on
   the choice.
-- **Whether `PromptHash` should also cover the schema** (as `app.Fingerprint` does for a
-  judgement) is left open. A judgement's fingerprint includes the schema because it decides
-  cache reuse; a spend record's hash exists only as evidence of what was sent, so the weaker
-  form (System+User only) may be sufficient. Worth revisiting once a real audit need appears.
+- **Resolved by this widening: `RequestHash` covers `System`+`User`+`Schema`, not sampling, not
+  model.** The first draft left this open ("whether `PromptHash` should also cover the
+  schema"). §2.1 now answers it, with the reasoning that made the call: `Schema` changes what is
+  being asked, so it is in; sampling parameters and the model do not, so they are out — see
+  §2.1 for the full argument. This is worth reopening only if a real audit need surfaces a case
+  the reasoning there does not cover.
+- **Whether `Cached` should distinguish a local-cache hit from a network revalidation.** Both
+  currently collapse to one bool (`crawlsource`'s conditional-GET 304 and `feedsource`'s
+  `NoErrAlreadyUpToDate` both set it), on the reasoning that both answer "was the body resent."
+  If a future question needs to tell them apart — e.g., "how often does the revalidation
+  round-trip itself cost meaningful latency, even when nothing new comes back" — this is a
+  one-field split, not a redesign.
+- **Whether a sixth or later dependency (an email inbox source, an ATS API, a search API) gets
+  a port-level decorator or adapter-internal recording** is decided the same way §2 decided it
+  for the first five: by whether that dependency's own outbound method is 1:1 with one call, or
+  fans out internally the way `crawlsource.Pull` does. This design states the rule rather than
+  pre-building a decorator for a dependency that does not exist yet.
 - **The epic number itself.** This design proposes 14, the next free number after the roadmap's
   fourteen (0-13). If another epic is inserted first, this one renumbers; nothing in the design
   depends on the number.
