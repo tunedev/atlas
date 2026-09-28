@@ -232,6 +232,18 @@ func TestAWriteWithoutAnOriginIsRefused(t *testing.T) {
 	}
 }
 
+func TestAnOversizedRPCMessageIsRefused(t *testing.T) {
+	ts, host, token := newTestServer(t, web.Deps{Asker: web.NewAsker(time.Minute)}, web.Config{})
+	client, origin := authedClient(t, ts.URL, host, token)
+	c := uiv1.NewUIServiceClient(client, ts.URL)
+
+	big := &uiv1.AnswerRequest{Id: strings.Repeat("f", 2<<20)}
+	_, err := c.Answer(context.Background(), withOrigin(big, origin))
+	if code := connect.CodeOf(err); code != connect.CodeResourceExhausted {
+		t.Errorf("code = %v; want %v", code, connect.CodeResourceExhausted)
+	}
+}
+
 func TestEveryResponseCarriesTheSecurityHeadersAndNoCORS(t *testing.T) {
 	ts, host, token := newTestServer(t, web.Deps{}, web.Config{})
 	origin := "http://" + host

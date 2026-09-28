@@ -22,6 +22,9 @@ import (
 	"github.com/tunedev/atlas/internal/core/app"
 )
 
+// rpcReadMaxBytes bounds one incoming RPC message.
+const rpcReadMaxBytes = 1 << 20
+
 // Endpoint is one endpoint the registry sends data to: the tools that send
 // there, and whether it is off this machine.
 type Endpoint struct {
@@ -75,7 +78,7 @@ func New(cfg Config, deps Deps, token, host string) (*Server, error) {
 	s := &Server{cfg: cfg, deps: deps, slot: make(chan struct{}, 1)}
 
 	mux := http.NewServeMux()
-	rpcPrefix, rpcHandler := uiv1.NewUIServiceHandler(s)
+	rpcPrefix, rpcHandler := uiv1.NewUIServiceHandler(s, connect.WithReadMaxBytes(rpcReadMaxBytes))
 	mux.Handle(rpcPrefix, rpcHandler)
 	mux.Handle("/", static)
 
