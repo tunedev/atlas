@@ -4,8 +4,10 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tunedev/atlas/internal/adapters/outbound/tools"
+	"github.com/tunedev/atlas/internal/core/app"
 )
 
 func TestIndexFindReturnsMatchingRows(t *testing.T) {
@@ -28,6 +30,33 @@ func TestIndexFindReturnsMatchingRows(t *testing.T) {
 	rows := out.(map[string]any)["rows"].([]map[string]any)
 	if len(rows) != 1 || rows[0]["path"] != "logbook/day-2.json" || rows[0]["fields"].(map[string]string)["port"] != "Dover" {
 		t.Errorf("rows = %+v", rows)
+	}
+}
+
+func TestIndexFindReturnsNewestFirst(t *testing.T) {
+	docs, index := store(t)
+	base := time.Date(2026, 9, 1, 8, 0, 0, 0, time.UTC)
+	for i, day := range []string{"old", "new"} {
+		if _, err := app.RecordDocument(context.Background(), docs, index, app.Document{
+			Path: "logbook/" + day + ".json", Body: []byte(`{}`), Message: "log " + day,
+			Kind: "logbook", Fields: map[string]string{"port": "Dover"}, When: base.Add(time.Duration(i) * time.Hour),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	find := tools.NewIndexFind(index)
+	for _, limit := range []string{"", "1"} {
+		out, err := find.Invoke(context.Background(), map[string]string{"kind": "logbook", "limit": limit})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows := out.(map[string]any)["rows"].([]map[string]any)
+		if len(rows) == 0 || rows[0]["path"] != "logbook/new.json" {
+			t.Errorf("limit %q: rows = %+v; want logbook/new.json first", limit, rows)
+		}
+		if limit == "1" && len(rows) != 1 {
+			t.Errorf("limit 1: %d rows", len(rows))
+		}
 	}
 }
 

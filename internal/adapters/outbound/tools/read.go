@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"time"
 
@@ -11,7 +12,8 @@ import (
 )
 
 // IndexFind returns the index rows of one kind whose fields equal every
-// value in match. It reads the derived index, never the record.
+// value in match, newest first, at most limit of them when limit is given.
+// It reads the derived index, never the record.
 type IndexFind struct{ index ports.Index }
 
 func NewIndexFind(index ports.Index) *IndexFind { return &IndexFind{index: index} }
@@ -32,10 +34,11 @@ func (f *IndexFind) Invoke(ctx context.Context, with map[string]string) (any, er
 			return nil, fmt.Errorf("index.find: limit must be a positive integer, got %q", raw)
 		}
 	}
-	recs, err := f.index.Find(ctx, ports.Query{Kind: with["kind"], Match: match, Limit: limit})
+	recs, err := f.index.Find(ctx, ports.Query{Kind: with["kind"], Match: match})
 	if err != nil {
 		return nil, fmt.Errorf("index.find: %w", err)
 	}
+	recs = newest(recs, limit)
 	rows := make([]map[string]any, len(recs))
 	for i, r := range recs {
 		rows[i] = map[string]any{
@@ -44,6 +47,16 @@ func (f *IndexFind) Invoke(ctx context.Context, with map[string]string) (any, er
 		}
 	}
 	return map[string]any{"rows": rows}, nil
+}
+
+// newest orders recs by When, latest first, keeping the index's order for
+// equal times, and keeps the first limit of them when limit is positive.
+func newest(recs []ports.Record, limit int) []ports.Record {
+	slices.SortStableFunc(recs, func(a, b ports.Record) int { return b.When.Compare(a.When) })
+	if limit > 0 && len(recs) > limit {
+		recs = recs[:limit]
+	}
+	return recs
 }
 
 // DocsGet reads one document from the record, at its latest revision or at
