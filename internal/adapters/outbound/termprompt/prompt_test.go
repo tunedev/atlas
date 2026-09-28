@@ -5,12 +5,14 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/tunedev/atlas/internal/adapters/outbound/termprompt"
+	"github.com/tunedev/atlas/internal/core/app"
 	"github.com/tunedev/atlas/internal/core/ports"
 )
 
@@ -303,5 +305,35 @@ func TestStaleLinesNeverAnswerTheNextPrompt(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Under a scheduler, stdin is closed or the null device. A policy with no
+// rule for a call falls through to the terminal prompt, which must deny at
+// once rather than wait for a person who is not there.
+func TestAnUnattendedAskDeniesInsteadOfHanging(t *testing.T) {
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer devNull.Close()
+	closed, w := io.Pipe()
+	_ = w.Close()
+
+	for name, in := range map[string]io.Reader{"closed pipe": closed, "null device": devNull} {
+		policy := app.NewPermissionPolicy(nil, termprompt.New(in, io.Discard))
+		done := make(chan ports.PermissionDecision, 1)
+		go func() {
+			d, _ := policy.Decide(context.Background(), req)
+			done <- d
+		}()
+		select {
+		case d := <-done:
+			if d != ports.PermissionDeny {
+				t.Errorf("%s: decision = %s, want deny", name, d)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s: an unconfigured ask with no one at the terminal hung instead of denying", name)
+		}
 	}
 }
