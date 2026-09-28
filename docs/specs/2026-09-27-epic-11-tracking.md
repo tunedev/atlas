@@ -50,7 +50,10 @@ dependency is real for half this epic and not the other half.
 **This spec designs 11.3 and 11.4 as a shippable increment on their own**, over `Docs` and
 `Index` alone, and leaves 11.1/11.2 as a second increment that starts once Epic 10 lands. The
 two halves do not share code beyond the outcome slot itself, so shipping the first does not
-foreclose the second's design.
+foreclose the second's design. Epic 10 has since fixed the stage contract
+(`docs/specs/2026-09-28-epic-10-apply-loop.md`, "The contract Epic 11 reads"); "The second
+increment" below designs 11.1 and 11.2 over it, and narrows 11.4's sample to applications that
+were actually sent.
 
 ## The vocabulary constraint, briefly
 
@@ -324,6 +327,9 @@ separately in `ExclusionCounts` rather than silently dropped:
    state fell through a gap in the pack's own vocabulary and is worth the pack author's
    attention, the same way a coverage-0 count is worth the reader's attention rather than a
    silent zero.
+5. **Never reached the sample's stage.** Added by the second increment: when a run names a
+   stage (`CalibrateOptions.Reached`), a judgement whose subject never reached it is counted
+   under `NotReached` and not scored. See "The second increment" below.
 
 **A future refinement this design leaves room for, without building it.** The human has noted
 that at some point a pack author may want a long-enough `ghosted` silence to convert to
@@ -437,12 +443,105 @@ follows for the judge itself.
   documents, per `docs/design/the-judge.md`'s own identity rule), asserting both get the
   outcome and neither collides with the other's path.
 
+## The second increment: pipeline state and staleness (11.1, 11.2)
+
+Built on Epic 10's stage contract: one index row of kind `stage` per subject, path
+`applications/<subject_id>/stage.json`, carrying the current `stage` and a `<stage>_at` field
+(RFC 3339) for every stage reached. Stage names are pack vocabulary; Go reads the row without
+knowing what any stage means. `sent` appears below only as what the job-hunt packs pass in.
+
+### One use case: a timeline per subject
+
+```go
+// Timeline is where one subject is: its current stage, when it reached
+// it, how long ago that was, and the outcome attached to it, "" when none.
+type Timeline struct {
+    SubjectID string
+    Stage     string
+    Since     time.Time
+    Age       time.Duration
+    Outcome   string
+}
+
+// Timelines returns every subject's timeline as of now, oldest Since first.
+func Timelines(ctx context.Context, index ports.Index, now time.Time) ([]Timeline, error)
+```
+
+- **Two index reads, no loop of reads.** One `Find` for kind `stage`, one for kind
+  `judgement`; the judgement rows are keyed by `subject_id` to fill `Outcome`. A subject judged
+  twice carries the same outcome on both documents (`AttachOutcomeForSubject`), so any resolved
+  row gives it; `"pending"` reads as `""`.
+- **`Since` is the row's `<stage>_at` for its current stage.** A row whose field is missing or
+  not RFC 3339 is an error naming the path: the record contradicts itself, the same rule
+  `Calibrate` applies to a judgement with no answer for its question.
+- **Oldest first**, so the longest-waiting subject leads the list; ties break on `SubjectID`
+  for a stable order.
+
+### One tool: `stage.list`
+
+`stage.list` returns `rows: [{subject_id, stage, since, age_days, outcome}]` and takes three
+optional filters, each applied only when given:
+
+| Input | Keeps a row when |
+|---|---|
+| `stage` | its current stage equals this |
+| `older_than_days` | its `Age` is at least this many whole days; a non-integer or negative value fails the step |
+| `unresolved` | `true`: its `Outcome` is `""` |
+
+The filters live in the adapter, over `[]Timeline`: they are presentation, and the core has one
+use case rather than one per question a pack might ask.
+
+### 11.1: where each one is, and for how long
+
+`packs/pipeline.yaml` calls `stage.list` with no filters: every subject, its stage, and the
+days it has sat there.
+
+### 11.2: what has gone quiet
+
+`packs/quiet.yaml` calls `stage.list stage=sent older_than_days={{ .vars.days }}
+unresolved=true`, with `days` defaulting to `14` in the pack, not in Go. Quiet means: the
+current stage is still `sent` (a later stage, such as an interview, takes the subject out),
+the send is at least that old, and no outcome is attached. It is a list for the user to act
+on; nothing is attached or declared automatically. Turning silence into an outcome stays the
+user's call through `judge-outcome.yaml`, per "A future refinement" above.
+
+### Calibration scores applications that were sent
+
+`CalibrateOptions` gains `Reached string`. Empty keeps every judgement in play, exactly as the
+first increment scores. Set, a judgement counts only when its subject's stage row carries
+`<Reached>_at`, meaning the subject reached that stage at any point, even if it has since moved
+on. Every other judgement is counted under a new `ExclusionCounts.NotReached` and not scored.
+
+Why: the prediction is about applications. Without this, most judgements, the postings judged
+and never applied to, sit in `Pending` forever, and `Pending` stops meaning "awaiting a
+result". With `Reached: sent`, `Pending` is exactly the sent applications still waiting, and
+`NotReached` is the rest. A skipped posting no longer needs `not_applied` listed as
+inconclusive to stay out of the sample; it never reached `sent`.
+
+The stage rows are read with one `Find` per run and keyed by subject, not looked up per
+judgement. `judge.calibrate` takes `reached`; `packs/judge-calibrate.yaml` passes
+`reached=sent` and keeps its inconclusive list for states that can follow a send (`ghosted`,
+`withdrawn`).
+
+### Testing the second increment
+
+Against the real `gitdocs` and `sqlindex` adapters with a fixed `now`, stages declared through
+`DeclareStage` and outcomes through `AttachOutcomeForSubject`:
+- `Timelines` orders by `Since`, computes `Age` from `now`, fills `Outcome`, and fails naming the
+  path on a stage row whose `<stage>_at` is missing.
+- `stage.list` filters: `older_than_days` just under, exactly at and over the boundary; a later
+  stage leaves the `stage=sent` filter; an attached outcome leaves `unresolved=true`; a bad
+  `older_than_days` fails.
+- `Calibrate` with `Reached` set splits judgements into scored, `Pending` (reached, no outcome)
+  and `NotReached`; with `Reached` empty, its result equals the first increment's on the same
+  record.
+- Live: the three packs over a fabricated record, recorded in the increment note.
+
 ## Deliberately not in this epic
 
 | Out | Why |
 |---|---|
-| 11.1 Pipeline state per application | Needs Epic 10's drafted/sent vocabulary, which does not exist yet. Second increment, once Epic 10 lands |
-| 11.2 Staleness from declared send | Same dependency: "measured from the declared send" presumes a send declaration to measure from |
+| Reminders or nudges when something goes quiet | 11.2 lists what is quiet; acting on it is the user's, and a scheduled pack can run `quiet.yaml` (`docs/design/surfaces.md`) |
 | Automatic outcome detection (email, ATS scraping) | No such adapter exists; building one is its own epic's worth of scope, and the local-first constraint ("nothing about a user leaves their machine unchosen") means it would need real design, not a tracking primitive |
 | Scoring across mixed question ids in one bucket | A `Prediction` scores one `QuestionID` at a time; pooling e.g. `stretch` and a future `will_succeed` question together would average two different measurements into one meaningless number |
 | Automatic classification of which outcome states are Positive/Negative/Inconclusive | Pack-declared, per the vocabulary constraint — Go core has no opinion on what `ghosted` means |
