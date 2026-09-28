@@ -69,6 +69,7 @@ type fakeRegistry struct {
 	mu        sync.Mutex
 	calls     []string
 	records   map[string]record // path -> record, written by docs.put
+	findErr   error             // returned by index.find when set
 }
 
 func (r *fakeRegistry) Lookup(name string) (ports.Tool, bool) {

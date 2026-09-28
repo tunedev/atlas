@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"maps"
 	"slices"
 	"testing"
@@ -43,6 +44,9 @@ func (t recordTool) Invoke(_ context.Context, with map[string]string) (any, erro
 	}
 	t.reg.mu.Lock()
 	defer t.reg.mu.Unlock()
+	if t.name == "index.find" && t.reg.findErr != nil {
+		return nil, t.reg.findErr
+	}
 	if t.name == "docs.put" {
 		if t.reg.records == nil {
 			t.reg.records = map[string]record{}
@@ -244,5 +248,21 @@ func TestGateAnswersWithoutTheRunSlot(t *testing.T) {
 	}
 	if q := second.Msg().GetQueued(); q == nil || q.Ahead != 1 {
 		t.Errorf("second run's first event = %v, want Queued{ahead: 1}", second.Msg())
+	}
+}
+
+func TestGateFailsClosedWhenTheFirstReadFails(t *testing.T) {
+	reg := newFakeRegistry(t, nil)
+	reg.findErr = errors.New("index.find: store unavailable")
+	c, origin := serveView(t, runConfig(), oneClass, reg, web.Deps{Egress: hosted(hostedAt)})
+
+	events, _ := collect(t, c, origin, homeRun)
+	for _, e := range events {
+		if e.GetDone() != nil {
+			t.Errorf("a run whose acknowledgement read failed sent Done: %v", events)
+		}
+	}
+	if calls := reg.invoked(); len(calls) != 0 {
+		t.Errorf("view tools ran after a failed acknowledgement read: %v", calls)
 	}
 }
