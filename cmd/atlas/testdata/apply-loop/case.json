@@ -26,6 +26,14 @@
     "greenhouse:lamplight:104": {"stage": "", "decisions": [], "listed": {"step": "decide", "decision": "ask"}},
     "greenhouse:lamplight:105": {"stage": "", "decisions": []}
   },
+  "draft_fails": {
+    "children": {"packs/tailor.yaml": "cmd/atlas/testdata/apply-loop/draft-fails.yaml"},
+    "expect": {
+      "greenhouse:lamplight:101": {"stage": "", "decisions": []},
+      "greenhouse:lamplight:102": {"stage": "not_applied", "decisions": ["policy_skip"]},
+      "greenhouse:lamplight:103": {"stage": "not_applied", "decisions": ["policy_skip"]}
+    }
+  },
   "suggest": {"pack": "packs/policy-suggest.yaml", "vars": {"min_repeats": "2"}},
   "declare": {"pack": "packs/sent.yaml", "vars": {"subject_id": "greenhouse:lamplight:101"}, "stage": "sent"}
 }

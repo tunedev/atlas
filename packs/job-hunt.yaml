@@ -8,12 +8,13 @@
 # unknown, only when -var rules=profile/dealbreakers.json is passed.
 #
 # Then the policy decides each role (-var policy=profile/policy.json; with
-# none, every role not denied by a tripped deal-breaker is asked). Allowed
-# roles with no stage yet are drafted by tailor.yaml, one at a time, into
-# out_dir/<subject_id>; denied roles with no stage yet are skipped by
-# skip.yaml. Nothing is ever submitted, and a second run redrafts and
-# re-skips nothing. Asked roles are the decide step's rows with decision:
-# ask; run tailor.yaml or skip.yaml on them by hand.
+# none, every role not denied by a tripped deal-breaker is asked). Denied
+# roles with no stage yet are skipped by skip.yaml first, so a failed draft
+# cannot hold a skip back; then allowed roles with no stage yet are drafted
+# by tailor.yaml, one at a time, into out_dir/<subject_id>. Nothing is ever
+# submitted, and a second run redrafts and re-skips nothing. Asked roles are
+# the decide step's rows with decision: ask; run tailor.yaml or skip.yaml on
+# them by hand.
 #   ATLAS_RENDER_TYPST=typst atlas -pack packs/job-hunt.yaml -var board=gitlab \
 #     -var rules=profile/dealbreakers.json -var policy=profile/policy.json \
 #     -var store_root="$HOME/.atlas/workspace" -var out_dir="$HOME/applications"
@@ -69,6 +70,19 @@ steps:
     with:
       rows: "{{ json .steps.decide.rows }}"
 
+  - id: skip
+    tool: pack.each
+    with:
+      pack: packs/skip.yaml
+      rows: "{{ json .steps.attach.rows }}"
+      match: decision=deny,stage=
+      vars: |
+        subject_id: '[[ .item.subject_id ]]'
+        reason: '[[ .item.because ]]'
+        judgement_path: '[[ .item.judgement_path ]]'
+        choice: policy_skip
+        declared_by: job-hunt
+
   - id: draft
     tool: pack.each
     with:
@@ -85,17 +99,4 @@ steps:
         store_root: {{ json .vars.store_root }}
         out_dir: {{ json (printf "%s/[[ .item.subject_id ]]" .vars.out_dir) }}
         templates: {{ json .vars.templates }}
-        declared_by: job-hunt
-
-  - id: skip
-    tool: pack.each
-    with:
-      pack: packs/skip.yaml
-      rows: "{{ json .steps.attach.rows }}"
-      match: decision=deny,stage=
-      vars: |
-        subject_id: '[[ .item.subject_id ]]'
-        reason: '[[ .item.because ]]'
-        judgement_path: '[[ .item.judgement_path ]]'
-        choice: policy_skip
         declared_by: job-hunt

@@ -34,16 +34,12 @@ type loopCase struct {
 		ID   string          `json:"id"`
 		Body json.RawMessage `json:"body"`
 	} `json:"items"`
-	Verdicts map[string]string `json:"verdicts"`
-	Expect   map[string]struct {
-		Stage     string   `json:"stage"`
-		Note      string   `json:"note"`
-		Decisions []string `json:"decisions"`
-		Listed    struct {
-			Step     string `json:"step"`
-			Decision string `json:"decision"`
-		} `json:"listed"`
-	} `json:"expect"`
+	Verdicts   map[string]string     `json:"verdicts"`
+	Expect     map[string]loopExpect `json:"expect"`
+	DraftFails struct {
+		Children map[string]string     `json:"children"`
+		Expect   map[string]loopExpect `json:"expect"`
+	} `json:"draft_fails"`
 	Suggest struct {
 		Pack string            `json:"pack"`
 		Vars map[string]string `json:"vars"`
@@ -53,6 +49,17 @@ type loopCase struct {
 		Vars  map[string]string `json:"vars"`
 		Stage string            `json:"stage"`
 	} `json:"declare"`
+}
+
+// loopExpect is what one subject should show after a run.
+type loopExpect struct {
+	Stage     string   `json:"stage"`
+	Note      string   `json:"note"`
+	Decisions []string `json:"decisions"`
+	Listed    struct {
+		Step     string `json:"step"`
+		Decision string `json:"decision"`
+	} `json:"listed"`
 }
 
 // loopSource holds the case's items, refreshed now.
@@ -164,6 +171,16 @@ func newLoop(t *testing.T, c loopCase) loop {
 // its outputs as decoded JSON.
 func (l loop) run(t *testing.T, path string, vars map[string]string) map[string]any {
 	t.Helper()
+	out, err := l.runErr(t, path, vars)
+	if err != nil {
+		t.Fatalf("run %s: %v", path, err)
+	}
+	return out
+}
+
+// runErr is run, returning the run's error instead of failing on it.
+func (l loop) runErr(t *testing.T, path string, vars map[string]string) (map[string]any, error) {
+	t.Helper()
 	b, err := packfile.Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -173,7 +190,7 @@ func (l loop) run(t *testing.T, path string, vars map[string]string) map[string]
 	}
 	state, err := app.NewRunner(l.registry).Run(context.Background(), b)
 	if err != nil {
-		t.Fatalf("run %s: %v", path, err)
+		return nil, err
 	}
 	raw, err := json.Marshal(state.Outputs())
 	if err != nil {
@@ -183,7 +200,7 @@ func (l loop) run(t *testing.T, path string, vars map[string]string) map[string]
 	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatal(err)
 	}
-	return out
+	return out, nil
 }
 
 // revisions counts every document's revisions in the store.
@@ -256,23 +273,11 @@ func (l loop) choices(t *testing.T, subjectID string) []string {
 	return out
 }
 
-// TestApplyLoopDraftsAllowedSkipsDeniedAndLeavesTheRestAlone runs the
-// shipped loop pack over a stub source and judge: an allowed row reaches
-// its draft stage, a denied row gets a skip decision and its skip stage, an
-// asked row and an error row are untouched, and a second run changes no
-// document and runs no child. The automatic skips propose no policy rule,
-// and the person can then declare a later stage for the drafted row.
-func TestApplyLoopDraftsAllowedSkipsDeniedAndLeavesTheRestAlone(t *testing.T) {
-	t.Chdir(filepath.Join("..", ".."))
-	c := readLoopCase(t)
-	l := newLoop(t, c)
-	vars := map[string]string{"store_root": l.storeRoot, "out_dir": l.outDir}
-	for k, v := range c.Vars {
-		vars[k] = v
-	}
-
-	first := l.run(t, c.Pack, vars)
-	for id, want := range c.Expect {
+// check compares each expected subject's stage, recorded choices, stage note
+// and listed decision with the store and the run's outputs.
+func (l loop) check(t *testing.T, outputs map[string]any, expect map[string]loopExpect) {
+	t.Helper()
+	for id, want := range expect {
 		stage, err := app.CurrentStage(context.Background(), l.index, id)
 		if err != nil {
 			t.Fatal(err)
@@ -289,11 +294,30 @@ func TestApplyLoopDraftsAllowedSkipsDeniedAndLeavesTheRestAlone(t *testing.T) {
 			}
 		}
 		if want.Listed.Step != "" {
-			if got := listedDecision(first, want.Listed.Step, id); got != want.Listed.Decision {
+			if got := listedDecision(outputs, want.Listed.Step, id); got != want.Listed.Decision {
 				t.Errorf("%s: step %s lists decision %q; want %q", id, want.Listed.Step, got, want.Listed.Decision)
 			}
 		}
 	}
+}
+
+// TestApplyLoopDraftsAllowedSkipsDeniedAndLeavesTheRestAlone runs the
+// shipped loop pack over a stub source and judge: an allowed row reaches
+// its draft stage, a denied row gets a skip decision and its skip stage, an
+// asked row and an error row are untouched, and a second run changes no
+// document and runs no child. The automatic skips propose no policy rule,
+// and the person can then declare a later stage for the drafted row.
+func TestApplyLoopDraftsAllowedSkipsDeniedAndLeavesTheRestAlone(t *testing.T) {
+	t.Chdir(filepath.Join("..", ".."))
+	c := readLoopCase(t)
+	l := newLoop(t, c)
+	vars := map[string]string{"store_root": l.storeRoot, "out_dir": l.outDir}
+	for k, v := range c.Vars {
+		vars[k] = v
+	}
+
+	first := l.run(t, c.Pack, vars)
+	l.check(t, first, c.Expect)
 
 	suggested := 0
 	for step, out := range l.run(t, c.Suggest.Pack, c.Suggest.Vars) {
@@ -324,4 +348,25 @@ func TestApplyLoopDraftsAllowedSkipsDeniedAndLeavesTheRestAlone(t *testing.T) {
 	if stage, err := app.CurrentStage(context.Background(), l.index, id); err != nil || stage != c.Declare.Stage {
 		t.Errorf("%s after declaring: stage = %q, err = %v; want %q", id, stage, err, c.Declare.Stage)
 	}
+}
+
+// TestAFailedDraftDoesNotBlockTheSkips runs the loop with a child that always
+// fails in place of the drafting pack: the run fails, and every denied row
+// is still skipped.
+func TestAFailedDraftDoesNotBlockTheSkips(t *testing.T) {
+	t.Chdir(filepath.Join("..", ".."))
+	c := readLoopCase(t)
+	c.Children = c.DraftFails.Children
+	l := newLoop(t, c)
+	vars := map[string]string{"store_root": l.storeRoot, "out_dir": l.outDir}
+	for k, v := range c.Vars {
+		vars[k] = v
+	}
+
+	_, err := l.runErr(t, c.Pack, vars)
+	if err == nil {
+		t.Fatal("the loop succeeded although every draft failed")
+	}
+	t.Logf("run failed as expected: %v", err)
+	l.check(t, nil, c.DraftFails.Expect)
 }
