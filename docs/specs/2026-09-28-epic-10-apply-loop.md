@@ -120,8 +120,8 @@ The platform cannot see the boundary between drafted and sent, so the user decla
      the exact `packs/sent.yaml` command to run afterwards;
   4. `stage.declare drafted`.
 - **`packs/job-hunt.yaml`** becomes: `judge.each` → `policy.decide` → `stage.attach` →
-  `pack.each apply.yaml` over `decision=allow,stage=` → `pack.each skip.yaml` over
-  `decision=deny,stage=`. Ask rows are listed in its output; the user runs `apply.yaml` or
+  `pack.each skip.yaml` over `decision=deny,stage=` → `pack.each apply.yaml` over
+  `decision=allow,stage=`, so a failed draft cannot block a skip. Ask rows are listed in its output; the user runs `apply.yaml` or
   `skip.yaml` on them by hand. Re-running it redrafts and re-skips nothing.
 
 ## Testing
