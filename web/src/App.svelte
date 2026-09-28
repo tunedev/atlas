@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { Code, ConnectError } from "@connectrpc/connect";
   import { exchange, ui } from "./rpc";
+  import { describeError } from "./errors";
   import Screen from "./Screen.svelte";
   import type { View } from "./views";
 
@@ -7,6 +9,7 @@
 
   let views: { viewsJson: string; egress: { endpoint: string; hosted: boolean; tools: string[]; acknowledged: boolean }[] } | null = $state(null);
   let authFailed = $state(false);
+  let viewsError = $state<string | null>(null);
   let hash = $state(location.hash);
   let egressOpen = $state(false);
 
@@ -23,8 +26,9 @@
       }
       try {
         views = await ui.views({});
-      } catch {
-        authFailed = true;
+      } catch (err) {
+        if (ConnectError.from(err).code === Code.Unauthenticated) authFailed = true;
+        else viewsError = describeError(err);
       }
     })();
   });
@@ -83,6 +87,8 @@
 <main>
   {#if authFailed}
     <p>Open the link atlas printed when it started</p>
+  {:else if viewsError}
+    <p class="error">{viewsError}</p>
   {:else if !views}
     <p>Loading...</p>
   {:else if currentView && currentScreen}
