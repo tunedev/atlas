@@ -1,6 +1,7 @@
 # Stands in for packs/tailor.yaml in the apply-loop test: it takes the vars
-# the loop passes to the real pack and only declares the drafted stage, so
-# the loop runs with no model and no typst.
+# the loop passes to the real pack and only declares the drafted stage, with
+# the url it was given as the note, so the loop runs with no model and no
+# typst.
 name: draft-stand-in
 vars:
   subject_id: ""
@@ -17,4 +18,5 @@ steps:
     with:
       subject_id: "{{ .vars.subject_id }}"
       stage: drafted
+      note: "{{ .vars.url }}"
       declared_by: "{{ .vars.declared_by }}"

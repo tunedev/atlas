@@ -20,10 +20,10 @@
   ],
   "verdicts": {"Keeper": "apply", "Fog Signal": "apply", "Lens Polisher": "apply", "Harbour Pilot": "reach"},
   "expect": {
-    "greenhouse:lamplight:101": {"stage": "drafted", "decisions": []},
+    "greenhouse:lamplight:101": {"stage": "drafted", "note": "https://boards.example.invalid/lamplight/101", "decisions": []},
     "greenhouse:lamplight:102": {"stage": "not_applied", "decisions": ["policy_skip"]},
     "greenhouse:lamplight:103": {"stage": "not_applied", "decisions": ["policy_skip"]},
-    "greenhouse:lamplight:104": {"stage": "", "decisions": []},
+    "greenhouse:lamplight:104": {"stage": "", "decisions": [], "listed": {"step": "decide", "decision": "ask"}},
     "greenhouse:lamplight:105": {"stage": "", "decisions": []}
   },
   "suggest": {"pack": "packs/policy-suggest.yaml", "vars": {"min_repeats": "2"}},

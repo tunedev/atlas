@@ -1,0 +1,12 @@
+{
+  "template": "instructions.typ",
+  "data": {
+    "url": "https://boards.example.invalid/lamplight/keepers/northern-light-station-keeper-senior/101?utm_source=atlas&utm_medium=feed&gh_src=lamplight&ref=coastal-guild-listing",
+    "subject_id": "lamplight:101",
+    "files": ["cv.pdf", "letter.pdf"],
+    "answers": [],
+    "gaps": []
+  },
+  "expect": ["https://boards.example.invalid/lamplight/keepers/northern-light-station-keeper-senior/101?utm_source=atlas&utm_medium=feed&gh_src=lamplight&ref=coastal-guild-listing"],
+  "absent": ["No link in the record"]
+}

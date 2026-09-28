@@ -82,9 +82,9 @@ steps:
           [[ .item.item.title ]] at [[ .item.item.company ]]
 
           [[ .item.item.description_text ]]
-        store_root: '{{ .vars.store_root }}'
-        out_dir: '{{ .vars.out_dir }}/[[ .item.subject_id ]]'
-        templates: '{{ .vars.templates }}'
+        store_root: {{ json .vars.store_root }}
+        out_dir: {{ json (printf "%s/[[ .item.subject_id ]]" .vars.out_dir) }}
+        templates: {{ json .vars.templates }}
         declared_by: job-hunt
 
   - id: skip

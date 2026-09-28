@@ -37,7 +37,12 @@ type loopCase struct {
 	Verdicts map[string]string `json:"verdicts"`
 	Expect   map[string]struct {
 		Stage     string   `json:"stage"`
+		Note      string   `json:"note"`
 		Decisions []string `json:"decisions"`
+		Listed    struct {
+			Step     string `json:"step"`
+			Decision string `json:"decision"`
+		} `json:"listed"`
 	} `json:"expect"`
 	Suggest struct {
 		Pack string            `json:"pack"`
@@ -152,7 +157,7 @@ func newLoop(t *testing.T, c loopCase) loop {
 		return real(ctx, standIn, vars)
 	}
 	reg := base.With(tools.NewPackEach(child, stageOf(index)))
-	return loop{docs: docs, index: index, registry: reg, childRuns: &runs, storeRoot: t.TempDir(), outDir: t.TempDir()}
+	return loop{docs: docs, index: index, registry: reg, childRuns: &runs, storeRoot: filepath.Join(t.TempDir(), "a 'quoted' root"), outDir: filepath.Join(t.TempDir(), "a 'quoted' dir")}
 }
 
 // run runs the pack at path with vars through the real runner and returns
@@ -200,6 +205,42 @@ func (l loop) revisions(t *testing.T) map[string]int {
 	return counts
 }
 
+// stageNote reads the note on a subject's current stage document.
+func (l loop) stageNote(t *testing.T, subjectID string) string {
+	t.Helper()
+	ctx := context.Background()
+	recs, err := l.index.Find(ctx, ports.Query{Kind: "stage", Match: map[string]string{"subject_id": subjectID}, Limit: 1})
+	if err != nil || len(recs) == 0 {
+		t.Fatalf("%s: stage row: %v, %d rows", subjectID, err, len(recs))
+	}
+	body, err := l.docs.Get(ctx, recs[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Note string `json:"note"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatal(err)
+	}
+	return doc.Note
+}
+
+// listedDecision is the decision a step's output rows give subjectID, ""
+// when no row names it.
+func listedDecision(outputs map[string]any, step, subjectID string) string {
+	out, _ := outputs[step].(map[string]any)
+	rows, _ := out["rows"].([]any)
+	for _, r := range rows {
+		row, _ := r.(map[string]any)
+		if row["subject_id"] == subjectID {
+			d, _ := row["decision"].(string)
+			return d
+		}
+	}
+	return ""
+}
+
 // choices lists the choices recorded for a subject, sorted.
 func (l loop) choices(t *testing.T, subjectID string) []string {
 	t.Helper()
@@ -230,7 +271,7 @@ func TestApplyLoopDraftsAllowedSkipsDeniedAndLeavesTheRestAlone(t *testing.T) {
 		vars[k] = v
 	}
 
-	l.run(t, c.Pack, vars)
+	first := l.run(t, c.Pack, vars)
 	for id, want := range c.Expect {
 		stage, err := app.CurrentStage(context.Background(), l.index, id)
 		if err != nil {
@@ -241,6 +282,16 @@ func TestApplyLoopDraftsAllowedSkipsDeniedAndLeavesTheRestAlone(t *testing.T) {
 		}
 		if got := l.choices(t, id); !slices.Equal(got, want.Decisions) {
 			t.Errorf("%s: decisions = %v; want %v", id, got, want.Decisions)
+		}
+		if want.Note != "" {
+			if got := l.stageNote(t, id); got != want.Note {
+				t.Errorf("%s: stage note = %q; want %q", id, got, want.Note)
+			}
+		}
+		if want.Listed.Step != "" {
+			if got := listedDecision(first, want.Listed.Step, id); got != want.Listed.Decision {
+				t.Errorf("%s: step %s lists decision %q; want %q", id, want.Listed.Step, got, want.Listed.Decision)
+			}
 		}
 	}
 

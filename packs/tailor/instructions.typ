@@ -9,6 +9,14 @@
 
 #let kept(ss) = ss.filter(s => not s.gap)
 #let answered = data.answers.filter(a => kept(a.sentences).len() > 0)
+// url-line sets url on one line, never broken, shrunk to fit width when it
+// is wider.
+#let url-line(url, width) = {
+  let l = link(url)
+  let w = measure(l).width
+  let r = calc.min(1, width / w)
+  box(width: w * r, scale(r * 100%, origin: left, reflow: true, box(width: w, l)))
+}
 #let where = (
   "cv.pdf": "the CV or résumé upload",
   "letter.pdf": "the cover letter upload, or paste its text where the form asks for one",
@@ -17,7 +25,7 @@
 = Sending #data.subject_id
 
 == Where to submit
-#if data.url != "" [ #link(data.url) ] else [ No link in the record: find it on the board. ]
+#if data.url != "" [ #layout(size => url-line(data.url, size.width)) ] else [ No link in the record: find it on the board. ]
 
 == Which file goes where
 #for f in data.files [ - #f: #where.at(f, default: "where the form asks for it") ]
