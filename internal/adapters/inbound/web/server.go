@@ -42,6 +42,7 @@ type Deps struct {
 	Views  []View
 	Load   Loader
 	Runner *app.Runner
+	Asker  *Asker
 	Egress []Endpoint
 	Server map[string]string // store_root, files_root
 }

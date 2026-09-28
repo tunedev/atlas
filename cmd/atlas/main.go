@@ -122,9 +122,9 @@ func startRender(cfg config.Config) (ports.Tool, error) {
 // startAgent launches the configured agent, offers it the configured tools
 // from base over MCP, and returns the agent.do tool with a function that
 // stops both. base is the registry without agent.do, so the agent cannot
-// reach itself.
-func startAgent(ctx context.Context, cfg config.Config, base ports.Registry, docs ports.Docs) (ports.Tool, func() error, error) {
-	perm := app.NewPermissionPolicy(permissionRules(cfg.Permission.Rules), termprompt.New(os.Stdin, os.Stderr))
+// reach itself. human decides the tool calls the permission rules ask about.
+func startAgent(ctx context.Context, cfg config.Config, base ports.Registry, docs ports.Docs, human ports.Permission) (ports.Tool, func() error, error) {
+	perm := app.NewPermissionPolicy(permissionRules(cfg.Permission.Rules), human)
 
 	var srv *http.Server
 	var server *acpagent.MCPServer
@@ -293,7 +293,7 @@ func run() error {
 	}
 
 	if cfg.Agent.Command != "" {
-		agentTool, stop, err := startAgent(ctx, cfg, registry, docs)
+		agentTool, stop, err := startAgent(ctx, cfg, registry, docs, termprompt.New(os.Stdin, os.Stderr))
 		if err != nil {
 			return err
 		}

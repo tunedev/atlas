@@ -20,8 +20,9 @@ import (
 	"github.com/tunedev/atlas/internal/core/ports"
 )
 
-// shelfView declares a screen over echo, a screen over slow, and an action
-// on the echo screen that binds the screen's cached state.
+// shelfView declares a screen over echo, a screen over slow, an action on
+// the echo screen that binds the screen's cached state, and a screen over
+// ask.
 const shelfView = `
 title: Shelf
 screens:
@@ -53,21 +54,27 @@ screens:
         vars:
           label: state.rows.label
           root: server.store_root
+  - id: guarded
+    run: ask.yaml
 `
 
-// fakeRegistry holds an echo tool that returns its config and a slow tool
-// that blocks until release closes or its context ends. It records every
-// invocation.
+// fakeRegistry holds an echo tool that returns its config, a slow tool
+// that blocks until release closes or its context ends, and an ask tool
+// that asks asker for permission. It records every invocation.
 type fakeRegistry struct {
-	release chan struct{}
-	mu      sync.Mutex
-	calls   []string
+	release   chan struct{}
+	asker     *web.Asker
+	decisions chan ports.PermissionDecision
+	mu        sync.Mutex
+	calls     []string
 }
 
 func (r *fakeRegistry) Lookup(name string) (ports.Tool, bool) {
 	switch name {
 	case "echo", "slow":
 		return fakeTool{name: name, reg: r}, true
+	case "ask":
+		return askTool{reg: r}, true
 	}
 	return nil, false
 }
@@ -100,7 +107,7 @@ func (t fakeTool) Invoke(ctx context.Context, with map[string]string) (any, erro
 }
 
 // runLoader returns fixed blueprints: echo.yaml runs echo over label and
-// root, slow.yaml runs slow.
+// root, slow.yaml runs slow, ask.yaml runs ask.
 func runLoader(path string) (domain.Blueprint, error) {
 	switch filepath.Base(path) {
 	case "echo.yaml":
@@ -114,6 +121,8 @@ func runLoader(path string) (domain.Blueprint, error) {
 		}, nil
 	case "slow.yaml":
 		return domain.Blueprint{Name: "slow", Steps: []domain.Step{{ID: "wait", Tool: "slow"}}}, nil
+	case "ask.yaml":
+		return domain.Blueprint{Name: "ask", Steps: []domain.Step{{ID: "asked", Tool: "ask"}}}, nil
 	}
 	return domain.Blueprint{}, fmt.Errorf("no pack at %s", path)
 }
@@ -121,6 +130,13 @@ func runLoader(path string) (domain.Blueprint, error) {
 // newRunClient serves the shelf view over a fresh fake registry and returns
 // an authenticated client, its Origin and the registry.
 func newRunClient(t *testing.T, cfg web.Config) (uiv1.UIServiceClient, string, *fakeRegistry) {
+	t.Helper()
+	return serveShelf(t, cfg, nil)
+}
+
+// serveShelf is newRunClient with asker as the server's and the ask tool's
+// asker.
+func serveShelf(t *testing.T, cfg web.Config, asker *web.Asker) (uiv1.UIServiceClient, string, *fakeRegistry) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "shelf.ui.yaml")
 	if err := os.WriteFile(path, []byte(shelfView), 0o600); err != nil {
@@ -131,12 +147,13 @@ func newRunClient(t *testing.T, cfg web.Config) (uiv1.UIServiceClient, string, *
 		t.Fatalf("LoadViews: %v", err)
 	}
 
-	reg := &fakeRegistry{release: make(chan struct{})}
+	reg := &fakeRegistry{release: make(chan struct{}), asker: asker, decisions: make(chan ports.PermissionDecision, 1)}
 	t.Cleanup(func() { close(reg.release) })
 	deps := web.Deps{
 		Views:  views,
 		Load:   runLoader,
 		Runner: app.NewRunner(reg),
+		Asker:  asker,
 		Server: map[string]string{"store_root": "/store"},
 	}
 	ts, host, token := newTestServer(t, deps, cfg)

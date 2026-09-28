@@ -158,7 +158,7 @@ func TestStartAgentFailsLoudlyForAMissingCommand(t *testing.T) {
 	cfg.Agent.MaxToolResultBytes = 1 << 20
 	cfg.Permission.SummaryBytes = 200
 
-	_, _, err := startAgent(context.Background(), cfg, buildRegistry(cfg, docs, index, feedsource.New(feedsource.Config{}), testCrawler(t)), docs)
+	_, _, err := startAgent(context.Background(), cfg, buildRegistry(cfg, docs, index, feedsource.New(feedsource.Config{}), testCrawler(t)), docs, nil)
 	if err == nil || !strings.Contains(err.Error(), "no-such-agent") {
 		t.Errorf("err = %v; want one naming the command", err)
 	}

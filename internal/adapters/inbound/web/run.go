@@ -17,8 +17,9 @@ import (
 
 // Run executes a declared screen or action: it resolves the request against
 // the view files, waits for the single run slot, streams each step's
-// progress and ends with Done carrying the run's state. A screen's state is
-// cached for its actions to bind.
+// progress and ends with Done carrying the run's state. While it holds the
+// slot, the Asker sends its permission asks on this run's stream. A screen's
+// state is cached for its actions to bind.
 func (s *Server) Run(ctx context.Context, req *connect.Request[uiv1.RunRequest], stream *connect.ServerStream[uiv1.RunResponse]) error {
 	msg := req.Msg
 	t, err := s.find(msg)
@@ -43,6 +44,9 @@ func (s *Server) Run(ctx context.Context, req *connect.Request[uiv1.RunRequest],
 		return err
 	}
 	defer release()
+	if s.deps.Asker != nil {
+		defer s.deps.Asker.begin(out.send)()
+	}
 
 	state, err := s.execute(ctx, bp, out)
 	if err != nil {
