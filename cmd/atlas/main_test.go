@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,15 +13,18 @@ import (
 	"go/parser"
 	"go/token"
 	"io"
+	"log/slog"
 	"maps"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -767,6 +772,13 @@ func (waitTool) Invoke(ctx context.Context, _ map[string]string) (any, error) {
 // test unless it returns nil.
 func startServe(t *testing.T, cfg config.Config) (uiv1.UIServiceClient, string, func() error) {
 	t.Helper()
+	return startServeTapped(t, cfg, io.Discard, http.DefaultTransport)
+}
+
+// startServeTapped is startServe with every byte serve writes to its out
+// copied to out, and the client's requests sent through transport.
+func startServeTapped(t *testing.T, cfg config.Config, out io.Writer, transport http.RoundTripper) (uiv1.UIServiceClient, string, func() error) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	docs, err := gitdocs.Open(ctx, cfg.Store.Root)
 	if err != nil {
@@ -786,9 +798,12 @@ func startServe(t *testing.T, cfg config.Config) (uiv1.UIServiceClient, string, 
 		done <- serve(ctx, cfg, runner, web.NewAsker(cfg.Web.AskTimeout), egressTable(cfg, modelTools), pw)
 		_ = pw.Close()
 	}()
+	copied := make(chan struct{})
 	stop := sync.OnceValue(func() error {
 		cancel()
-		return <-done
+		err := <-done
+		<-copied
+		return err
 	})
 	t.Cleanup(func() {
 		if err := stop(); err != nil {
@@ -800,8 +815,12 @@ func startServe(t *testing.T, cfg config.Config) (uiv1.UIServiceClient, string, 
 	var startup []string
 	for len(startup) < 2 && lines.Scan() {
 		startup = append(startup, lines.Text())
+		fmt.Fprintln(out, lines.Text())
 	}
-	go func() { _, _ = io.Copy(io.Discard, pr) }()
+	go func() {
+		_, _ = io.Copy(out, pr)
+		close(copied)
+	}()
 	if len(startup) != 2 || startup[1] != "atlas: the CLI cannot use this store while the server runs; stop it with Ctrl-C" {
 		t.Fatalf("startup lines = %q", startup)
 	}
@@ -818,7 +837,7 @@ func startServe(t *testing.T, cfg config.Config) (uiv1.UIServiceClient, string, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := &http.Client{Jar: jar}
+	client := &http.Client{Jar: jar, Transport: transport}
 	req, err := http.NewRequest(http.MethodPost, base+"/session", strings.NewReader(`{"token":"`+token+`"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -833,7 +852,8 @@ func startServe(t *testing.T, cfg config.Config) (uiv1.UIServiceClient, string, 
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("session exchange status %d; want 204", resp.StatusCode)
 	}
-	return uiv1.NewUIServiceClient(client, base, connect.WithProtoJSON()), base, stop
+	// No compression, so a tapped transport reads every message in the clear.
+	return uiv1.NewUIServiceClient(client, base, connect.WithProtoJSON(), connect.WithAcceptCompression("gzip", nil, nil)), base, stop
 }
 
 func withOrigin[T any](msg *T, origin string) *connect.Request[T] {
@@ -1046,5 +1066,215 @@ func TestShippedViewsLoad(t *testing.T) {
 	}
 	if _, err := web.LoadViews(paths, packfile.Load); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// tap records bytes written to it and, as a RoundTripper, every response's
+// status line, headers and body as the client reads them.
+type tap struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (r *tap) Write(p []byte) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.b.Write(p)
+}
+
+func (r *tap) String() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.b.String()
+}
+
+func (r *tap) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := http.DefaultTransport.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Fprintf(r, "%s %s\n", resp.Proto, resp.Status)
+	r.mu.Lock()
+	_ = resp.Header.Write(&r.b)
+	r.mu.Unlock()
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.TeeReader(resp.Body, r), resp.Body}
+	return resp, nil
+}
+
+// tapSlog points slog's default logger at a new tap until the test ends.
+func tapSlog(t *testing.T) *tap {
+	t.Helper()
+	logs := &tap{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return logs
+}
+
+// echoingModel is a model endpoint that answers 401 with the request's
+// bearer token in the body, the way hosted gateways do. hits counts calls.
+func echoingModel(t *testing.T, hits *atomic.Int32) string {
+	t.Helper()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprintf(w, `{"error":{"message":"Incorrect API key provided: %s"}}`, token)
+	}))
+	t.Cleanup(ts.Close)
+	return ts.URL + "/v1"
+}
+
+const probeView = `title: Probe
+screens:
+  - id: ask
+    title: Ask
+    run: probe.yaml
+`
+
+const probePack = `name: probe
+steps:
+  - id: reply
+    tool: model.complete
+    with:
+      user: say hello
+`
+
+// withProbeView adds a view whose one screen calls model.complete, and a
+// files root holding one file, to cfg.
+func withProbeView(t *testing.T, cfg config.Config) config.Config {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "probe.ui.yaml"), []byte(probeView), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "probe.yaml"), []byte(probePack), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Web.Views = append(cfg.Web.Views, filepath.Join(dir, "probe.ui.yaml"))
+	cfg.Web.FilesRoot = t.TempDir()
+	if err := os.WriteFile(filepath.Join(cfg.Web.FilesRoot, "a.txt"), []byte("a file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return cfg
+}
+
+// storeHistory is every commit in the store with its patch, plus the raw
+// index file.
+func storeHistory(t *testing.T, cfg config.Config) string {
+	t.Helper()
+	log, err := exec.Command("git", "-C", cfg.Store.Root, "log", "-p", "--all").CombinedOutput()
+	if err != nil {
+		t.Fatalf("git log: %v: %s", err, log)
+	}
+	index, err := os.ReadFile(cfg.Store.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(log) + string(index)
+}
+
+// acknowledgeFirst acknowledges the first egress endpoint Views reports and
+// returns it.
+func acknowledgeFirst(t *testing.T, c uiv1.UIServiceClient, origin string) string {
+	t.Helper()
+	views, err := c.Views(context.Background(), withOrigin(&uiv1.ViewsRequest{}, origin))
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := views.Msg.Egress[0].Endpoint
+	if _, err := c.Acknowledge(context.Background(), withOrigin(&uiv1.AcknowledgeRequest{Endpoint: endpoint}, origin)); err != nil {
+		t.Fatalf("Acknowledge %s: %v", endpoint, err)
+	}
+	return endpoint
+}
+
+// The model API key never reaches a response, serve's output, a log line,
+// the store's history or the index, even when the model echoes it.
+func TestNoResponseCarriesTheAPIKey(t *testing.T) {
+	sentinel := "sk-" + web.NewToken()[:40]
+	scan := func(t *testing.T, surfaces map[string]string) {
+		t.Helper()
+		for name, text := range surfaces {
+			if strings.Contains(text, sentinel) {
+				t.Errorf("the API key reached %s", name)
+			}
+		}
+	}
+
+	t.Run("a model that echoes the key", func(t *testing.T) {
+		logs := tapSlog(t)
+		var hits atomic.Int32
+		cfg := withProbeView(t, serveConfig(t, echoingModel(t, &hits)))
+		cfg.Model.APIKey = sentinel
+		wire, out := &tap{}, &tap{}
+		c, origin, stop := startServeTapped(t, cfg, out, wire)
+		ctx := context.Background()
+
+		if _, err := c.Views(ctx, withOrigin(&uiv1.ViewsRequest{}, origin)); err != nil {
+			t.Fatal(err)
+		}
+		stream, err := c.Run(ctx, withOrigin(&uiv1.RunRequest{View: "probe", Screen: "ask", Action: -1}, origin))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for stream.Receive() {
+		}
+		runErr := stream.Err()
+		_ = stream.Close()
+		if hits.Load() == 0 || runErr == nil || !strings.Contains(runErr.Error(), "401") {
+			t.Fatalf("the run did not fail at the model: hits %d, err %v", hits.Load(), runErr)
+		}
+		if _, err := c.Answer(ctx, withOrigin(&uiv1.AnswerRequest{Id: "feedface", Allow: true}, origin)); connect.CodeOf(err) != connect.CodeNotFound {
+			t.Errorf("Answer with an unknown id: %v; want NotFound", err)
+		}
+		endpoint := acknowledgeFirst(t, c, origin)
+		sum := sha256.Sum256([]byte(endpoint))
+		record := "atlas/egress/" + hex.EncodeToString(sum[:])[:16] + ".json"
+		// Document bodies travel base64-encoded, so they are scanned decoded.
+		var documents strings.Builder
+		for _, doc := range []*uiv1.DocumentRequest{{Source: "record", Path: record}, {Source: "file", Path: "a.txt"}} {
+			resp, err := c.Document(ctx, withOrigin(doc, origin))
+			if err != nil {
+				t.Fatalf("Document %s %s: %v", doc.Source, doc.Path, err)
+			}
+			documents.Write(resp.Msg.Body)
+		}
+		if err := stop(); err != nil {
+			t.Fatal(err)
+		}
+
+		if !strings.Contains(wire.String(), "Incorrect API key provided: [redacted]") {
+			t.Error("the tapped responses do not carry the model's redacted error in the clear")
+		}
+		scan(t, map[string]string{"a response": wire.String(), "a document body": documents.String(), "serve's output": out.String(), "the log": logs.String(), "the store": storeHistory(t, cfg)})
+	})
+
+	for name, baseURL := range map[string]string{
+		"a hosted URL carrying the key":       "https://u:" + sentinel + "@api.example.invalid/v1?key=" + sentinel,
+		"an unparseable URL carrying the key": "https://api.example.invalid:%zz/?key=" + sentinel,
+	} {
+		t.Run(name, func(t *testing.T) {
+			logs := tapSlog(t)
+			cfg := withProbeView(t, serveConfig(t, baseURL))
+			cfg.Model.APIKey = sentinel
+			wire, out := &tap{}, &tap{}
+			c, origin, stop := startServeTapped(t, cfg, out, wire)
+
+			events := runToEnd(t, c, origin, &uiv1.RunRequest{View: "probe", Screen: "ask", Action: -1})
+			if len(events) != 1 || events[0].GetNeedsAcknowledgement() == nil {
+				t.Fatalf("run events = %v; want only NeedsAcknowledgement", events)
+			}
+			acknowledgeFirst(t, c, origin)
+			if err := stop(); err != nil {
+				t.Fatal(err)
+			}
+
+			scan(t, map[string]string{"a response": wire.String(), "serve's output": out.String(), "the log": logs.String(), "the store": storeHistory(t, cfg)})
+		})
 	}
 }
