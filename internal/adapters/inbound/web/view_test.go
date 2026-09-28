@@ -212,12 +212,14 @@ func TestResolveBindsEachSource(t *testing.T) {
 	}
 }
 
-func TestResolveRefusesAMissingValueAndAnOffListOption(t *testing.T) {
+func TestResolveRefusesAMissingValue(t *testing.T) {
 	b := bindings{params: map[string]string{}}
 	if _, err := resolve(map[string]string{"day": "param.day"}, b); err == nil {
 		t.Fatal("resolve: want an error for a missing param value")
 	}
+}
 
+func TestCheckInputsRefusesAnOffListOption(t *testing.T) {
 	a := Action{Input: []Input{{Name: "mood", Options: []string{"calm", "rough"}}}}
 	if err := a.checkInputs(map[string]string{"mood": "furious"}); err == nil {
 		t.Fatal("checkInputs: want an error for an off-list option")
