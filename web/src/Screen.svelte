@@ -55,6 +55,7 @@
     try {
       for await (const ev of ui.run({ view, screen: screen.id, action, params, inputs }, { signal: ac.signal })) {
         const event = ev.event;
+        if (event.case !== "queued") queued = null;
         if (event.case === "queued") {
           queued = event.value.ahead;
         } else if (event.case === "step") {
