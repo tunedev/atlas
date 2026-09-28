@@ -144,7 +144,7 @@ Every test runs offline except the live run.
 | Field | Where | Meaning |
 |---|---|---|
 | `stage` | index, kind `stage`, path `applications/<subject_id>/stage.json` | The current stage, a pack-defined string |
-| `<stage>_at` | same row | RFC 3339 time each stage was reached; `sent_at` is the clock |
+| `<stage>_at` | same row | RFC 3339 time each stage was last reached; `sent_at` is the clock |
 | `declared_by` | the document | Who declared the current stage (`user` or the pack's name) |
 
 ## Deliberately not in this increment

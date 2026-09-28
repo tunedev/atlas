@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -170,5 +171,34 @@ func TestCurrentStageReturnsTheLatestAndEmptyForAnUnknownSubject(t *testing.T) {
 	}
 	if got, err := app.CurrentStage(ctx, index, "order-8"); err != nil || got != "" {
 		t.Errorf("unknown subject = %q, %v", got, err)
+	}
+}
+
+func TestAStageReachedAgainKeepsItsLastTime(t *testing.T) {
+	docs, index := record(t)
+	declare(t, docs, index, aStage("drafted", bakeNow.Add(-4*time.Hour)))
+	declare(t, docs, index, aStage("sent", bakeNow.Add(-3*time.Hour)))
+	declare(t, docs, index, aStage("drafted", bakeNow.Add(-2*time.Hour)))
+	declare(t, docs, index, aStage("sent", bakeNow.Add(-time.Hour)))
+	if got := stageRow(t, index, "order-7").Fields["sent_at"]; got != "2026-09-30T11:00:00Z" {
+		t.Errorf("sent_at = %q, want the second send", got)
+	}
+}
+
+func TestDeclareRefusesAStageNameThatCannotBeAField(t *testing.T) {
+	for _, name := range []string{"sent ", "Sent", " sent", "1st", "_sent", "sent-out", "sent.at", ""} {
+		t.Run(name, func(t *testing.T) {
+			docs, index := record(t)
+			_, _, err := app.DeclareStage(context.Background(), docs, index, aStage(name, bakeNow), bakeNow)
+			if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("%q", name)) {
+				t.Errorf("err = %v, want a refusal naming %q", err, name)
+			}
+		})
+	}
+	for _, name := range []string{"sent", "left_to_cool", "round2"} {
+		docs, index := record(t)
+		if _, _, err := app.DeclareStage(context.Background(), docs, index, aStage(name, bakeNow), bakeNow); err != nil {
+			t.Errorf("%q refused: %v", name, err)
+		}
 	}
 }

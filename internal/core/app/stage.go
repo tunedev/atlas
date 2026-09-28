@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -23,8 +24,8 @@ type Stage struct {
 	When       time.Time
 }
 
-// stageDoc is a subject's stage document: its current stage and when each
-// stage it reached was reached, in RFC 3339.
+// stageDoc is a subject's stage document: its current stage and the last
+// time each stage it reached was reached, in RFC 3339.
 type stageDoc struct {
 	SubjectID  string            `json:"subject_id"`
 	Stage      string            `json:"stage"`
@@ -70,6 +71,10 @@ func DeclareStage(ctx context.Context, docs ports.Docs, index ports.Index, s Sta
 	return path, true, nil
 }
 
+// stageName is what a stage may be called, since it also names the
+// <stage>_at field.
+var stageName = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+
 func checkStage(s Stage) error {
 	if s.SubjectID == "" {
 		return errors.New("stage: subject id is empty")
@@ -77,8 +82,8 @@ func checkStage(s Stage) error {
 	if err := CheckSubjectID(s.SubjectID); err != nil {
 		return fmt.Errorf("stage: %w", err)
 	}
-	if strings.TrimSpace(s.Stage) == "" {
-		return errors.New("stage: stage is empty")
+	if !stageName.MatchString(s.Stage) {
+		return fmt.Errorf("stage: name %q is not lowercase letters, digits and underscores", s.Stage)
 	}
 	return nil
 }
@@ -150,7 +155,8 @@ func writeStage(ctx context.Context, docs ports.Docs, index ports.Index, path st
 	return nil
 }
 
-// CurrentStage returns the stage subjectID last reached, or "" when none.
+// CurrentStage returns the stage subjectID last reached, or "" when none. It
+// relies on the index keeping one row per path.
 func CurrentStage(ctx context.Context, index ports.Index, subjectID string) (string, error) {
 	rows, err := index.Find(ctx, ports.Query{Kind: "stage", Match: map[string]string{"subject_id": subjectID}, Limit: 1})
 	if err != nil {
