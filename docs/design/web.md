@@ -302,3 +302,5 @@ forbids.
   to the server's stderr rather than the browser.
 - An action binds state by a fixed path, so it acts on one row (`rows.0`), never a row the user
   picks.
+- The session cookie is scoped by host, not port. A listener on another loopback port that the
+  browser visits receives it, and its value is the startup token, which grants a session here.
