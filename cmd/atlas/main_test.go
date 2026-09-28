@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -546,6 +547,15 @@ screens:
           subject_id: param.subject
           choice: const.apply
           reason: input.reason
+  - id: wait
+    title: Wait
+    run: wait.yaml
+`
+
+const waitPack = `name: wait
+steps:
+  - id: held
+    tool: test.wait
 `
 
 const decisionsPack = `name: decisions
@@ -576,6 +586,9 @@ func writeDecisionsView(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(dir, "decisions.yaml"), []byte(decisionsPack), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "wait.yaml"), []byte(waitPack), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	return view
 }
 
@@ -600,11 +613,22 @@ func serveConfig(t *testing.T, modelURL string) config.Config {
 	return cfg
 }
 
-// startServe runs serve over the real registry and store in a goroutine the
-// test owns, reads the startup lines, exchanges the token and returns a
-// Connect JSON client with its Origin. Cleanup cancels serve and fails the
+// waitTool blocks until its ctx is done.
+type waitTool struct{}
+
+func (waitTool) Name() string { return "test.wait" }
+
+func (waitTool) Invoke(ctx context.Context, _ map[string]string) (any, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// startServe runs serve over the real registry, plus test.wait, and the
+// store in a goroutine the test owns, reads the startup lines, exchanges the
+// token and returns a Connect JSON client, its Origin and a stop func that
+// cancels serve and returns its result. Cleanup stops serve and fails the
 // test unless it returns nil.
-func startServe(t *testing.T, cfg config.Config) (uiv1.UIServiceClient, string) {
+func startServe(t *testing.T, cfg config.Config) (uiv1.UIServiceClient, string, func() error) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	docs, err := gitdocs.Open(ctx, cfg.Store.Root)
@@ -617,7 +641,7 @@ func startServe(t *testing.T, cfg config.Config) (uiv1.UIServiceClient, string) 
 	}
 	t.Cleanup(func() { _ = index.Close() })
 	registry, modelTools := buildRegistry(cfg, docs, index, feedsource.New(feedsource.Config{}), testCrawler(t))
-	runner := app.NewRunner(registry)
+	runner := app.NewRunner(registry.With(waitTool{}))
 
 	pr, pw := io.Pipe()
 	done := make(chan error, 1)
@@ -625,9 +649,12 @@ func startServe(t *testing.T, cfg config.Config) (uiv1.UIServiceClient, string) 
 		done <- serve(ctx, cfg, runner, web.NewAsker(cfg.Web.AskTimeout), egressTable(cfg, modelTools), pw)
 		_ = pw.Close()
 	}()
-	t.Cleanup(func() {
+	stop := sync.OnceValue(func() error {
 		cancel()
-		if err := <-done; err != nil {
+		return <-done
+	})
+	t.Cleanup(func() {
+		if err := stop(); err != nil {
 			t.Errorf("serve returned %v; want nil", err)
 		}
 	})
@@ -669,7 +696,7 @@ func startServe(t *testing.T, cfg config.Config) (uiv1.UIServiceClient, string) 
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("session exchange status %d; want 204", resp.StatusCode)
 	}
-	return uiv1.NewUIServiceClient(client, base, connect.WithProtoJSON()), base
+	return uiv1.NewUIServiceClient(client, base, connect.WithProtoJSON()), base, stop
 }
 
 func withOrigin[T any](msg *T, origin string) *connect.Request[T] {
@@ -733,7 +760,7 @@ func failingModel(t *testing.T) string {
 }
 
 func TestServeEndToEnd(t *testing.T) {
-	c, origin := startServe(t, serveConfig(t, failingModel(t)))
+	c, origin, _ := startServe(t, serveConfig(t, failingModel(t)))
 
 	views, err := c.Views(context.Background(), withOrigin(&uiv1.ViewsRequest{}, origin))
 	if err != nil {
@@ -767,7 +794,7 @@ func TestServeEndToEnd(t *testing.T) {
 
 // A hosted model endpoint gates every run until it is acknowledged.
 func TestServeGatesAHostedEndpoint(t *testing.T) {
-	c, origin := startServe(t, serveConfig(t, "https://api.example.invalid/v1"))
+	c, origin, _ := startServe(t, serveConfig(t, "https://api.example.invalid/v1"))
 	screen := &uiv1.RunRequest{View: "decisions", Screen: "days", Action: -1, Params: map[string]string{"subject": "s-1"}}
 
 	events := runToEnd(t, c, origin, screen)
@@ -784,5 +811,29 @@ func TestServeGatesAHostedEndpoint(t *testing.T) {
 	events = runToEnd(t, c, origin, screen)
 	if events[len(events)-1].GetDone() == nil {
 		t.Errorf("acknowledged run ended with %v; want Done", events[len(events)-1])
+	}
+}
+
+// Ctrl-C ends serve promptly even while a run's stream is open: the run's
+// ctx is cancelled rather than waited out.
+func TestServeStopsWithARunInFlight(t *testing.T) {
+	c, origin, stop := startServe(t, serveConfig(t, failingModel(t)))
+	stream, err := c.Run(context.Background(), withOrigin(&uiv1.RunRequest{View: "decisions", Screen: "wait", Action: -1}, origin))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	for stream.Receive() {
+		if step := stream.Msg().GetStep(); step != nil && step.StepId == "held" {
+			break
+		}
+	}
+
+	start := time.Now()
+	if err := stop(); err != nil {
+		t.Fatalf("serve returned %v with a run in flight; want nil", err)
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Errorf("serve took %s to stop; want well under the %s shutdown budget", took, serveShutdownBudget)
 	}
 }

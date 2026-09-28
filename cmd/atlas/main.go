@@ -397,7 +397,7 @@ func run() error {
 const serveShutdownBudget = 5 * time.Second
 
 // serve loads the view files and serves the web UI on cfg.Web.Addr until
-// ctx is done. It prints the URL carrying the startup token to out, once.
+// ctx is done, which also cancels every open request. It prints the URL carrying the startup token to out, once.
 func serve(ctx context.Context, cfg config.Config, runner *app.Runner, asker *web.Asker, egress []web.Endpoint, out io.Writer) error {
 	views, err := web.LoadViews(cfg.Web.Views, packfile.Load)
 	if err != nil {
@@ -425,7 +425,13 @@ func serve(ctx context.Context, cfg config.Config, runner *app.Runner, asker *we
 	fmt.Fprintf(out, "atlas: serving http://%s/#token=%s\n", host, token)
 	fmt.Fprintln(out, "atlas: the CLI cannot use this store while the server runs; stop it with Ctrl-C")
 
-	srv := &http.Server{Handler: ui.Handler(), ReadHeaderTimeout: cfg.Web.HeaderTimeout}
+	// Every request's ctx derives from ctx, so a signal ends open runs and
+	// asks instead of leaving Shutdown to wait them out.
+	srv := &http.Server{
+		Handler:           ui.Handler(),
+		ReadHeaderTimeout: cfg.Web.HeaderTimeout,
+		BaseContext:       func(net.Listener) context.Context { return ctx },
+	}
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(ln) }()
 	select {
