@@ -9,16 +9,16 @@ import (
 )
 
 // writeMethodPattern matches source that names a write HTTP method, in any
-// of its forms: the http.MethodX constants, a quoted method string in any
-// case, or a call to the Post or PostForm convenience method on http or an
-// *http.Client, the only write helpers net/http has. A store's Put or Delete
-// method is not an HTTP call and does not match. The quoted-method branch
-// requires the quotes to directly enclose the word, so an ordinary word like
-// "postpone" never matches.
+// of its forms: the http.MethodX constants, a method string in any case
+// between double, single or back quotes, or a call to any Post-prefixed
+// method (net/http's Post and PostForm, a crawler's PostRaw or
+// PostMultipart). A store's Put or Delete method is not an HTTP call and
+// does not match. The quotes must directly enclose the word, so an ordinary
+// word like "postpone" never matches.
 var writeMethodPattern = regexp.MustCompile(
 	`Method(Post|Put|Patch|Delete)\b` +
-		`|\.(Post|PostForm)\(` +
-		`|(?i)"(post|put|patch|delete)"`,
+		`|\.Post\w*\(` +
+		"|(?i)[\"'`](post|put|patch|delete)[\"'`]",
 )
 
 // modelEndpoint is the one package a tool may reach that posts by design:
@@ -70,6 +70,10 @@ func TestTheWriteMethodPatternCatchesEveryForm(t *testing.T) {
 		`http.PostForm(u, v)`,
 		`c.PostForm(u, v)`,
 		`http.NewRequest("delete", u, nil)`,
+		`c.PostRaw(u, b)`,
+		`c.PostMultipart(u, m)`,
+		"page.Eval(`fetch(u,{method:'POST'})`)",
+		"method := `put`",
 	}
 	for _, s := range matches {
 		if !writeMethodPattern.MatchString(s) {

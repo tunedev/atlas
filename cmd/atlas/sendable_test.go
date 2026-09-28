@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"maps"
 	"os"
 	"os/exec"
@@ -66,6 +67,36 @@ func TestASendableDocumentWithNothingKeptIsNotRendered(t *testing.T) {
 		if checked == 0 {
 			t.Fatalf("%s has no render step that verifies kept content", sendablePack)
 		}
+	}
+}
+
+// TestASendableDocumentWithNothingKeptExpectsSomething checks, without
+// typst, that every render step verifying kept content expects at least one
+// string when nothing is kept, so render.run has something it cannot find.
+func TestASendableDocumentWithNothingKeptExpectsSomething(t *testing.T) {
+	t.Chdir(filepath.Join("..", ".."))
+	b, err := packfile.Load(sendablePack)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := settledState(t, b, nothingKept)
+	checked := 0
+	for _, s := range b.Steps {
+		if s.Tool != "render.run" || !strings.Contains(s.With["expect"], ".steps.settle.kept") {
+			continue
+		}
+		checked++
+		expect, err := app.Render(s.With["expect"], state)
+		if err != nil {
+			t.Fatalf("step %s: %v", s.ID, err)
+		}
+		var want []string
+		if err := json.Unmarshal([]byte(expect), &want); err != nil || len(want) == 0 {
+			t.Errorf("step %s: expect = %q with nothing kept; want at least one string", s.ID, expect)
+		}
+	}
+	if checked == 0 {
+		t.Fatalf("%s has no render step that verifies kept content", sendablePack)
 	}
 }
 
