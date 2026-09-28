@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -60,9 +61,12 @@ type Server struct {
 	acks    acks
 }
 
-// New builds the UI server. token authenticates the browser; host is the
-// exact "ip:port" the listener is bound to.
+// New builds the UI server. token authenticates the browser and must not be
+// empty; host is the exact "ip:port" the listener is bound to.
 func New(cfg Config, deps Deps, token, host string) (*Server, error) {
+	if token == "" {
+		return nil, errors.New("web: empty token")
+	}
 	static, err := newStaticHandler()
 	if err != nil {
 		return nil, err

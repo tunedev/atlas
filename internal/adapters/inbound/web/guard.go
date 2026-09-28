@@ -14,6 +14,10 @@ import (
 // startup token, per §What is never exposed.
 const sessionCookie = "atlas_session"
 
+// sessionBodyMaxBytes bounds the /session request body; a token exchange is
+// well under it.
+const sessionBodyMaxBytes = 1 << 10
+
 // rpcErrors writes an unauthenticated failure in whatever wire format the
 // caller's protocol expects (Connect unary or streaming, gRPC, gRPC-Web),
 // the same way the generated handler itself would.
@@ -68,7 +72,8 @@ func exchangeSession(w http.ResponseWriter, r *http.Request, token string) {
 	var body struct {
 		Token string `json:"token"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body) // a malformed body decodes to a zero token, which never matches
+	r.Body = http.MaxBytesReader(w, r.Body, sessionBodyMaxBytes)
+	_ = json.NewDecoder(r.Body).Decode(&body) // a malformed or oversized body decodes to a zero token, which never matches
 
 	if subtle.ConstantTimeCompare([]byte(body.Token), []byte(token)) != 1 {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)

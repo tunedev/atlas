@@ -188,6 +188,30 @@ func TestSessionExchangeSetsAStrictHttpOnlyCookie(t *testing.T) {
 	}
 }
 
+func TestAnOversizedSessionBodyDoesNotAuthenticate(t *testing.T) {
+	ts, host, token := newTestServer(t, web.Deps{}, web.Config{})
+	body, _ := json.Marshal(map[string]string{"token": token, "pad": strings.Repeat("x", 2048)})
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/session", bytes.NewReader(body))
+	req.Header.Set("Origin", "http://"+host)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 400 || resp.StatusCode > 499 {
+		t.Errorf("status %d; want 4xx", resp.StatusCode)
+	}
+	if len(resp.Cookies()) != 0 {
+		t.Errorf("an oversized body set cookies %v", resp.Cookies())
+	}
+}
+
+func TestNewRefusesAnEmptyToken(t *testing.T) {
+	if _, err := web.New(web.Config{}, web.Deps{}, "", "127.0.0.1:1"); err == nil || err.Error() != "web: empty token" {
+		t.Errorf("New with an empty token: err = %v; want web: empty token", err)
+	}
+}
+
 func TestEveryResponseCarriesTheSecurityHeadersAndNoCORS(t *testing.T) {
 	ts, host, token := newTestServer(t, web.Deps{}, web.Config{})
 	origin := "http://" + host
