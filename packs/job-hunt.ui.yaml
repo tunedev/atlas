@@ -38,6 +38,27 @@ screens:
         input:
           - {name: state, options: [offer, rejected, ghosted, withdrawn, not_applied]}
         vars: {subject_id: param.subject_id, state: input.state}
+      - label: Declare sent
+        run: sent.yaml
+        input:
+          - {name: when, text: true}
+          - {name: note, text: true}
+        vars: {subject_id: param.subject_id, when: input.when, note: input.note}
+      - label: Skip
+        run: skip.yaml
+        input:
+          - {name: reason, text: true}
+        vars: {subject_id: param.subject_id, reason: input.reason, judgement_path: state.judgement.rows.0.path}
+
+  - id: suggestions
+    title: Rule suggestions
+    run: policy-suggest.yaml
+    show:
+      - table: {from: suggest.candidates, columns: [rule.id, rule.decision, evidence]}
+    actions:
+      - label: Promote
+        run: policy-promote.yaml
+        vars: {rule: state.suggest.candidates.0.rule, evidence: state.suggest.candidates.0.evidence}
 
   - id: calibration
     title: How often you were right
