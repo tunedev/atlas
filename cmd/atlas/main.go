@@ -83,6 +83,8 @@ func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index, source
 		tools.NewFileRead(cfg.Pack.FileMaxBytes),
 		tools.NewFileText(cfg.Pack.FileMaxBytes),
 		tools.NewDocsPut(docs, index),
+		tools.NewIndexFind(index),
+		tools.NewDocsGet(docs, cfg.Pack.FileMaxBytes),
 		tools.NewQuoteGround(),
 		tools.NewExtract(extractor),
 		tools.NewDecision(docs, index),
