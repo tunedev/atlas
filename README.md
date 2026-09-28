@@ -89,6 +89,25 @@ Service-to-service RPC is gRPC, and must stay trivially callable over HTTP/JSON.
 `connect-go` handler generated from one `.proto` serves both, so a browser sending JSON
 and a runner sending gRPC reach the same method. The `.proto` is the versioned contract.
 
+## The web UI
+
+```
+atlas -serve -web-views packs/job-hunt.ui.yaml
+```
+
+It serves on loopback only and prints one URL carrying a fresh token,
+`http://127.0.0.1:7878/#token=...`. Open that URL. The CLI cannot use the same store until
+you stop the server with Ctrl-C.
+
+From another machine, tunnel the same port and open the printed URL locally:
+
+```
+ssh -L 7878:127.0.0.1:7878 host
+```
+
+How it works, what a view file declares, and what is never exposed:
+[`docs/design/web.md`](docs/design/web.md).
+
 ## Context
 
 Atlas is one repo of the Forge, a workshop for learning
