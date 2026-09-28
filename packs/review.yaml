@@ -1,0 +1,19 @@
+# Reads one subject's judgement: its index row, then the recorded document.
+# A subject with no judgement fails at the doc step.
+#   atlas -pack packs/review.yaml -var subject_id=greenhouse~gitlab~12345
+name: review
+vars:
+  subject_id: ""
+
+steps:
+  - id: judgement
+    tool: index.find
+    with:
+      kind: judgement
+      match: "subject_id: {{ json .vars.subject_id }}"
+      limit: "1"
+
+  - id: doc
+    tool: docs.get
+    with:
+      path: "{{ (index .steps.judgement.rows 0).path }}"

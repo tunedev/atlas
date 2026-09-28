@@ -1,0 +1,51 @@
+# The job-hunt screens for atlas -serve:
+#   atlas -serve -web-views packs/job-hunt.ui.yaml
+title: Job hunt
+discloses:
+  - profile summary
+  - CV text
+  - posting text
+  - drafted cover letter and CV
+screens:
+  - id: queue
+    title: To review
+    run: queue.yaml
+    show:
+      - table: {from: judgements.rows, columns: [fields.subject_id, fields.verdict, fields.tripped, when], open: {screen: review, param: {subject_id: fields.subject_id}}}
+
+  - id: review
+    title: Posting
+    params: [subject_id]
+    run: review.yaml
+    vars: {subject_id: param.subject_id}
+    show:
+      - badge: {from: judgement.rows.0.fields.verdict}
+      - table: {from: doc.doc.answers, columns: [id, chosen, confidence]}
+      - table: {from: doc.doc.rules, columns: [id, state, evidence]}
+      - text:  {from: doc.doc.subject}
+    actions:
+      - label: Approve
+        run: decide.yaml
+        vars: {subject_id: param.subject_id, choice: state.judgement.rows.0.fields.verdict, judgement_path: state.judgement.rows.0.path, verdict_question: const.verdict}
+      - label: Override
+        run: decide.yaml
+        input:
+          - {name: choice, options: [apply, reach, skip]}
+          - {name: reason, text: true}
+        vars: {subject_id: param.subject_id, choice: input.choice, reason: input.reason, judgement_path: state.judgement.rows.0.path, verdict_question: const.verdict}
+      - label: Record an outcome
+        run: judge-outcome.yaml
+        input:
+          - {name: state, options: [offer, rejected, ghosted, withdrawn, not_applied]}
+        vars: {subject_id: param.subject_id, state: input.state}
+
+  - id: calibration
+    title: How often you were right
+    run: judge-calibrate.yaml
+    vars: {question: const.verdict, options: const.apply, positive: const.offer, negative: const.rejected, inconclusive: 'const.ghosted,withdrawn,not_applied'}
+    show:
+      - fields: {from: calibration.pooled, keys: [headline, n, brier]}
+      - bins:   {from: calibration.pooled.bins}
+      - fields: {from: calibration.pooled.excluded, keys: [pending, zero_coverage, inconclusive, unclassified, option_mismatch]}
+      - table:  {from: calibration.by_engine, columns: [provider, model, headline, n, brier]}
+      - fields: {from: agreement, keys: [headline]}

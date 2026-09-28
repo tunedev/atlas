@@ -1017,3 +1017,18 @@ func TestPackEachPrintsChildProgressUnderTheParent(t *testing.T) {
 		t.Errorf("progress output =\n%s\nwant\n%s", b.String(), want)
 	}
 }
+
+// Every shipped view file loads against the real packs, so every run it
+// names resolves and every var it binds is one that pack declares.
+func TestShippedViewsLoad(t *testing.T) {
+	paths, err := filepath.Glob("../../packs/*.ui.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) == 0 {
+		t.Fatal("no shipped view files found")
+	}
+	if _, err := web.LoadViews(paths, packfile.Load); err != nil {
+		t.Fatal(err)
+	}
+}

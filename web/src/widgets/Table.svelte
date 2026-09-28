@@ -9,7 +9,7 @@
   function hrefFor(row: Record<string, unknown>): string {
     if (!widget.open) return "";
     const query = Object.entries(widget.open.param)
-      .map(([param, field]) => `${encodeURIComponent(param)}=${encodeURIComponent(String(row[field] ?? ""))}`)
+      .map(([param, field]) => `${encodeURIComponent(param)}=${encodeURIComponent(String(lookup(row, field) ?? ""))}`)
       .join("&");
     return `#/${view}/${widget.open.screen}?${query}`;
   }
@@ -29,9 +29,9 @@
         {#each widget.columns ?? [] as col, i}
           <td>
             {#if widget.open && i === 0}
-              <a href={hrefFor(row)}>{row[col]}</a>
+              <a href={hrefFor(row)}>{lookup(row, col)}</a>
             {:else}
-              {row[col]}
+              {lookup(row, col)}
             {/if}
           </td>
         {/each}
