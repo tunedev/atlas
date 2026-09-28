@@ -105,7 +105,7 @@ func TestBuildRegistryRegistersBothShippedTools(t *testing.T) {
 func TestBuildRegistryRegistersTheJudgeTool(t *testing.T) {
 	docs, index := testStore(t)
 	r, _ := buildRegistry(config.Config{}, docs, index, feedsource.New(feedsource.Config{}), testCrawler(t))
-	for _, name := range []string{"http.request", "model.complete", "judge.ask", "source.pull", "file.read", "file.text", "docs.put", "index.find", "docs.get", "quote.ground", "extract.run", "decision.record", "judge.each", "items.dedupe", "crawl.pull", "judge.outcome", "judge.calibrate", "decision.agreement"} {
+	for _, name := range []string{"http.request", "model.complete", "judge.ask", "source.pull", "file.read", "file.text", "docs.put", "index.find", "docs.get", "quote.ground", "extract.run", "decision.record", "judge.each", "items.dedupe", "crawl.pull", "judge.outcome", "judge.calibrate", "decision.agreement", "judge.assess"} {
 		if _, ok := r.Lookup(name); !ok {
 			t.Errorf("registry has no %s", name)
 		}

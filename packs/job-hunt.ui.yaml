@@ -17,16 +17,16 @@ screens:
     title: Posting
     params: [subject_id]
     run: review.yaml
-    vars: {subject_id: param.subject_id}
+    vars: {subject_id: param.subject_id, question: const.verdict}
     show:
-      - badge: {from: judgement.rows.0.fields.verdict}
-      - table: {from: doc.doc.answers, columns: [id, chosen, confidence]}
-      - table: {from: doc.doc.rules, columns: [id, state, evidence]}
+      - badge: {from: assessment.verdict}
+      - list:  {from: assessment.reasons}
+      - list:  {from: assessment.tripped}
       - text:  {from: doc.doc.subject}
     actions:
       - label: Approve
         run: decide.yaml
-        vars: {subject_id: param.subject_id, choice: state.judgement.rows.0.fields.verdict, judgement_path: state.judgement.rows.0.path, verdict_question: const.verdict}
+        vars: {subject_id: param.subject_id, choice: state.assessment.verdict, judgement_path: state.judgement.rows.0.path, verdict_question: const.verdict}
       - label: Override
         run: decide.yaml
         input:

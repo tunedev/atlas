@@ -123,6 +123,7 @@ func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index, source
 		tools.NewOutcome(docs, index),
 		tools.NewCalibrate(docs, index),
 		tools.NewAgreement(index),
+		tools.NewJudgeAssess(docs),
 		tools.NewPolicyDecide(docs),
 		tools.NewPolicySuggest(index),
 		tools.NewPolicyAdd(docs, index),
