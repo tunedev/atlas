@@ -114,7 +114,7 @@ func TestHTTPRefusesEveryMethodButGetAndHead(t *testing.T) {
 	hit := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hit = true }))
 	defer srv.Close()
-	for _, m := range []string{"POST", "PUT", "PATCH", "DELETE", "post", "OPTIONS"} {
+	for _, m := range []string{"POST", "PUT", "PATCH", "DELETE", "post", "OPTIONS", " GET"} {
 		_, err := tools.NewHTTP(time.Second, 1<<20).Invoke(context.Background(), map[string]string{"url": srv.URL, "method": m})
 		if err == nil || !strings.Contains(err.Error(), "only GET and HEAD") {
 			t.Errorf("%s: err = %v", m, err)
@@ -123,7 +123,7 @@ func TestHTTPRefusesEveryMethodButGetAndHead(t *testing.T) {
 	if hit {
 		t.Error("a refused method reached the server")
 	}
-	for _, m := range []string{"", "GET", "HEAD"} {
+	for _, m := range []string{"", "GET", "HEAD", "get", "head"} {
 		if _, err := tools.NewHTTP(time.Second, 1<<20).Invoke(context.Background(), map[string]string{"url": srv.URL, "method": m}); err != nil {
 			t.Errorf("%q: %v", m, err)
 		}
