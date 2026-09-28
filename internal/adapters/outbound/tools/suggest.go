@@ -81,6 +81,8 @@ func parseMinRepeats(raw string) (int, error) {
 // creating it when absent, and commits it with the evidence in the message.
 // The whole resulting document must parse as a policy, so a duplicate id or
 // a rule policy.decide could not apply is refused and nothing is written.
+// Existing rules are rewritten through PolicyRule, which drops unknown
+// per-rule keys and the original formatting.
 type PolicyAdd struct {
 	docs  ports.Docs
 	index ports.Index

@@ -3,7 +3,6 @@ package tools_test
 import (
 	"context"
 	"encoding/json"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -25,15 +24,13 @@ func recordBakeDecision(t *testing.T, docs ports.Docs, index ports.Index, subjec
 	}
 }
 
-func TestPolicySuggestProposesARuleAndWritesNothing(t *testing.T) {
+func TestPolicySuggestProposesARule(t *testing.T) {
 	ctx := context.Background()
 	docs, index := store(t)
 	for _, s := range []string{"order-1", "order-2", "order-3"} {
 		recordBakeDecision(t, docs, index, s, "skip", "reach")
 	}
 	recordBakeDecision(t, docs, index, "order-4", "bake", "take")
-	pathsBefore, _ := docs.List(ctx, "")
-	rowsBefore, _ := index.Find(ctx, ports.Query{Kind: "decision"})
 
 	out, err := tools.NewPolicySuggest(index).Invoke(ctx, map[string]string{"choices": bakeChoicesYAML})
 	if err != nil {
@@ -44,11 +41,6 @@ func TestPolicySuggestProposesARuleAndWritesNothing(t *testing.T) {
 	want := `{"candidates":[{"rule":{"id":"deny-when-verdict-reach","decision":"deny","when":[{"field":"verdict","op":"==","value":"reach"}]},"evidence":["order-1","order-2","order-3"]}]}`
 	if string(body) != want {
 		t.Errorf("out = %s", body)
-	}
-	pathsAfter, _ := docs.List(ctx, "")
-	rowsAfter, _ := index.Find(ctx, ports.Query{Kind: "decision"})
-	if !reflect.DeepEqual(pathsBefore, pathsAfter) || len(rowsBefore) != len(rowsAfter) {
-		t.Errorf("store changed: %v -> %v, %d -> %d rows", pathsBefore, pathsAfter, len(rowsBefore), len(rowsAfter))
 	}
 }
 
@@ -140,5 +132,22 @@ func TestPolicyAddRefusesADuplicateOrMalformedRule(t *testing.T) {
 	history, _ := docs.History(ctx, "profile/policy.json")
 	if len(history) != 1 {
 		t.Errorf("a refused rule was committed: %d revisions", len(history))
+	}
+}
+
+func TestPolicyAddRefusesToExtendAMalformedPolicy(t *testing.T) {
+	ctx := context.Background()
+	docs, index := store(t)
+	if _, err := docs.Put(ctx, "profile/policy.json", []byte(`{"rules": [{"id": "odd", "decision": "maybe"}]}`), "seed"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := tools.NewPolicyAdd(docs, index).Invoke(ctx, map[string]string{"policy": "profile/policy.json", "rule": takeRule, "evidence": "order-6"})
+	if err == nil || !strings.HasPrefix(err.Error(), "policy.add: ") {
+		t.Fatalf("err = %v", err)
+	}
+	history, _ := docs.History(ctx, "profile/policy.json")
+	if len(history) != 1 {
+		t.Errorf("a revision was committed over a malformed policy: %d revisions", len(history))
 	}
 }

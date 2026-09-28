@@ -1,6 +1,7 @@
 package app
 
 import (
+	"maps"
 	"slices"
 	"strings"
 
@@ -22,13 +23,14 @@ type suggestKey struct {
 }
 
 // Suggest reads decision rows and, for each verdict, proposes a rule when
-// at least minRepeats distinct subjects got a choice that choiceToDecision
-// maps to allow or deny. A decision with no verdict, or whose choice maps
+// at least minRepeats subjects' latest decisions carry a choice that
+// choiceToDecision maps to allow or deny. Only each subject's latest
+// decision counts. A latest decision with no verdict, or whose choice maps
 // to anything else, is ignored. The rule matches rows by that verdict; the
 // evidence is the sorted subject ids. Candidates are sorted by rule id.
 func Suggest(decisions []ports.Record, choiceToDecision map[string]string, minRepeats int) []Candidate {
 	groups := map[suggestKey][]string{}
-	for _, r := range decisions {
+	for _, r := range latestPerSubject(decisions) {
 		verdict, decision := r.Fields["verdict_at_decision"], choiceToDecision[r.Fields["decision"]]
 		if verdict == "" || (decision != DecisionAllow && decision != DecisionDeny) {
 			continue
@@ -40,7 +42,6 @@ func Suggest(decisions []ports.Record, choiceToDecision map[string]string, minRe
 	var out []Candidate
 	for k, subjects := range groups {
 		slices.Sort(subjects)
-		subjects = slices.Compact(subjects)
 		if len(subjects) < minRepeats {
 			continue
 		}
@@ -48,6 +49,19 @@ func Suggest(decisions []ports.Record, choiceToDecision map[string]string, minRe
 	}
 	slices.SortFunc(out, func(a, b Candidate) int { return strings.Compare(a.Rule.ID, b.Rule.ID) })
 	return out
+}
+
+// latestPerSubject keeps each subject's decision with the latest time; of
+// two at the same time, the later in decisions wins.
+func latestPerSubject(decisions []ports.Record) []ports.Record {
+	latest := map[string]ports.Record{}
+	for _, r := range decisions {
+		id := r.Fields["subject_id"]
+		if prev, seen := latest[id]; !seen || !r.When.Before(prev.When) {
+			latest[id] = r
+		}
+	}
+	return slices.Collect(maps.Values(latest))
 }
 
 // verdictRule is the rule that gives k's decision to every row with k's
