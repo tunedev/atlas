@@ -55,19 +55,105 @@ func TestDecideLeavesAnErrorRowUndecided(t *testing.T) {
 	}
 }
 
+var denyOnMissingField = app.PolicyRule{ID: "no-frontend", Decision: "deny", When: []app.Condition{{Field: "answers.focus", Op: "==", Value: "frontend"}}}
+var denyOnIncomparableType = app.PolicyRule{ID: "bad-type", Decision: "deny", When: []app.Condition{{Field: "answers.size", Op: "==", Value: 5.0}}}
+
+// TestADenyRuleThatCannotBeCheckedCapsAtAskNotAllow proves the gate does not
+// fail open: a deny rule whose field is absent from the row must not be
+// silently skipped while a matching allow rule goes through.
+func TestADenyRuleThatCannotBeCheckedCapsAtAskNotAllow(t *testing.T) {
+	row := policyRow("take", 0.9) // no answers.focus on this row
+	d, ok := app.Decide(row, []app.PolicyRule{allowStrong, denyOnMissingField})
+	if !ok || d.Decision != "ask" {
+		t.Fatalf("%+v, %v; want ask, not allow", d, ok)
+	}
+	if !strings.Contains(d.Because, "no-frontend") || !strings.Contains(d.Because, "answers.focus") {
+		t.Errorf("because = %q, want it to name the unchecked rule and field", d.Because)
+	}
+}
+
+// TestADenyRuleWithAnIncomparableValueCapsAtAskNotAllow is the same proof
+// for a deny rule whose value cannot be compared with the row's value
+// (a type mismatch, such as a typo'd numeric value against a string field).
+func TestADenyRuleWithAnIncomparableValueCapsAtAskNotAllow(t *testing.T) {
+	row := policyRow("take", 0.9) // answers.size is the string "large"
+	d, ok := app.Decide(row, []app.PolicyRule{allowStrong, denyOnIncomparableType})
+	if !ok || d.Decision != "ask" {
+		t.Fatalf("%+v, %v; want ask, not allow", d, ok)
+	}
+	if !strings.Contains(d.Because, "bad-type") {
+		t.Errorf("because = %q, want it to name the unchecked rule", d.Because)
+	}
+}
+
+// TestAnAllowRuleThatCannotBeCheckedSimplyDoesNotMatch is the mirror case:
+// unlike a deny rule, an allow rule whose conditions cannot be evaluated
+// must not cap or otherwise change the decision.
+func TestAnAllowRuleThatCannotBeCheckedSimplyDoesNotMatch(t *testing.T) {
+	allowOnMissingField := app.PolicyRule{ID: "allow-frontend", Decision: "allow", When: []app.Condition{{Field: "answers.focus", Op: "==", Value: "frontend"}}}
+	row := policyRow("take", 0.9)
+	d, ok := app.Decide(row, []app.PolicyRule{allowOnMissingField})
+	if !ok || d.Decision != "ask" || d.Because != "no rule matched" {
+		t.Errorf("%+v, %v; want the default ask, the rule not counted at all", d, ok)
+	}
+}
+
+// TestARuleStateThatIsNotClearOrTrippedCapsAtAskNotAllow proves ruleStates
+// fails safe on any state it does not recognise: a typo, an empty state,
+// or a non-string state all join the unknown list rather than being
+// silently ignored.
+func TestARuleStateThatIsNotClearOrTrippedCapsAtAskNotAllow(t *testing.T) {
+	row := policyRow("take", 0.9, "oven", "installing") // not clear, tripped or unknown
+	d, ok := app.Decide(row, []app.PolicyRule{allowStrong})
+	if !ok || d.Decision != "ask" {
+		t.Errorf("%+v, %v; want ask for an unrecognised rule state", d, ok)
+	}
+}
+
+// TestAMalformedRulesValueCapsAtAskNotAllow proves a "rules" value that is
+// present but not a list is treated as unknown (cap at ask), not as no
+// rules at all.
+func TestAMalformedRulesValueCapsAtAskNotAllow(t *testing.T) {
+	row := policyRow("take", 0.9)
+	row["rules"] = "not-a-list"
+	d, ok := app.Decide(row, []app.PolicyRule{allowStrong})
+	if !ok || d.Decision != "ask" {
+		t.Errorf("%+v, %v; want ask for a malformed rules value", d, ok)
+	}
+}
+
+// TestAnAbsentRulesValueIsTreatedAsNoRules proves the absent case is
+// distinct from the malformed case: a row that never set "rules" at all
+// still allows normally.
+func TestAnAbsentRulesValueIsTreatedAsNoRules(t *testing.T) {
+	row := map[string]any{"subject_id": "s", "verdict": "take", "p": 0.9}
+	d, ok := app.Decide(row, []app.PolicyRule{allowStrong})
+	if !ok || d.Decision != "allow" {
+		t.Errorf("%+v, %v; want allow with no rules field at all", d, ok)
+	}
+}
+
 func TestParsePolicyRejectsAMalformedRule(t *testing.T) {
 	for name, body := range map[string]string{
-		"no id":        `{"rules":[{"decision":"deny","when":[{"field":"p","op":">","value":1}]}]}`,
-		"repeated id":  `{"rules":[{"id":"a","decision":"deny","when":[{"field":"p","op":">","value":1}]},{"id":"a","decision":"allow","when":[{"field":"p","op":">","value":1}]}]}`,
-		"ask rule":     `{"rules":[{"id":"a","decision":"ask","when":[{"field":"p","op":">","value":1}]}]}`,
-		"no when":      `{"rules":[{"id":"a","decision":"deny","when":[]}]}`,
-		"bad op":       `{"rules":[{"id":"a","decision":"deny","when":[{"field":"p","op":"~","value":1}]}]}`,
-		"no value":     `{"rules":[{"id":"a","decision":"deny","when":[{"field":"p","op":">"}]}]}`,
-		"string order": `{"rules":[{"id":"a","decision":"deny","when":[{"field":"p","op":">","value":"x"}]}]}`,
-		"not json":     `{`,
+		"no id":           `{"rules":[{"decision":"deny","when":[{"field":"p","op":">","value":1}]}]}`,
+		"repeated id":     `{"rules":[{"id":"a","decision":"deny","when":[{"field":"p","op":">","value":1}]},{"id":"a","decision":"allow","when":[{"field":"p","op":">","value":1}]}]}`,
+		"ask rule":        `{"rules":[{"id":"a","decision":"ask","when":[{"field":"p","op":">","value":1}]}]}`,
+		"no when":         `{"rules":[{"id":"a","decision":"deny","when":[]}]}`,
+		"bad op":          `{"rules":[{"id":"a","decision":"deny","when":[{"field":"p","op":"~","value":1}]}]}`,
+		"no value":        `{"rules":[{"id":"a","decision":"deny","when":[{"field":"p","op":">"}]}]}`,
+		"string order":    `{"rules":[{"id":"a","decision":"deny","when":[{"field":"p","op":">","value":"x"}]}]}`,
+		"empty field":     `{"rules":[{"id":"a","decision":"deny","when":[{"field":"","op":">","value":1}]}]}`,
+		"no rules key":    `{}`,
+		"unknown top key": `{"rule":[{"id":"a","decision":"deny","when":[{"field":"p","op":">","value":1}]}]}`,
+		"not json":        `{`,
 	} {
-		if _, err := app.ParsePolicy([]byte(body)); err == nil {
+		_, err := app.ParsePolicy([]byte(body))
+		if err == nil {
 			t.Errorf("%s: accepted", name)
+			continue
+		}
+		if !strings.HasPrefix(err.Error(), "policy: ") {
+			t.Errorf("%s: error %q lacks the policy: prefix", name, err.Error())
 		}
 	}
 }

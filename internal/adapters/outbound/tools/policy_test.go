@@ -56,6 +56,13 @@ func TestPolicyDecideAddsADecisionToEachRow(t *testing.T) {
 	if deny["decision"] != "deny" {
 		t.Errorf("deny row = %v", deny)
 	}
+	matched, _ := deny["matched"].([]string)
+	if len(matched) == 0 || matched[0] != "no-nuts" {
+		t.Errorf("deny row matched = %v, want [no-nuts]", deny["matched"])
+	}
+	if because, _ := deny["because"].(string); because == "" {
+		t.Errorf("deny row because = %v, want a reason", deny["because"])
+	}
 	errRow := got[2].(map[string]any)
 	if _, present := errRow["decision"]; present {
 		t.Errorf("error row gained a decision: %v", errRow)
