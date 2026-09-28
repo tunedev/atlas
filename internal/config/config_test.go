@@ -675,3 +675,74 @@ func TestRenderIsOffByDefaultAndValidatedWhenOn(t *testing.T) {
 		t.Error("a zero render timeout was accepted while rendering is on")
 	}
 }
+
+func TestServeRefusesNonLoopbackAddr(t *testing.T) {
+	bad := []string{"0.0.0.0:7878", "[::]:7878", "192.168.1.5:7878", "localhost:7878", "example.com:80"}
+	for _, addr := range bad {
+		t.Run(addr, func(t *testing.T) {
+			_, err := config.Load([]string{"-serve", "-web-views", "v.tmpl", "-web-addr", addr})
+			if err == nil || !strings.Contains(err.Error(), "not a loopback IP") {
+				t.Errorf("addr %q: err = %v, want an error containing %q", addr, err, "not a loopback IP")
+			}
+		})
+	}
+	good := []string{"127.0.0.1:0", "[::1]:7878"}
+	for _, addr := range good {
+		t.Run(addr, func(t *testing.T) {
+			if _, err := config.Load([]string{"-serve", "-web-views", "v.tmpl", "-web-addr", addr}); err != nil {
+				t.Errorf("addr %q: %v", addr, err)
+			}
+		})
+	}
+}
+
+func TestServeAndPackAreExclusive(t *testing.T) {
+	if _, err := config.Load([]string{"-serve", "-web-views", "v.tmpl", "-pack", "p.yaml"}); err == nil {
+		t.Error("Load accepted both -serve and -pack")
+	}
+}
+
+func TestServeNeedsAView(t *testing.T) {
+	_, err := config.Load([]string{"-serve"})
+	if err == nil || !strings.Contains(err.Error(), "at least one view") {
+		t.Errorf("err = %v, want an error about needing a view", err)
+	}
+}
+
+func TestPackStillRequiredWithoutServe(t *testing.T) {
+	_, err := config.Load([]string{})
+	if err == nil {
+		t.Fatal("Load succeeded with neither -pack nor -serve")
+	}
+	if !strings.Contains(err.Error(), "-pack") || !strings.Contains(err.Error(), "-serve") {
+		t.Errorf("err = %v, want it to name both -pack and -serve", err)
+	}
+}
+
+func TestWebConfigLayers(t *testing.T) {
+	cfg, err := config.Load([]string{"-pack", "p.yaml"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Web.Addr != "127.0.0.1:7878" || len(cfg.Web.Views) != 0 {
+		t.Errorf("web defaults = %+v", cfg.Web)
+	}
+
+	t.Setenv("ATLAS_WEB_ADDR", "127.0.0.1:9000")
+	t.Setenv("ATLAS_WEB_VIEWS", "a.tmpl,b.tmpl")
+	cfg, err = config.Load([]string{"-pack", "p.yaml"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Web.Addr != "127.0.0.1:9000" || !reflect.DeepEqual(cfg.Web.Views, []string{"a.tmpl", "b.tmpl"}) {
+		t.Errorf("web from env = %+v", cfg.Web)
+	}
+
+	cfg, err = config.Load([]string{"-pack", "p.yaml", "-web-addr", "127.0.0.1:9100", "-web-views", "c.tmpl"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Web.Addr != "127.0.0.1:9100" || !reflect.DeepEqual(cfg.Web.Views, []string{"c.tmpl"}) {
+		t.Errorf("web from flag = %+v; flags are the last layer", cfg.Web)
+	}
+}

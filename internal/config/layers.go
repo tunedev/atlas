@@ -68,6 +68,20 @@ func expandPaths(c *Config) error {
 	}
 	c.Crawl.CacheDir = crawlCacheDir
 
+	filesRoot, err := expandHome(c.Web.FilesRoot)
+	if err != nil {
+		return err
+	}
+	c.Web.FilesRoot = filesRoot
+
+	for i, view := range c.Web.Views {
+		expanded, err := expandHome(view)
+		if err != nil {
+			return err
+		}
+		c.Web.Views[i] = expanded
+	}
+
 	return nil
 }
 
@@ -172,6 +186,12 @@ func defaults() Config {
 			CacheDir:      "~/.atlas/crawl-cache",
 			Render:        false,
 			RenderTimeout: 30 * time.Second,
+		},
+		Web: WebConfig{
+			Addr:          "127.0.0.1:7878",
+			RunTimeout:    10 * time.Minute,
+			AskTimeout:    5 * time.Minute,
+			HeaderTimeout: 10 * time.Second,
 		},
 	}
 }
@@ -465,6 +485,36 @@ func applyEnv(c *Config) error {
 		}
 		c.Render.MaxBytes = n
 	}
+	if v := os.Getenv("ATLAS_WEB_ADDR"); v != "" {
+		c.Web.Addr = v
+	}
+	if v := os.Getenv("ATLAS_WEB_VIEWS"); v != "" {
+		c.Web.Views = splitList(v)
+	}
+	if v := os.Getenv("ATLAS_WEB_RUN_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_WEB_RUN_TIMEOUT: invalid duration %q: %w", v, err)
+		}
+		c.Web.RunTimeout = d
+	}
+	if v := os.Getenv("ATLAS_WEB_ASK_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_WEB_ASK_TIMEOUT: invalid duration %q: %w", v, err)
+		}
+		c.Web.AskTimeout = d
+	}
+	if v := os.Getenv("ATLAS_WEB_HEADER_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: ATLAS_WEB_HEADER_TIMEOUT: invalid duration %q: %w", v, err)
+		}
+		c.Web.HeaderTimeout = d
+	}
+	if v := os.Getenv("ATLAS_WEB_FILES_ROOT"); v != "" {
+		c.Web.FilesRoot = v
+	}
 	return nil
 }
 
@@ -540,6 +590,16 @@ func applyFlags(c *Config, args []string) error {
 		return nil
 	})
 	fs.StringVar(&c.Render.TypstPath, "render-typst", c.Render.TypstPath, "typst binary to render documents with; empty disables rendering")
+	fs.BoolVar(&c.Web.Serve, "serve", c.Web.Serve, "run the local web UI instead of a pack; loopback only")
+	fs.StringVar(&c.Web.Addr, "web-addr", c.Web.Addr, "loopback address the web UI listens on")
+	fs.Func("web-views", "comma-separated view files for the web UI", func(v string) error {
+		c.Web.Views = splitList(v)
+		return nil
+	})
+	fs.DurationVar(&c.Web.RunTimeout, "web-run-timeout", c.Web.RunTimeout, "timeout for one web run")
+	fs.DurationVar(&c.Web.AskTimeout, "web-ask-timeout", c.Web.AskTimeout, "timeout for one web ask")
+	fs.DurationVar(&c.Web.HeaderTimeout, "web-header-timeout", c.Web.HeaderTimeout, "timeout for reading request headers")
+	fs.StringVar(&c.Web.FilesRoot, "web-files-root", c.Web.FilesRoot, "root directory the web UI may serve files from; empty disables file access")
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("config: parse flags: %w", err)
 	}
