@@ -212,6 +212,26 @@ func TestNewRefusesAnEmptyToken(t *testing.T) {
 	}
 }
 
+func TestAWriteWithoutAnOriginIsRefused(t *testing.T) {
+	ts, host, token := newTestServer(t, web.Deps{}, web.Config{})
+	client, _ := authedClient(t, ts.URL, host, token)
+
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/atlas.web.v1.UIService/Views", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("status %d; want %d", resp.StatusCode, http.StatusForbidden)
+	}
+}
+
 func TestEveryResponseCarriesTheSecurityHeadersAndNoCORS(t *testing.T) {
 	ts, host, token := newTestServer(t, web.Deps{}, web.Config{})
 	origin := "http://" + host
