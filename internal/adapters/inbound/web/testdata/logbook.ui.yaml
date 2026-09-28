@@ -1,0 +1,32 @@
+title: Logbook
+discloses:
+  - entry text
+screens:
+  - id: days
+    title: Days
+    run: days.yaml
+    vars:
+      port: const.shelf
+    show:
+      - table:
+          from: rows
+          columns: [day, mood]
+          open:
+            screen: day
+            param:
+              day: day
+  - id: day
+    title: Day
+    params: [day]
+    actions:
+      - label: Save
+        run: note.yaml
+        input:
+          - name: text
+            text: true
+          - name: mood
+            options: [calm, rough]
+        vars:
+          day: param.day
+          text: input.text
+          path: state.row.path
