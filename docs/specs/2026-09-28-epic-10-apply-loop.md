@@ -103,8 +103,9 @@ The platform cannot see the boundary between drafted and sent, so the user decla
   bound, as `judge.each` does); shared values pass through the parent's `{{ }}`. Each matching row
   gets a fresh run of the child pack, one at a time, in id order. A child failure becomes an error
   row; the rest continue. Output: one row per child run with its vars, `ok` or `error`, and the
-  child's final state. The child registry is the parent's without `pack.each`, so nesting is one
-  level by construction. Pack loading and the runner are injected at the composition root, so the
+  child's final state. The child registry is the parent's without `pack.each` or `agent.do`, so
+  nesting is one level by construction. `pack.each` is not offered to the agent, so a pack the agent
+  writes cannot run tools outside its allowlist. Pack loading and the runner are injected at the composition root, so the
   tools package does not import the pack-file adapter. Child steps are traced under the parent's
   span.
 - **`stage.attach`** (generic tool) adds each row's current `stage` from the index, so

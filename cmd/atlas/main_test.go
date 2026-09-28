@@ -225,7 +225,7 @@ func TestCompositionPassesNoLiterals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse main.go: %v", err)
 	}
-	for _, name := range []string{"buildRegistry", "startAgent", "startRender", "withPackEach", "childRunner", "stageOf"} {
+	for _, name := range []string{"buildRegistry", "startAgent", "startRender", "withPackEach", "childRunner", "stageOf", "withAgent"} {
 		found := false
 		for _, decl := range f.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
@@ -264,6 +264,27 @@ func TestStartAgentFailsLoudlyForAMissingCommand(t *testing.T) {
 	_, _, err := startAgent(context.Background(), cfg, buildRegistry(cfg, docs, index, feedsource.New(feedsource.Config{}), testCrawler(t)), docs)
 	if err == nil || !strings.Contains(err.Error(), "no-such-agent") {
 		t.Errorf("err = %v; want one naming the command", err)
+	}
+}
+
+// The agent is offered tools from the registry without pack.each, so a pack
+// the agent wrote cannot run tools outside its allowlist.
+func TestAgentIsNeverOfferedPackEach(t *testing.T) {
+	docs, index := testStore(t)
+	cfg := config.Config{}
+	cfg.Agent.Command = filepath.Join(t.TempDir(), "no-such-agent")
+	cfg.Agent.Tools = []string{"pack.each"}
+	cfg.Agent.MCPAddr = "127.0.0.1:0"
+	cfg.Agent.StartTimeout = time.Second
+	cfg.Agent.MCPHeaderTimeout = time.Second
+	cfg.Agent.MaxMessageBytes = 1 << 20
+	cfg.Agent.MaxToolResultBytes = 1 << 20
+	cfg.Permission.SummaryBytes = 200
+	base := buildRegistry(cfg, docs, index, feedsource.New(feedsource.Config{}), testCrawler(t))
+
+	_, _, err := withAgent(context.Background(), cfg, base, noop.NewTracerProvider().Tracer(""), index, docs)
+	if err == nil || !strings.Contains(err.Error(), `no tool named "pack.each" to offer the agent`) {
+		t.Errorf("err = %v; want pack.each refused as an agent tool", err)
 	}
 }
 

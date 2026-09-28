@@ -266,10 +266,9 @@ func run() error {
 		registry = registry.With(render)
 	}
 
-	registry = withPackEach(registry, tracer, index)
-
 	if cfg.Agent.Command != "" {
-		agentTool, stop, err := startAgent(ctx, cfg, registry, docs)
+		var stop func() error
+		registry, stop, err = withAgent(ctx, cfg, registry, tracer, index, docs)
 		if err != nil {
 			return err
 		}
@@ -278,7 +277,8 @@ func run() error {
 				fmt.Fprintf(os.Stderr, "atlas: %v\n", err)
 			}
 		}()
-		registry = registry.With(agentTool)
+	} else {
+		registry = withPackEach(registry, tracer, index)
 	}
 
 	runner := app.NewRunner(registry).WithTracer(tracer)
@@ -298,8 +298,22 @@ func run() error {
 	return nil
 }
 
+// withAgent starts the agent over base and returns the runner's registry:
+// base with pack.each and agent.do added. The agent is offered tools from
+// base only, so it never reaches pack.each, whose child runs would skip the
+// agent's per-tool permission check.
+func withAgent(ctx context.Context, cfg config.Config, base tools.Registry, tracer trace.Tracer, index ports.Index, docs ports.Docs) (tools.Registry, func() error, error) {
+	runner := withPackEach(base, tracer, index)
+	agentTool, stop, err := startAgent(ctx, cfg, base, docs)
+	if err != nil {
+		return nil, nil, err
+	}
+	return runner.With(agentTool), stop, nil
+}
+
 // withPackEach returns registry with pack.each added. Its child runs see
-// registry as given, which holds no pack.each, so nesting stops at one level.
+// registry as given, which holds neither pack.each nor agent.do, so nesting
+// stops at one level and a child pack never reaches the agent.
 func withPackEach(registry tools.Registry, tracer trace.Tracer, index ports.Index) tools.Registry {
 	return registry.With(tools.NewPackEach(childRunner(registry, tracer), stageOf(index)))
 }
