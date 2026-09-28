@@ -559,6 +559,19 @@ func TestEgressTableMarksLoopbackAsLocal(t *testing.T) {
 	}
 }
 
+func TestAnUnusableModelURLIsAHostedPlaceholder(t *testing.T) {
+	for _, baseURL := range []string{
+		"https://api.example.invalid:%zz/?key=sk-sentinel",
+		"api.example.invalid/v1?key=sk-sentinel",
+		"",
+	} {
+		row := modelEndpoint(baseURL, []string{"model.complete"})
+		if row.Endpoint != "unparsed model endpoint" || !row.Hosted {
+			t.Errorf("%q: row = %+v, want the hosted placeholder", baseURL, row)
+		}
+	}
+}
+
 func TestEgressTableAddsTheAgentAsHosted(t *testing.T) {
 	cfg := config.Config{}
 	cfg.Model.BaseURL = "http://localhost:11434/v1"

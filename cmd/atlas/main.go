@@ -152,10 +152,16 @@ func egressTable(cfg config.Config, modelTools []string) []web.Endpoint {
 	return table
 }
 
+// unparsedModelEndpoint names a model base URL with no usable scheme and host.
+// The raw URL is never shown, since it can carry credentials.
+const unparsedModelEndpoint = "unparsed model endpoint"
+
+// modelEndpoint is the egress row for the model: scheme and host only, hosted
+// unless the host is loopback. A URL without both is the hosted placeholder.
 func modelEndpoint(baseURL string, modelTools []string) web.Endpoint {
 	u, err := url.Parse(baseURL)
-	if err != nil {
-		return web.Endpoint{Endpoint: baseURL, Hosted: true, Tools: modelTools}
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return web.Endpoint{Endpoint: unparsedModelEndpoint, Hosted: true, Tools: modelTools}
 	}
 	return web.Endpoint{Endpoint: u.Scheme + "://" + u.Host, Hosted: !loopbackHost(u.Hostname()), Tools: modelTools}
 }
