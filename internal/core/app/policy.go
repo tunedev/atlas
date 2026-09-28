@@ -38,14 +38,29 @@ const (
 
 // ParsePolicy decodes {"rules": [...]} and rejects a rule it could not
 // apply. The rules key is required and no other top-level key is allowed,
-// so a typo'd key fails loudly instead of parsing as an empty policy.
+// so a typo'd key, or an explicit null, fails loudly instead of parsing as
+// an empty policy.
 func ParsePolicy(body []byte) ([]PolicyRule, error) {
+	rules, err := decodePolicyRules(body)
+	if err != nil {
+		return nil, err
+	}
+	if err := validatePolicyRules(rules); err != nil {
+		return nil, err
+	}
+	return rules, nil
+}
+
+// decodePolicyRules reads the rules array out of a policy document. The
+// rules key must be present and non-null, and no other top-level key is
+// allowed.
+func decodePolicyRules(body []byte) ([]PolicyRule, error) {
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(body, &top); err != nil {
 		return nil, fmt.Errorf("policy: decode: %w", err)
 	}
 	rulesRaw, present := top["rules"]
-	if !present {
+	if !present || string(rulesRaw) == "null" {
 		return nil, fmt.Errorf("policy: no rules key")
 	}
 	delete(top, "rules")
@@ -56,27 +71,33 @@ func ParsePolicy(body []byte) ([]PolicyRule, error) {
 	if err := json.Unmarshal(rulesRaw, &rules); err != nil {
 		return nil, fmt.Errorf("policy: decode rules: %w", err)
 	}
+	return rules, nil
+}
 
+// validatePolicyRules rejects a rule it could not apply: no id, a repeated
+// id, a decision other than allow or deny, no conditions, or a condition
+// checkCondition rejects.
+func validatePolicyRules(rules []PolicyRule) error {
 	seen := map[string]bool{}
 	for i, r := range rules {
 		switch {
 		case r.ID == "":
-			return nil, fmt.Errorf("policy: rule %d has no id", i)
+			return fmt.Errorf("policy: rule %d has no id", i)
 		case seen[r.ID]:
-			return nil, fmt.Errorf("policy: %s is listed twice", r.ID)
+			return fmt.Errorf("policy: %s is listed twice", r.ID)
 		case r.Decision != DecisionAllow && r.Decision != DecisionDeny:
-			return nil, fmt.Errorf("policy: %s: decision must be allow or deny, got %q; ask is the default", r.ID, r.Decision)
+			return fmt.Errorf("policy: %s: decision must be allow or deny, got %q; ask is the default", r.ID, r.Decision)
 		case len(r.When) == 0:
-			return nil, fmt.Errorf("policy: %s: no conditions", r.ID)
+			return fmt.Errorf("policy: %s: no conditions", r.ID)
 		}
 		seen[r.ID] = true
 		for _, c := range r.When {
 			if err := checkCondition(r.ID, c); err != nil {
-				return nil, err
+				return err
 			}
 		}
 	}
-	return rules, nil
+	return nil
 }
 
 // checkCondition applies the comparable-rule checks to one condition.
@@ -169,23 +190,34 @@ func ruleStates(row map[string]any) (tripped, unknown []string, malformed bool) 
 }
 
 // evalConditions reports whether every condition in when holds for row.
-// resolved is false when a condition's field is absent from row or its
-// value cannot be compared with the operator; holds is then meaningless,
-// and why names the field responsible. Conditions are AND-ed, so the first
-// one that fails or cannot be resolved stops the check.
+// Conditions are AND-ed: a condition that is definitely false resolves the
+// whole rule to false immediately, whichever condition it is, so the
+// result does not depend on the order conditions are written in. Only when
+// no condition is definitely false, and at least one could not be checked
+// (its field is absent from row, or its value cannot be compared with the
+// operator), is the rule unresolved; why names the first such field.
 func evalConditions(row map[string]any, when []Condition) (holds, resolved bool, why string) {
 	for _, c := range when {
 		got, found := lookupPath(row, c.Field)
 		if !found {
-			return false, false, c.Field + " missing"
+			if why == "" {
+				why = c.Field + " missing"
+			}
+			continue
 		}
 		ok, comparable := compare(got, c.Op, c.Value)
 		if !comparable {
-			return false, false, c.Field + " cannot be compared"
+			if why == "" {
+				why = c.Field + " cannot be compared"
+			}
+			continue
 		}
 		if !ok {
 			return false, true, ""
 		}
+	}
+	if why != "" {
+		return false, false, why
 	}
 	return true, true, ""
 }

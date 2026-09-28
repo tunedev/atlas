@@ -133,6 +133,31 @@ func TestAnAbsentRulesValueIsTreatedAsNoRules(t *testing.T) {
 	}
 }
 
+// TestConditionOrderDoesNotChangeTheDecision proves the AND of a rule's
+// conditions is order-independent: a deny rule with one condition that is
+// definitely false (verdict is "reject", not "apply") and one that cannot
+// be checked (no "answers.focus" on the row) must not hold, whichever
+// condition is written first, so a matching allow rule still allows.
+func TestConditionOrderDoesNotChangeTheDecision(t *testing.T) {
+	row := map[string]any{"subject_id": "s", "verdict": "reject", "p": 0.9,
+		"answers": map[string]any{"size": "large"}} // no "focus" field
+	unresolvedFirst := app.PolicyRule{ID: "deny-x", Decision: "deny", When: []app.Condition{
+		{Field: "answers.focus", Op: "==", Value: "x"},
+		{Field: "verdict", Op: "==", Value: "apply"},
+	}}
+	falseFirst := app.PolicyRule{ID: "deny-x", Decision: "deny", When: []app.Condition{
+		{Field: "verdict", Op: "==", Value: "apply"},
+		{Field: "answers.focus", Op: "==", Value: "x"},
+	}}
+	allowReject := app.PolicyRule{ID: "always-allow", Decision: "allow", When: []app.Condition{{Field: "verdict", Op: "==", Value: "reject"}}}
+
+	d1, ok1 := app.Decide(row, []app.PolicyRule{unresolvedFirst, allowReject})
+	d2, ok2 := app.Decide(row, []app.PolicyRule{falseFirst, allowReject})
+	if !ok1 || !ok2 || d1.Decision != "allow" || d2.Decision != "allow" {
+		t.Errorf("unresolved-first = %+v %v, false-first = %+v %v; want both allow", d1, ok1, d2, ok2)
+	}
+}
+
 func TestParsePolicyRejectsAMalformedRule(t *testing.T) {
 	for name, body := range map[string]string{
 		"no id":           `{"rules":[{"decision":"deny","when":[{"field":"p","op":">","value":1}]}]}`,
@@ -144,6 +169,7 @@ func TestParsePolicyRejectsAMalformedRule(t *testing.T) {
 		"string order":    `{"rules":[{"id":"a","decision":"deny","when":[{"field":"p","op":">","value":"x"}]}]}`,
 		"empty field":     `{"rules":[{"id":"a","decision":"deny","when":[{"field":"","op":">","value":1}]}]}`,
 		"no rules key":    `{}`,
+		"null rules":      `{"rules": null}`,
 		"unknown top key": `{"rule":[{"id":"a","decision":"deny","when":[{"field":"p","op":">","value":1}]}]}`,
 		"not json":        `{`,
 	} {
