@@ -25,7 +25,7 @@ func (s *Server) Document(ctx context.Context, req *connect.Request[uiv1.Documen
 	case "record":
 		return s.recordDocument(ctx, req.Msg.Path)
 	case "file":
-		return s.fileDocument(req.Msg.Path)
+		return s.fileDocument(ctx, req.Msg.Path)
 	default:
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("web: unknown document source %q", req.Msg.Source))
 	}
@@ -62,7 +62,7 @@ func (s *Server) recordDocument(ctx context.Context, path string) (*connect.Resp
 
 // fileDocument reads path from the configured files root through os.Root,
 // which refuses "..", absolute paths and symlinks that escape the root.
-func (s *Server) fileDocument(path string) (*connect.Response[uiv1.DocumentResponse], error) {
+func (s *Server) fileDocument(ctx context.Context, path string) (*connect.Response[uiv1.DocumentResponse], error) {
 	if s.cfg.FilesRoot == "" {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("web: no files root configured"))
 	}
