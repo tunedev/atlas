@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -49,8 +50,31 @@ func TestLoadViewsAcceptsTheFixture(t *testing.T) {
 	if len(days.Show) != 1 || days.Show[0].Kind != "table" {
 		t.Fatalf("days.Show = %+v, want one table widget", days.Show)
 	}
-	if len(day.Actions) != 1 || len(day.Actions[0].Input) != 2 {
-		t.Fatalf("day.Actions = %+v, want one action with two inputs", day.Actions)
+	if len(day.Actions) != 2 || len(day.Actions[0].Input) != 2 {
+		t.Fatalf("day.Actions = %+v, want two actions, the first with two inputs", day.Actions)
+	}
+	if day.Actions[1].Label != "Archive" || day.Actions[1].Input == nil || len(day.Actions[1].Input) != 0 {
+		t.Fatalf("day.Actions[1] = %+v, want Archive with a non-nil, empty Input", day.Actions[1])
+	}
+}
+
+// TestLoadedViewsMarshalWithNoNullSlices proves that every slice field in the
+// loaded views survives to JSON as [] rather than null, wherever the source
+// YAML omits it: days has no actions or params, and day's Archive action has
+// no input. Screen.svelte reads these as arrays unconditionally.
+func TestLoadedViewsMarshalWithNoNullSlices(t *testing.T) {
+	views, err := LoadViews([]string{"testdata/logbook.ui.yaml"}, fakeLoader)
+	if err != nil {
+		t.Fatalf("LoadViews: %v", err)
+	}
+
+	b, err := json.Marshal(views)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	if strings.Contains(string(b), "null") {
+		t.Errorf("views_json contains null: %s", b)
 	}
 }
 

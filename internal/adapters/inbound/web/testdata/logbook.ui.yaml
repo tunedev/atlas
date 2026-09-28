@@ -30,3 +30,9 @@ screens:
           day: param.day
           text: input.text
           path: state.row.path
+      - label: Archive
+        run: note.yaml
+        vars:
+          day: param.day
+          text: const.archived
+          path: state.row.path

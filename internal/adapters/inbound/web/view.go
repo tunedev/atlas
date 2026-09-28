@@ -148,7 +148,57 @@ func readView(path string) (View, error) {
 	}
 	v.ID = strings.TrimSuffix(filepath.Base(path), ".ui.yaml")
 	v.dir = filepath.Dir(path)
+	v.normalizeSlices()
 	return v, nil
+}
+
+// normalizeSlices replaces every nil slice in v, and everything it contains,
+// with an empty slice. A YAML view file that omits a list leaves the decoded
+// field nil, and several of these fields lack "omitempty", so encoding/json
+// would otherwise serve the browser a JSON null where it expects an array.
+func (v *View) normalizeSlices() {
+	if v.Discloses == nil {
+		v.Discloses = []string{}
+	}
+	if v.Screens == nil {
+		v.Screens = []Screen{}
+	}
+	for i := range v.Screens {
+		v.Screens[i].normalizeSlices()
+	}
+}
+
+func (s *Screen) normalizeSlices() {
+	if s.Params == nil {
+		s.Params = []string{}
+	}
+	if s.Show == nil {
+		s.Show = []Widget{}
+	}
+	for i := range s.Show {
+		s.Show[i].normalizeSlices()
+	}
+	if s.Actions == nil {
+		s.Actions = []Action{}
+	}
+	for i := range s.Actions {
+		s.Actions[i].normalizeSlices()
+	}
+}
+
+func (a *Action) normalizeSlices() {
+	if a.Input == nil {
+		a.Input = []Input{}
+	}
+}
+
+func (w *Widget) normalizeSlices() {
+	if w.Columns == nil {
+		w.Columns = []string{}
+	}
+	if w.Keys == nil {
+		w.Keys = []string{}
+	}
 }
 
 // validate checks every screen of v against the rules LoadViews documents.

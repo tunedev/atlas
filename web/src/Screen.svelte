@@ -1,5 +1,6 @@
 <script lang="ts">
   import { ui } from "./rpc";
+  import { describeError } from "./errors";
   import type { Screen as ScreenDef } from "./views";
   import Table from "./widgets/Table.svelte";
   import Fields from "./widgets/Fields.svelte";
@@ -29,24 +30,30 @@
   let running = $state(false);
   let openForm = $state<number | null>(null);
   let formValues = $state<Record<string, string>>({});
+  let error = $state<string | null>(null);
 
   let pendingAction = -1;
   let pendingInputs: Record<string, string> = {};
+  let controller: AbortController | null = null;
 
   $effect(() => {
     run(-1, {});
+    return () => controller?.abort();
   });
 
   async function run(action: number, inputs: Record<string, string>) {
+    const ac = new AbortController();
+    controller = ac;
     running = true;
     queued = null;
     steps = [];
     ask = null;
     consent = null;
+    error = null;
     pendingAction = action;
     pendingInputs = inputs;
     try {
-      for await (const ev of ui.run({ view, screen: screen.id, action, params, inputs })) {
+      for await (const ev of ui.run({ view, screen: screen.id, action, params, inputs }, { signal: ac.signal })) {
         const event = ev.event;
         if (event.case === "queued") {
           queued = event.value.ahead;
@@ -65,6 +72,8 @@
           }
         }
       }
+    } catch (err) {
+      if (!ac.signal.aborted) error = describeError(err);
     } finally {
       running = false;
     }
@@ -72,23 +81,37 @@
 
   async function onAllow() {
     if (!ask) return;
-    await ui.answer({ id: ask.id, allow: true });
-    ask = null;
+    try {
+      await ui.answer({ id: ask.id, allow: true });
+    } catch (err) {
+      error = describeError(err);
+    } finally {
+      ask = null;
+    }
   }
 
   async function onDeny() {
     if (!ask) return;
-    await ui.answer({ id: ask.id, allow: false });
-    ask = null;
+    try {
+      await ui.answer({ id: ask.id, allow: false });
+    } catch (err) {
+      error = describeError(err);
+    } finally {
+      ask = null;
+    }
   }
 
   async function onAcknowledge() {
     if (!consent) return;
-    for (const endpoint of consent.endpoints) {
-      await ui.acknowledge({ endpoint });
+    try {
+      for (const endpoint of consent.endpoints) {
+        await ui.acknowledge({ endpoint });
+      }
+      consent = null;
+      await run(pendingAction, pendingInputs);
+    } catch (err) {
+      error = describeError(err);
     }
-    consent = null;
-    await run(pendingAction, pendingInputs);
   }
 
   function onCancelConsent() {
@@ -113,6 +136,10 @@
 </script>
 
 <h1>{screen.title}</h1>
+
+{#if error}
+  <p class="error">{error}</p>
+{/if}
 
 {#if queued !== null}
   <p>waiting ({queued} ahead)</p>
