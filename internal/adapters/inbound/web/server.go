@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"connectrpc.com/connect"
@@ -51,6 +52,9 @@ type Server struct {
 	cfg     Config
 	deps    Deps
 	handler http.Handler
+	slot    chan struct{} // holds a token while a run executes
+	pending atomic.Int32  // runs waiting for or holding the slot
+	cache   stateCache
 }
 
 // New builds the UI server. token authenticates the browser; host is the
@@ -61,7 +65,7 @@ func New(cfg Config, deps Deps, token, host string) (*Server, error) {
 		return nil, err
 	}
 
-	s := &Server{cfg: cfg, deps: deps}
+	s := &Server{cfg: cfg, deps: deps, slot: make(chan struct{}, 1)}
 
 	mux := http.NewServeMux()
 	rpcPrefix, rpcHandler := uiv1.NewUIServiceHandler(s)
