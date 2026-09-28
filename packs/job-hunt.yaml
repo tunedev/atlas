@@ -34,7 +34,7 @@ steps:
     with:
       prefix: "postings/greenhouse/{{ .vars.board }}"
       match: status=open
-      subject_id: '[[ replace .item.id "/" ":" ]]'
+      subject_id: '[[ replace .item.id "/" "~" ]]'
       subject: |
         Candidate: {{ .vars.profile }}
 

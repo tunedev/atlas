@@ -8,11 +8,11 @@ import (
 
 func TestRenderItemUsesItsOwnDelimitersAndReplace(t *testing.T) {
 	item := map[string]any{"id": "shelf/fiction/42", "title": "Dune", "pages": 412.0}
-	got, err := app.RenderItem(`[[ replace .item.id "/" ":" ]] [[ .item.title ]] {{ untouched }} [[ .item.pages ]]`, item)
+	got, err := app.RenderItem(`[[ replace .item.id "/" "~" ]] [[ .item.title ]] {{ untouched }} [[ .item.pages ]]`, item)
 	if err != nil {
 		t.Fatalf("RenderItem: %v", err)
 	}
-	if want := "shelf:fiction:42 Dune {{ untouched }} 412"; got != want {
+	if want := "shelf~fiction~42 Dune {{ untouched }} 412"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }

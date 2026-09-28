@@ -68,7 +68,7 @@ func eachWith() map[string]string {
 	return map[string]string{
 		"prefix":     "shelf",
 		"match":      "state=open",
-		"subject_id": `[[ replace .item.id "/" ":" ]]`,
+		"subject_id": `[[ replace .item.id "/" "~" ]]`,
 		"subject":    "Book: [[ .item.title ]]",
 		"verdict":    "verdict",
 		"questions":  eachQuestions,
