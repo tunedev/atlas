@@ -196,46 +196,46 @@ func (t *JudgeEach) parse(ctx context.Context, with map[string]string) (eachSpec
 func (t *JudgeEach) one(ctx context.Context, s eachSpec, itemID string, doc any) (map[string]any, bool, error) {
 	subjectID, err := app.RenderItem(s.subjectID, doc)
 	if err != nil {
-		return errorRow(itemID, err), false, nil
+		return errorRow(itemID, itemID, doc, err), false, nil
 	}
 	if err := app.CheckSubjectID(subjectID); err != nil {
-		return errorRow(subjectID, err), false, nil
+		return errorRow(subjectID, itemID, doc, err), false, nil
 	}
 	subject, err := app.RenderItem(s.subject, doc)
 	if err != nil {
-		return errorRow(subjectID, err), false, nil
+		return errorRow(subjectID, itemID, doc, err), false, nil
 	}
 	req, err := app.JudgeRequest(subject, s.questions)
 	if err != nil {
-		return errorRow(subjectID, err), false, nil
+		return errorRow(subjectID, itemID, doc, err), false, nil
 	}
 	fp, err := app.Fingerprint(req, s.rules, app.RuleInputs(doc, s.fields), s.verdict, t.model)
 	if err != nil {
-		return errorRow(subjectID, err), false, nil
+		return errorRow(subjectID, itemID, doc, err), false, nil
 	}
 
-	if row, found, err := t.reuse(ctx, s, subjectID, fp); err != nil || found {
+	if row, found, err := t.reuse(ctx, s, subjectID, itemID, doc, fp); err != nil || found {
 		return row, found, err
 	}
 
 	j, err := t.judge.Ask(ctx, subject, s.questions)
 	if err != nil {
-		return errorRow(subjectID, err), false, nil
+		return errorRow(subjectID, itemID, doc, err), false, nil
 	}
 	results, err := app.CheckRules(s.rules, doc, s.fields, j.Answers)
 	if err != nil {
-		return errorRow(subjectID, err), false, nil
+		return errorRow(subjectID, itemID, doc, err), false, nil
 	}
 	a, err := app.Assess(s.verdict, j.Answers, results)
 	if err != nil {
-		return errorRow(subjectID, err), false, nil
+		return errorRow(subjectID, itemID, doc, err), false, nil
 	}
 	path, err := app.RecordAssessedJudgement(ctx, t.docs, t.index, subjectID, s.questions, j,
 		app.Assessed{Fingerprint: fp, Verdict: a.Verdict, Rules: results})
 	if err != nil {
 		return nil, false, err
 	}
-	return assessedRow(subjectID, path, a, false), false, nil
+	return assessedRow(subjectID, itemID, path, doc, j.Answers, a, false), false, nil
 }
 
 // reuse finds a judgement already recorded for subjectID under fp and
@@ -246,7 +246,7 @@ func (t *JudgeEach) one(ctx context.Context, s eachSpec, itemID string, doc any)
 // longer find (object.ErrFileNotFound: the index row outlived the git
 // history behind it) is treated as no reuse, so the item is judged fresh
 // instead of aborting the run; any other read failure still aborts it.
-func (t *JudgeEach) reuse(ctx context.Context, s eachSpec, subjectID, fp string) (map[string]any, bool, error) {
+func (t *JudgeEach) reuse(ctx context.Context, s eachSpec, subjectID, itemID string, doc any, fp string) (map[string]any, bool, error) {
 	recs, err := t.index.Find(ctx, ports.Query{Kind: "judgement", Match: map[string]string{"fingerprint": fp, "subject_id": subjectID}, Limit: 1})
 	if err != nil {
 		return nil, false, fmt.Errorf("find %s: %w", subjectID, err)
@@ -265,10 +265,17 @@ func (t *JudgeEach) reuse(ctx context.Context, s eachSpec, subjectID, fp string)
 	if err != nil {
 		return nil, false, err
 	}
-	return assessedRow(subjectID, recs[0].Path, a, true), true, nil
+	return assessedRow(subjectID, itemID, recs[0].Path, doc, stored.Answers, a, true), true, nil
 }
 
-func assessedRow(subjectID, path string, a app.Assessment, reused bool) map[string]any {
+// assessedRow is a judged item's row: its verdict, its answer to every
+// question (including rule questions, keyed by question id), the rules it
+// was checked against, and the source item it was judged from.
+func assessedRow(subjectID, itemID, path string, doc any, answers []ports.Answer, a app.Assessment, reused bool) map[string]any {
+	chosen := make(map[string]any, len(answers))
+	for _, ans := range answers {
+		chosen[ans.ID] = ans.Chosen
+	}
 	reasons := make([]any, len(a.Reasons))
 	for i, r := range a.Reasons {
 		reasons[i] = r
@@ -279,8 +286,11 @@ func assessedRow(subjectID, path string, a app.Assessment, reused bool) map[stri
 	}
 	return map[string]any{
 		"subject_id":     subjectID,
+		"source_id":      itemID,
+		"item":           doc,
 		"verdict":        a.Verdict,
 		"p":              a.P,
+		"answers":        chosen,
 		"reasons":        reasons,
 		"rules":          rules,
 		"judgement_path": path,
@@ -288,6 +298,8 @@ func assessedRow(subjectID, path string, a app.Assessment, reused bool) map[stri
 	}
 }
 
-func errorRow(subjectID string, err error) map[string]any {
-	return map[string]any{"subject_id": subjectID, "error": err.Error()}
+// errorRow is an item that failed to render, ask or assess: its source item
+// and the error, carried alongside subject_id like an assessed row.
+func errorRow(subjectID, itemID string, doc any, err error) map[string]any {
+	return map[string]any{"subject_id": subjectID, "source_id": itemID, "item": doc, "error": err.Error()}
 }
