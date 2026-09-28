@@ -79,6 +79,8 @@ func (r *fakeRegistry) Lookup(name string) (ports.Tool, bool) {
 		return askTool{reg: r}, true
 	case "index.find", "docs.put":
 		return recordTool{name: name, reg: r}, true
+	case "docs.get":
+		return docGetTool{reg: r}, true
 	}
 	return nil, false
 }
