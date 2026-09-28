@@ -81,6 +81,31 @@ func TestAskAllowsOnAnswer(t *testing.T) {
 	}
 }
 
+func TestAskDeniesOnARefusingAnswer(t *testing.T) {
+	c, origin, reg := serveShelf(t, runConfig(), web.NewAsker(time.Minute))
+
+	stream, err := c.Run(context.Background(), withOrigin(guarded, origin))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	ask := receiveAsk(t, stream)
+
+	if _, err := c.Answer(context.Background(), withOrigin(&uiv1.AnswerRequest{Id: ask.Id, Allow: false}, origin)); err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if d := <-reg.decisions; d != ports.PermissionDeny {
+		t.Errorf("decision = %v, want deny", d)
+	}
+	var done *uiv1.Done
+	for stream.Receive() {
+		done = stream.Msg().GetDone()
+	}
+	if done == nil || !strings.Contains(done.StateJson, `"decision":"deny"`) {
+		t.Errorf("done = %v, want the tool denied; err = %v", done, stream.Err())
+	}
+}
+
 func TestAskDeniesWithNoActiveRun(t *testing.T) {
 	asker := web.NewAsker(time.Minute)
 
