@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package atlas.web.v1;
+
+option go_package = "github.com/tunedev/atlas/internal/adapters/inbound/web/uiv1;uiv1";
+
+// UIService is the browser's only way into atlas. A run names a screen or
+// action a view file declares; it never names a pack, a tool or a path.
+service UIService {
+  rpc Views(ViewsRequest) returns (ViewsResponse);
+  rpc Run(RunRequest) returns (stream RunResponse);
+  rpc Answer(AnswerRequest) returns (AnswerResponse);
+  rpc Acknowledge(AcknowledgeRequest) returns (AcknowledgeResponse);
+  rpc Document(DocumentRequest) returns (DocumentResponse);
+}
+
+message ViewsRequest {}
+
+message ViewsResponse {
+  // The loaded view files as JSON, in the shape the UI renders. Their
+  // widgets are pack data, so they are not modelled field by field here.
+  string views_json = 1;
+  repeated Endpoint egress = 2;
+  // Whether downloads from the files root are available.
+  bool files_enabled = 3;
+}
+
+message Endpoint {
+  string endpoint = 1;
+  bool hosted = 2;
+  repeated string tools = 3;
+  bool acknowledged = 4;
+}
+
+message RunRequest {
+  string view = 1;
+  string screen = 2;
+  // Index into the screen's actions; -1 runs the screen itself.
+  int32 action = 3;
+  map<string, string> params = 4;
+  map<string, string> inputs = 5;
+}
+
+message RunResponse {
+  oneof event {
+    Queued queued = 1;
+    Step step = 2;
+    Ask ask = 3;
+    Done done = 4;
+    NeedsAcknowledgement needs_acknowledgement = 5;
+  }
+}
+
+message Queued { int32 ahead = 1; }
+
+message Step {
+  string step_id = 1;
+  string tool = 2;
+  string status = 3;
+  string error = 4;
+}
+
+message Ask {
+  string id = 1;
+  string tool_name = 2;
+  string kind = 3;
+  string summary = 4;
+}
+
+message Done { string state_json = 1; }
+
+message NeedsAcknowledgement {
+  repeated string endpoints = 1;
+  repeated string discloses = 2;
+}
+
+message AnswerRequest {
+  string id = 1;
+  bool allow = 2;
+}
+
+message AnswerResponse {}
+
+message AcknowledgeRequest { string endpoint = 1; }
+
+message AcknowledgeResponse {}
+
+message DocumentRequest {
+  // "record" reads a record path through docs.get; "file" reads a path
+  // relative to the configured files root.
+  string source = 1;
+  string path = 2;
+}
+
+message DocumentResponse {
+  bytes body = 1;
+  string media_type = 2;
+  string name = 3;
+}
