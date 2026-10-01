@@ -9,17 +9,21 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/tunedev/atlas/internal/adapters/inbound/mcpserve"
 	"github.com/tunedev/atlas/internal/adapters/inbound/packfile"
+	"github.com/tunedev/atlas/internal/adapters/inbound/web"
 	"github.com/tunedev/atlas/internal/adapters/outbound/acpagent"
 	"github.com/tunedev/atlas/internal/adapters/outbound/crawlsource"
 	"github.com/tunedev/atlas/internal/adapters/outbound/feedsource"
@@ -69,7 +73,9 @@ func main() {
 	}
 }
 
-func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index, source ports.Source, crawler *crawlsource.Crawler) tools.Registry {
+// buildRegistry builds every shipped tool and returns, beside the registry,
+// the names of the tools that send data to the model endpoint.
+func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index, source ports.Source, crawler *crawlsource.Crawler) (tools.Registry, []string) {
 	provider := openaiprov.New(openaiprov.Config{
 		Name:     cfg.Model.Name,
 		BaseURL:  cfg.Model.BaseURL,
@@ -89,36 +95,85 @@ func buildRegistry(cfg config.Config, docs ports.Docs, index ports.Index, source
 		Temperature: cfg.Extract.Temperature,
 		MaxTokens:   cfg.Extract.MaxTokens,
 	})
-	return tools.NewRegistry(
-		tools.NewHTTP(cfg.Pack.HTTPTimeout, cfg.Pack.HTTPMaxBytes),
+	modelTools := []ports.Tool{
 		tools.NewModel(provider),
 		tools.NewJudge(judge, docs, index),
+		tools.NewExtract(extractor),
+		tools.NewCitationsJudge(judge, docs, index),
+		tools.NewJudgeEach(source, judge, docs, index, cfg.Model.Name, cfg.Feed.StaleAfter, slog.Default()),
+	}
+	registry := tools.NewRegistry(append(modelTools,
+		tools.NewHTTP(cfg.Pack.HTTPTimeout, cfg.Pack.HTTPMaxBytes),
 		tools.NewFileRead(cfg.Pack.FileMaxBytes),
 		tools.NewFileText(cfg.Pack.FileMaxBytes),
 		tools.NewDocsPut(docs, index),
+		tools.NewIndexFind(index),
+		tools.NewDocsGet(docs, cfg.Pack.FileMaxBytes),
 		tools.NewQuoteGround(),
-		tools.NewExtract(extractor),
 		tools.NewDecision(docs, index),
 		tools.NewSourcePull(source, cfg.Feed.StaleAfter, slog.Default()),
 		tools.NewTextSpans(cfg.Pack.FileMaxBytes),
 		tools.NewSpanResolve(),
-		tools.NewCitationsJudge(judge, docs, index),
 		tools.NewClaimsSettle(),
 		tools.NewItemsCite(),
 		tools.NewItemsGather(),
 		tools.NewTextLines(),
-		tools.NewJudgeEach(source, judge, docs, index, cfg.Model.Name, cfg.Feed.StaleAfter, slog.Default()),
 		tools.NewDedupe(),
 		tools.NewCrawlPull(crawler, slog.Default()),
 		tools.NewOutcome(docs, index),
 		tools.NewCalibrate(docs, index),
 		tools.NewAgreement(index),
+		tools.NewJudgeAssess(docs),
 		tools.NewPolicyDecide(docs),
 		tools.NewPolicySuggest(index),
 		tools.NewPolicyAdd(docs, index),
 		tools.NewStageDeclare(docs, index),
 		tools.NewStageAttach(index),
-	)
+	)...)
+	return registry, toolNames(modelTools)
+}
+
+func toolNames(list []ports.Tool) []string {
+	names := make([]string, len(list))
+	for i, t := range list {
+		names[i] = t.Name()
+	}
+	return names
+}
+
+// egressTable names each endpoint the registry sends data to. The model
+// endpoint is hosted unless its host is localhost or a loopback IP literal;
+// an agent is always hosted, since atlas cannot see where it sends data.
+func egressTable(cfg config.Config, modelTools []string) []web.Endpoint {
+	table := []web.Endpoint{modelEndpoint(cfg.Model.BaseURL, modelTools)}
+	if cfg.Agent.Command != "" {
+		table = append(table, web.Endpoint{Endpoint: "agent:" + cfg.Agent.Command, Hosted: true, Tools: []string{"agent.do"}})
+	}
+	return table
+}
+
+// unparsedModelEndpoint names a model base URL with no usable scheme and host.
+// The raw URL is never shown, since it can carry credentials.
+const unparsedModelEndpoint = "unparsed model endpoint"
+
+// modelEndpoint is the egress row for the model: scheme and host only, hosted
+// unless the host is loopback. A URL without both is the hosted placeholder.
+func modelEndpoint(baseURL string, modelTools []string) web.Endpoint {
+	u, err := url.Parse(baseURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return web.Endpoint{Endpoint: unparsedModelEndpoint, Hosted: true, Tools: modelTools}
+	}
+	return web.Endpoint{Endpoint: u.Scheme + "://" + u.Host, Hosted: !loopbackHost(u.Hostname()), Tools: modelTools}
+}
+
+// loopbackHost reports whether host is localhost or a loopback IP literal.
+// A name is never resolved.
+func loopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // startRender builds render.run over the configured typst binary. A binary
@@ -138,9 +193,9 @@ func startRender(cfg config.Config) (ports.Tool, error) {
 // startAgent launches the configured agent, offers it the configured tools
 // from base over MCP, and returns the agent.do tool with a function that
 // stops both. base is the registry without agent.do, so the agent cannot
-// reach itself.
-func startAgent(ctx context.Context, cfg config.Config, base ports.Registry, docs ports.Docs) (ports.Tool, func() error, error) {
-	perm := app.NewPermissionPolicy(permissionRules(cfg.Permission.Rules), termprompt.New(os.Stdin, os.Stderr))
+// reach itself. human decides the tool calls the permission rules ask about.
+func startAgent(ctx context.Context, cfg config.Config, base ports.Registry, docs ports.Docs, human ports.Permission) (ports.Tool, func() error, error) {
+	perm := app.NewPermissionPolicy(permissionRules(cfg.Permission.Rules), human)
 
 	var srv *http.Server
 	var server *acpagent.MCPServer
@@ -260,13 +315,17 @@ func run() error {
 	// no-op provider that is installed at startup.
 	tracer := otel.Tracer("github.com/tunedev/atlas")
 
-	blueprint, err := packfile.Load(cfg.Pack.Path)
-	if err != nil {
-		return err
-	}
-	blueprint, err = blueprint.WithVars(cfg.Pack.Vars)
-	if err != nil {
-		return err
+	// -serve has no pack; its runs name packs through the view files.
+	var blueprint domain.Blueprint
+	if !cfg.Web.Serve {
+		blueprint, err = packfile.Load(cfg.Pack.Path)
+		if err != nil {
+			return err
+		}
+		blueprint, err = blueprint.WithVars(cfg.Pack.Vars)
+		if err != nil {
+			return err
+		}
 	}
 
 	docs, err := gitdocs.Open(ctx, cfg.Store.Root)
@@ -304,7 +363,7 @@ func run() error {
 		return err
 	}
 
-	registry := buildRegistry(cfg, docs, index, source, crawler)
+	registry, modelTools := buildRegistry(cfg, docs, index, source, crawler)
 
 	if cfg.Render.TypstPath != "" {
 		render, err := startRender(cfg)
@@ -314,9 +373,23 @@ func run() error {
 		registry = registry.With(render)
 	}
 
+	var asker *web.Asker
+	if cfg.Web.Serve {
+		asker = web.NewAsker(cfg.Web.AskTimeout)
+	}
+
 	if cfg.Agent.Command != "" {
+		// The agent's permission asks go to the browser in -serve mode and
+		// to the terminal otherwise; the terminal prompt reads stdin, so it
+		// exists only when an agent can ask.
+		var human ports.Permission
+		if cfg.Web.Serve {
+			human = asker
+		} else {
+			human = termprompt.New(os.Stdin, os.Stderr)
+		}
 		var stop func() error
-		registry, stop, err = withAgent(ctx, cfg, registry, tracer, index, docs, os.Stderr)
+		registry, stop, err = withAgent(ctx, cfg, registry, tracer, index, docs, human, os.Stderr)
 		if err != nil {
 			return err
 		}
@@ -329,9 +402,13 @@ func run() error {
 		registry = withPackEach(registry, tracer, index, os.Stderr)
 	}
 
-	runner := app.NewRunner(registry).WithTracer(tracer).WithProgress(progressPrinter(os.Stderr))
+	runner := app.NewRunner(registry).WithTracer(tracer)
 
-	state, err := runner.Run(ctx, blueprint)
+	if cfg.Web.Serve {
+		return serve(ctx, cfg, runner, asker, egressTable(cfg, modelTools), os.Stderr)
+	}
+
+	state, err := runner.WithProgress(progressPrinter(os.Stderr)).Run(ctx, blueprint)
 	if err != nil {
 		return err
 	}
@@ -346,13 +423,71 @@ func run() error {
 	return nil
 }
 
+// serveShutdownBudget bounds how long serve waits for open requests to
+// finish once ctx is done.
+const serveShutdownBudget = 5 * time.Second
+
+// serve loads the view files and serves the web UI on cfg.Web.Addr until
+// ctx is done, which also cancels every open request. It prints the URL carrying the startup token to out, once.
+func serve(ctx context.Context, cfg config.Config, runner *app.Runner, asker *web.Asker, egress []web.Endpoint, out io.Writer) error {
+	views, err := web.LoadViews(cfg.Web.Views, packfile.Load)
+	if err != nil {
+		return err
+	}
+	ln, err := net.Listen("tcp", cfg.Web.Addr)
+	if err != nil {
+		return fmt.Errorf("serve: %w", err)
+	}
+	host := ln.Addr().String()
+	token := web.NewToken()
+	ui, err := web.New(web.Config{RunTimeout: cfg.Web.RunTimeout, FilesRoot: cfg.Web.FilesRoot}, web.Deps{
+		Views:  views,
+		Load:   packfile.Load,
+		Runner: runner,
+		Asker:  asker,
+		Egress: egress,
+		Server: map[string]string{"store_root": cfg.Store.Root, "files_root": cfg.Web.FilesRoot},
+	}, token, host)
+	if err != nil {
+		_ = ln.Close()
+		return err
+	}
+
+	fmt.Fprintf(out, "atlas: serving http://%s/#token=%s\n", host, token)
+	fmt.Fprintln(out, "atlas: the CLI cannot use this store while the server runs; stop it with Ctrl-C")
+
+	// Every request's ctx derives from ctx, so a signal ends open runs and
+	// asks instead of leaving Shutdown to wait them out.
+	srv := &http.Server{
+		Handler:           ui.Handler(),
+		ReadHeaderTimeout: cfg.Web.HeaderTimeout,
+		BaseContext:       func(net.Listener) context.Context { return ctx },
+	}
+	served := make(chan error, 1)
+	go func() { served <- srv.Serve(ln) }()
+	select {
+	case err := <-served:
+		return fmt.Errorf("serve: %w", err)
+	case <-ctx.Done():
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), serveShutdownBudget)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("serve: shutdown: %w", err)
+	}
+	<-served
+	return nil
+}
+
 // withAgent starts the agent over base and returns the runner's registry:
 // base with pack.each and agent.do added. The agent is offered tools from
 // base only, so it never reaches pack.each, whose child runs would skip the
-// agent's per-tool permission check.
-func withAgent(ctx context.Context, cfg config.Config, base tools.Registry, tracer trace.Tracer, index ports.Index, docs ports.Docs, progress io.Writer) (tools.Registry, func() error, error) {
+// agent's per-tool permission check. human decides the tool calls the
+// permission rules ask about.
+func withAgent(ctx context.Context, cfg config.Config, base tools.Registry, tracer trace.Tracer, index ports.Index, docs ports.Docs, human ports.Permission, progress io.Writer) (tools.Registry, func() error, error) {
 	runner := withPackEach(base, tracer, index, progress)
-	agentTool, stop, err := startAgent(ctx, cfg, base, docs)
+	agentTool, stop, err := startAgent(ctx, cfg, base, docs, human)
 	if err != nil {
 		return nil, nil, err
 	}

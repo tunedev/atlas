@@ -145,8 +145,8 @@ func newLoop(t *testing.T, c loopCase) loop {
 	judge := loopJudge{verdicts: c.Verdicts, verdict: "verdict"}
 
 	tracer := noop.NewTracerProvider().Tracer("")
-	base := buildRegistry(config.Config{}, docs, index, src, testCrawler(t)).
-		With(tools.NewJudgeEach(src, judge, docs, index, "stub", time.Hour, slog.Default()))
+	registry, _ := buildRegistry(config.Config{}, docs, index, src, testCrawler(t))
+	base := registry.With(tools.NewJudgeEach(src, judge, docs, index, "stub", time.Hour, slog.Default()))
 	runs := 0
 	real := childRunner(base, tracer, io.Discard)
 	child := func(ctx context.Context, path string, vars map[string]string) error {

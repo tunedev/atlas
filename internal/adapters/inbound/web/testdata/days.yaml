@@ -1,0 +1,9 @@
+name: days
+vars:
+  port: shelf
+steps:
+  - id: rows
+    tool: index.find
+    with:
+      kind: entry
+      limit: "20"

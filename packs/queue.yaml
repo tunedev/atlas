@@ -1,0 +1,13 @@
+# Lists recorded judgements from the index, optionally only those with one
+# verdict. With no verdict, every judgement is listed.
+#   atlas -pack packs/queue.yaml [-var verdict=apply]
+name: queue
+vars:
+  verdict: ""
+
+steps:
+  - id: judgements
+    tool: index.find
+    with:
+      kind: judgement
+      match: "{{ if .vars.verdict }}verdict: {{ json .vars.verdict }}{{ end }}"

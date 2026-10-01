@@ -79,3 +79,28 @@ jobs:
       - name: Test
         if: needs.classify.outputs.tier == 'full' || (needs.classify.outputs.tier == 'code' && matrix.os == 'ubuntu-latest')
         run: go test ./... -race
+
+  # Steps are gated rather than the job, so the "web" check always reports.
+  web:
+    name: web
+    needs: classify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        if: needs.classify.outputs.tier != 'docs'
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install
+        if: needs.classify.outputs.tier != 'docs'
+        run: npm ci
+        working-directory: web
+      - name: Build
+        if: needs.classify.outputs.tier != 'docs'
+        run: npm run build
+        working-directory: web
+      - name: The committed bundle matches the source
+        if: needs.classify.outputs.tier != 'docs'
+        run: git diff --exit-code -- internal/adapters/inbound/web/dist

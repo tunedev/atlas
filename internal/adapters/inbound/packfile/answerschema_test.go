@@ -2,6 +2,7 @@ package packfile_test
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -61,6 +62,9 @@ func TestEveryShippedJudgeEachPackPassesValidation(t *testing.T) {
 	}
 	checked := 0
 	for _, path := range paths {
+		if strings.HasSuffix(path, ".ui.yaml") {
+			continue // a view file, not a pack
+		}
 		b, err := packfile.Load(path)
 		if err != nil {
 			t.Fatalf("load %s: %v", path, err)

@@ -1,0 +1,11 @@
+name: note
+vars:
+  day: monday
+  text: ""
+  path: ""
+steps:
+  - id: save
+    tool: docs.put
+    with:
+      path: "{{.vars.path}}"
+      text: "{{.vars.text}}"

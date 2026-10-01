@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"path/filepath"
 	"strings"
 	"time"
@@ -25,6 +26,7 @@ type Config struct {
 	Extract    ExtractConfig
 	Render     RenderConfig
 	Crawl      CrawlConfig
+	Web        WebConfig
 }
 
 type PackConfig struct {
@@ -151,6 +153,50 @@ type RenderConfig struct {
 	MaxBytes  int64
 }
 
+// WebConfig configures the local web UI. It is on only when Serve is set,
+// and it serves loopback only: Addr must resolve to a loopback IP. Views
+// names the view files to load; FilesRoot is expanded from a leading "~"
+// like Store.Root, and an empty FilesRoot turns the file widget and file
+// downloads off.
+type WebConfig struct {
+	Serve         bool
+	Addr          string
+	Views         []string
+	RunTimeout    time.Duration
+	AskTimeout    time.Duration
+	HeaderTimeout time.Duration
+	FilesRoot     string
+}
+
+// validate checks the web config against packPath: -serve and -pack are
+// mutually exclusive, and -serve needs at least one view and a loopback
+// address.
+func (w WebConfig) validate(packPath string) error {
+	if !w.Serve {
+		if packPath == "" {
+			return fmt.Errorf("config: no pack path; pass -pack or -serve")
+		}
+		return nil
+	}
+	if packPath != "" {
+		return fmt.Errorf("config: pass -pack or -serve, not both")
+	}
+	if len(w.Views) == 0 {
+		return fmt.Errorf("config: -serve needs at least one view file; pass -web-views")
+	}
+	host, _, err := net.SplitHostPort(w.Addr)
+	if err != nil {
+		return fmt.Errorf("config: web addr %q: %w", w.Addr, err)
+	}
+	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("config: web addr %q is not a loopback IP; atlas serves this machine only", w.Addr)
+	}
+	if w.RunTimeout <= 0 || w.AskTimeout <= 0 || w.HeaderTimeout <= 0 {
+		return fmt.Errorf("config: web run, ask and header timeouts must be positive")
+	}
+	return nil
+}
+
 // PermissionConfig holds the rules that decide an agent's tool calls, first
 // match wins, and bounds the summary a human is shown.
 type PermissionConfig struct {
@@ -203,8 +249,8 @@ func (a AgentConfig) validate() error {
 }
 
 func (c Config) validate() error {
-	if c.Pack.Path == "" {
-		return fmt.Errorf("config: no pack path; pass -pack")
+	if err := c.Web.validate(c.Pack.Path); err != nil {
+		return err
 	}
 	if c.Pack.HTTPTimeout <= 0 {
 		return fmt.Errorf("config: http timeout must be positive, got %s", c.Pack.HTTPTimeout)
