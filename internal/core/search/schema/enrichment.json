@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Atlas enriched document, version 1",
+  "type": "object",
+  "required": ["version", "subject_id", "content_hash", "enricher", "enriched_at", "values", "evidence"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {"const": 1},
+    "subject_id": {"type": "string", "minLength": 1},
+    "content_hash": {"type": "string"},
+    "enricher": {
+      "type": "object",
+      "required": ["engine", "model", "prompt_version"],
+      "additionalProperties": false,
+      "properties": {
+        "engine": {"type": "string"},
+        "model": {"type": "string"},
+        "prompt_version": {"type": "integer", "minimum": 1},
+        "error": {"type": "string"}
+      }
+    },
+    "enriched_at": {"type": "string", "format": "date-time"},
+    "values": {"type": "object"},
+    "evidence": {"type": "object", "additionalProperties": {"type": "string"}}
+  }
+}

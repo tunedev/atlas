@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "subject_id": "lever/palantir/2002",
+  "content_hash": "c3",
+  "enricher": {
+    "engine": "claude-cli",
+    "model": "claude-sonnet-5-5",
+    "prompt_version": 1
+  },
+  "enriched_at": "2026-10-12T16:00:00Z",
+  "values": {
+    "role": {
+      "focus": "frontend",
+      "seniority": "senior",
+      "employment_type": "full_time"
+    },
+    "remote": {
+      "mode": "onsite",
+      "eligible_regions": null,
+      "utc_offsets": null
+    },
+    "relocation": {
+      "offered": true,
+      "visa_sponsorship": true
+    },
+    "stack": {
+      "languages": [
+        "typescript"
+      ],
+      "platforms": null
+    },
+    "salary": {
+      "min": null,
+      "max": null,
+      "currency": null,
+      "period": null
+    },
+    "signals": {
+      "agent_native": true
+    },
+    "requirements": {
+      "apply_url": "https://jobs.lever.co/palantir/2002",
+      "documents": [
+        "cv",
+        "cover_letter"
+      ],
+      "screening_questions": null,
+      "deadline": null,
+      "must_have_skills": [
+        "React",
+        "TypeScript"
+      ],
+      "nice_to_have_skills": null
+    }
+  },
+  "evidence": {
+    "role.focus": "Senior Frontend Engineer",
+    "role.seniority": "Senior Frontend Engineer",
+    "role.employment_type": "Full-time",
+    "remote.mode": "on-site in London",
+    "relocation.offered": "relocation support provided",
+    "relocation.visa_sponsorship": "we sponsor visas",
+    "stack.languages": "TypeScript and React",
+    "signals.agent_native": "our engineers pair with Claude Code"
+  }
+}

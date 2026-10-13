@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "fields": {
+    "role.focus": {"kind": "scalar", "enum": ["backend", "platform", "fullstack", "frontend", "data", "ml", "mobile", "security", "other"]},
+    "role.seniority": {"kind": "scalar", "enum": ["junior", "mid", "senior", "staff", "principal", "manager"]},
+    "role.employment_type": {"kind": "scalar", "enum": ["full_time", "contract", "part_time", "internship"]},
+    "remote.mode": {"kind": "scalar", "enum": ["remote", "hybrid", "onsite"]},
+    "remote.eligible_regions": {"kind": "list", "pattern": "^([A-Z]{2}|AFRICA|EU|EMEA|AMERICAS|APAC|WORLDWIDE)$"},
+    "remote.utc_offsets": {"kind": "range", "min": -12, "max": 14},
+    "relocation.offered": {"kind": "bool"},
+    "relocation.visa_sponsorship": {"kind": "bool"},
+    "stack.languages": {"kind": "list", "canonical": true},
+    "stack.platforms": {"kind": "list", "canonical": true},
+    "salary.min": {"kind": "number"},
+    "salary.max": {"kind": "number"},
+    "salary.currency": {"kind": "scalar", "pattern": "^[A-Z]{3}$"},
+    "salary.period": {"kind": "scalar", "enum": ["year", "month", "day", "hour"]},
+    "signals.agent_native": {"kind": "bool"},
+    "requirements.apply_url": {"kind": "text"},
+    "requirements.deadline": {"kind": "text"},
+    "requirements.documents": {"kind": "texts"},
+    "requirements.screening_questions": {"kind": "texts"},
+    "requirements.must_have_skills": {"kind": "texts"},
+    "requirements.nice_to_have_skills": {"kind": "texts"}
+  },
+  "aliases": {
+    "golang": "go",
+    "node.js": "node",
+    "nodejs": "node",
+    "ts": "typescript",
+    "js": "javascript",
+    "k8s": "kubernetes",
+    "postgres": "postgresql",
+    "gcloud": "gcp",
+    "otel": "opentelemetry",
+    "amazon web services": "aws"
+  }
+}

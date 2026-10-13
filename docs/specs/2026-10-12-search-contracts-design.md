@@ -109,8 +109,11 @@ another.
 Every field may be `null`, which means the subject does not say.
 
 Loading rejects a document with an unknown key, an unknown kind, both `enum` and `pattern`, an invalid
-pattern, a range without bounds, or a path that is malformed or prefixes another, naming every
-problem.
+pattern, `enum`, `pattern` or `canonical` on a kind other than `scalar` and `list`, `min` or `max`
+on a kind other than `range`, a range without bounds or with `min` above `max`, or a path that is
+malformed or prefixes another, or an alias whose key or target is not trimmed lowercase or whose
+target is itself an alias, naming every problem. Keys match case-sensitively, and trailing data
+after the document is an error.
 
 `Normalize(name)` returns the canonical form of a string under a declaration's aliases. The
 enricher normalises the model's `canonical` list values with it before validation.
@@ -205,7 +208,7 @@ Each condition evaluates to `met`, `unmet` or `unknown`:
 ### Validation
 
 Criteria are validated against a field declaration. A set is rejected as a whole when it has an
-unknown key, an `id` repeats, a criterion has both or neither of `must` and `weight`, a `must` criterion has
+unknown key, an `id` repeats, a `statement` is blank, a criterion has both or neither of `must` and `weight`, a `must` criterion has
 `partial`, a `field` is not a checkable declared field, an `op` does not fit the field's kind,
 a value lies outside the field's `enum`, `pattern`, `canonical` form or range bounds, or a
 `display` path is not declared. Rejection names every problem, not just the first.
@@ -366,8 +369,8 @@ Title, company, URL and dates are not copied into rows; the UI joins them from t
   combinator, the first child that produced the outcome.
 - **Display** values are copied from `values` as stored: a field's value, or the object under a
   prefix.
-- **A value of the wrong type** (a stored enrichment that no longer fits its declaration) is
-  treated as `null`, so the comparison is `unknown`, never a crash.
+- **A value of the wrong type** (a stored enrichment that no longer fits its declaration), or a
+  range whose min is above its max, is treated as `null`, so the comparison is `unknown`, never a crash.
 - **`criteria_hash`** is the `sha256` of the criteria document as stored, so a saved result
   can be matched to the criteria that produced it.
 - Only open, enriched subjects are passed to `Match`. Counting subjects still awaiting
