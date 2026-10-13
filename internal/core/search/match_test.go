@@ -247,3 +247,11 @@ func TestMatchIsDeterministic(t *testing.T) {
 		t.Error("reordering the input changes the result")
 	}
 }
+
+func TestARowWithNoCriteriaFitsTheResultSchema(t *testing.T) {
+	c := criteria(t, `{"version": 1, "criteria": [], "display": ["loaf.grain"]}`)
+	got := mustMarshal(t, search.Match(c, []search.Enrichment{subject(t, "s", `{}`)}))
+	if err := envelope(t, "result.json").Validate(instance(t, got)); err != nil {
+		t.Errorf("Match output against the result schema: %v\n%s", err, got)
+	}
+}

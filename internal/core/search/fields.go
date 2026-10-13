@@ -87,8 +87,17 @@ func parseField(path string, fd Field) (Field, error) {
 		}
 		fd.re = re
 	}
-	if fd.Kind == "range" && (fd.Min == nil || fd.Max == nil) {
+	words := fd.Kind == "scalar" || fd.Kind == "list"
+	if !words && (len(fd.Enum) > 0 || fd.Pattern != "" || fd.Canonical) {
+		errs = append(errs, fmt.Errorf("%s: enum, pattern and canonical apply only to scalar and list", at))
+	}
+	switch {
+	case fd.Kind != "range" && (fd.Min != nil || fd.Max != nil):
+		errs = append(errs, fmt.Errorf("%s: min and max apply only to range", at))
+	case fd.Kind == "range" && (fd.Min == nil || fd.Max == nil):
 		errs = append(errs, fmt.Errorf("%s: a range needs min and max", at))
+	case fd.Kind == "range" && *fd.Min > *fd.Max:
+		errs = append(errs, fmt.Errorf("%s: min is above max", at))
 	}
 	return fd, errors.Join(errs...)
 }

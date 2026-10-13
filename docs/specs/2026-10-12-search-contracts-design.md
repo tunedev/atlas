@@ -109,8 +109,9 @@ another.
 Every field may be `null`, which means the subject does not say.
 
 Loading rejects a document with an unknown key, an unknown kind, both `enum` and `pattern`, an invalid
-pattern, a range without bounds, or a path that is malformed or prefixes another, naming every
-problem.
+pattern, `enum`, `pattern` or `canonical` on a kind other than `scalar` and `list`, `min` or `max`
+on a kind other than `range`, a range without bounds or with `min` above `max`, or a path that is
+malformed or prefixes another, naming every problem.
 
 `Normalize(name)` returns the canonical form of a string under a declaration's aliases. The
 enricher normalises the model's `canonical` list values with it before validation.

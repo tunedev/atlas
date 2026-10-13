@@ -84,3 +84,19 @@ func TestTheGeneratedSchemaRejectsValuesOutsideTheDeclaration(t *testing.T) {
 }
 
 func at(v map[string]any, key string) map[string]any { return v[key].(map[string]any) }
+
+func TestTheGeneratedSchemaNestsSegmentsNamedLikeKeywords(t *testing.T) {
+	f, err := search.ParseFields([]byte(`{"version": 1, "fields": {
+	  "listing.type": {"kind": "scalar", "enum": ["flat", "house"]},
+	  "listing.enum": {"kind": "number"}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rs := resolve(t, "generated", f.Schema())
+	if err := rs.Validate(instance(t, []byte(`{"listing": {"type": "flat", "enum": 3}}`))); err != nil {
+		t.Errorf("valid values rejected: %v", err)
+	}
+	if err := rs.Validate(instance(t, []byte(`{"listing": {"type": "castle", "enum": 3}}`))); err == nil {
+		t.Error("a type outside its enum was accepted")
+	}
+}

@@ -31,10 +31,15 @@ func TestParseFieldsNamesEveryProblem(t *testing.T) {
 
 func TestParseFieldsRejectsMalformedDeclarations(t *testing.T) {
 	cases := map[string]string{
-		"bad pattern":    `{"version": 1, "fields": {"a": {"kind": "scalar", "pattern": "("}}}`,
-		"uppercase path": `{"version": 1, "fields": {"Loaf.grain": {"kind": "scalar"}}}`,
-		"wrong version":  `{"version": 2, "fields": {}}`,
-		"misspelt key":   `{"version": 1, "fields": {"a": {"kind": "scalar", "enun": ["x"]}}}`,
+		"bad pattern":       `{"version": 1, "fields": {"a": {"kind": "scalar", "pattern": "("}}}`,
+		"uppercase path":    `{"version": 1, "fields": {"Loaf.grain": {"kind": "scalar"}}}`,
+		"wrong version":     `{"version": 2, "fields": {}}`,
+		"misspelt key":      `{"version": 1, "fields": {"a": {"kind": "scalar", "enun": ["x"]}}}`,
+		"enum on text":      `{"version": 1, "fields": {"a": {"kind": "text", "enum": ["x"]}}}`,
+		"pattern on number": `{"version": 1, "fields": {"a": {"kind": "number", "pattern": "^x$"}}}`,
+		"canonical on bool": `{"version": 1, "fields": {"a": {"kind": "bool", "canonical": true}}}`,
+		"min on a scalar":   `{"version": 1, "fields": {"a": {"kind": "scalar", "min": 0}}}`,
+		"min above max":     `{"version": 1, "fields": {"a": {"kind": "range", "min": 10, "max": 0}}}`,
 	}
 	for name, doc := range cases {
 		if _, err := search.ParseFields([]byte(doc)); err == nil {

@@ -10,38 +10,47 @@ import (
 // Schema returns the JSON Schema of an enrichment's values: every declared
 // field nested by path segment, required and nullable, and nothing else.
 func (f Fields) Schema() []byte {
-	root := map[string]any{}
+	root := &node{}
 	for path, fd := range f.ByPath {
-		node := root
-		segs := strings.Split(path, ".")
-		for _, seg := range segs[:len(segs)-1] {
-			child, ok := node[seg].(map[string]any)
-			if !ok {
-				child = map[string]any{}
-				node[seg] = child
-			}
-			node = child
+		n := root
+		for seg := range strings.SplitSeq(path, ".") {
+			n = n.child(seg)
 		}
-		node[segs[len(segs)-1]] = leafSchema(fd)
+		n.leaf = leafSchema(fd)
 	}
-	s := objectSchema(root)
+	s := root.schema()
 	s["$schema"] = "https://json-schema.org/draft/2020-12/schema"
 	// A tree of maps, slices, strings and numbers always marshals.
 	b, _ := json.Marshal(s)
 	return b
 }
 
-// objectSchema turns a tree whose leaves are schemas into object schemas.
-// A leaf is told apart from a branch by its "type" or "enum" keyword.
-func objectSchema(node map[string]any) map[string]any {
+// node is one path segment: a declared field's schema, or the segments under it.
+type node struct {
+	leaf     map[string]any
+	children map[string]*node
+}
+
+func (n *node) child(seg string) *node {
+	if n.children == nil {
+		n.children = map[string]*node{}
+	}
+	c, ok := n.children[seg]
+	if !ok {
+		c = &node{}
+		n.children[seg] = c
+	}
+	return c
+}
+
+// schema returns the leaf's schema, or an object schema over the children.
+func (n *node) schema() map[string]any {
+	if n.leaf != nil {
+		return n.leaf
+	}
 	props := map[string]any{}
-	for name, v := range node {
-		child := v.(map[string]any)
-		if isLeaf(child) {
-			props[name] = child
-			continue
-		}
-		props[name] = objectSchema(child)
+	for name, c := range n.children {
+		props[name] = c.schema()
 	}
 	return map[string]any{
 		"type":                 "object",
@@ -49,12 +58,6 @@ func objectSchema(node map[string]any) map[string]any {
 		"additionalProperties": false,
 		"properties":           props,
 	}
-}
-
-func isLeaf(node map[string]any) bool {
-	_, typed := node["type"]
-	_, enum := node["enum"]
-	return typed || enum
 }
 
 func leafSchema(fd Field) map[string]any {

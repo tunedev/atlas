@@ -55,7 +55,7 @@ func Match(c Criteria, es []Enrichment) Result {
 }
 
 func matchOne(c Criteria, e *Enrichment) (Row, bool) {
-	row := Row{SubjectID: e.SubjectID, Display: map[string]any{}}
+	row := Row{SubjectID: e.SubjectID, Results: []CriterionResult{}, Display: map[string]any{}}
 	var total, earned, known float64
 	for _, cr := range c.Criteria {
 		r := judge(cr, e)
