@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "criteria_hash": "9964001339010cc864ce0dfb880a90a7d880f049426e3a65f521970e6579362e",
+  "checked": 3,
+  "hidden": 1,
+  "rows": [
+    {
+      "subject_id": "remoteok/all/1001",
+      "score": 0.6666666666666666,
+      "known": 0.6666666666666666,
+      "results": [
+        {"id": "can-work-it", "outcome": "met", "evidence": "hire anywhere in the world"},
+        {"id": "focus", "outcome": "met", "evidence": "Staff Platform Engineer"},
+        {"id": "timezone", "outcome": "met", "evidence": "overlap with UTC-1 to UTC+3"},
+        {"id": "seniority", "outcome": "met", "evidence": "Staff Platform Engineer"},
+        {"id": "stack", "outcome": "met", "evidence": "services written in Go"},
+        {"id": "platform", "outcome": "met", "evidence": "running on Kubernetes"},
+        {"id": "agent-native", "outcome": "unknown"}
+      ],
+      "display": {
+        "role.employment_type": "full_time",
+        "salary": {"min": 120000, "max": 160000, "currency": "USD", "period": "year"}
+      }
+    },
+    {
+      "subject_id": "greenhouse/gitlab/8490477002",
+      "score": 0.5555555555555556,
+      "known": 0.5555555555555556,
+      "must_unknown": ["can-work-it"],
+      "results": [
+        {"id": "can-work-it", "outcome": "unknown"},
+        {"id": "focus", "outcome": "met", "evidence": "Staff Backend Engineer"},
+        {"id": "timezone", "outcome": "unknown"},
+        {"id": "seniority", "outcome": "met", "evidence": "Staff Backend Engineer"},
+        {"id": "stack", "outcome": "met", "evidence": "Ruby on Rails and Go"},
+        {"id": "platform", "outcome": "met", "evidence": "Kubernetes on GCP"},
+        {"id": "agent-native", "outcome": "unknown"}
+      ],
+      "display": {
+        "role.employment_type": "full_time",
+        "salary": {"min": null, "max": null, "currency": null, "period": null}
+      }
+    }
+  ]
+}

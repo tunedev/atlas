@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "subject_id": "remoteok/all/1001",
+  "content_hash": "a1",
+  "enricher": {
+    "engine": "claude-cli",
+    "model": "claude-sonnet-5-5",
+    "prompt_version": 1
+  },
+  "enriched_at": "2026-10-12T16:00:00Z",
+  "values": {
+    "role": {
+      "focus": "platform",
+      "seniority": "staff",
+      "employment_type": "full_time"
+    },
+    "remote": {
+      "mode": "remote",
+      "eligible_regions": [
+        "WORLDWIDE"
+      ],
+      "utc_offsets": [
+        -1,
+        3
+      ]
+    },
+    "relocation": {
+      "offered": null,
+      "visa_sponsorship": null
+    },
+    "stack": {
+      "languages": [
+        "go"
+      ],
+      "platforms": [
+        "kubernetes"
+      ]
+    },
+    "salary": {
+      "min": 120000,
+      "max": 160000,
+      "currency": "USD",
+      "period": "year"
+    },
+    "signals": {
+      "agent_native": null
+    },
+    "requirements": {
+      "apply_url": "https://remoteok.com/remote-jobs/1001",
+      "documents": [
+        "cv"
+      ],
+      "screening_questions": null,
+      "deadline": null,
+      "must_have_skills": [
+        "Go",
+        "Kubernetes"
+      ],
+      "nice_to_have_skills": null
+    }
+  },
+  "evidence": {
+    "role.focus": "Staff Platform Engineer",
+    "role.seniority": "Staff Platform Engineer",
+    "role.employment_type": "Full-time",
+    "remote.mode": "Fully remote",
+    "remote.eligible_regions": "hire anywhere in the world",
+    "remote.utc_offsets": "overlap with UTC-1 to UTC+3",
+    "stack.languages": "services written in Go",
+    "stack.platforms": "running on Kubernetes",
+    "salary.min": "$120k - $160k",
+    "salary.max": "$120k - $160k",
+    "salary.currency": "$120k - $160k",
+    "salary.period": "$120k - $160k per year"
+  }
+}

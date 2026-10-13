@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "subject_id": "greenhouse/gitlab/8490477002",
+  "content_hash": "b2",
+  "enricher": {
+    "engine": "claude-cli",
+    "model": "claude-sonnet-5-5",
+    "prompt_version": 1
+  },
+  "enriched_at": "2026-10-12T16:00:00Z",
+  "values": {
+    "role": {
+      "focus": "backend",
+      "seniority": "staff",
+      "employment_type": "full_time"
+    },
+    "remote": {
+      "mode": "remote",
+      "eligible_regions": [
+        "CA",
+        "GB",
+        "US"
+      ],
+      "utc_offsets": null
+    },
+    "relocation": {
+      "offered": null,
+      "visa_sponsorship": null
+    },
+    "stack": {
+      "languages": [
+        "ruby",
+        "go"
+      ],
+      "platforms": [
+        "kubernetes",
+        "gcp"
+      ]
+    },
+    "salary": {
+      "min": null,
+      "max": null,
+      "currency": null,
+      "period": null
+    },
+    "signals": {
+      "agent_native": null
+    },
+    "requirements": {
+      "apply_url": "https://job-boards.greenhouse.io/gitlab/jobs/8490477002",
+      "documents": [
+        "cv"
+      ],
+      "screening_questions": [
+        "Are you located in one of the listed countries?"
+      ],
+      "deadline": null,
+      "must_have_skills": [
+        "Ruby on Rails",
+        "PostgreSQL"
+      ],
+      "nice_to_have_skills": [
+        "Go"
+      ]
+    }
+  },
+  "evidence": {
+    "role.focus": "Staff Backend Engineer",
+    "role.seniority": "Staff Backend Engineer",
+    "role.employment_type": "full-time",
+    "remote.mode": "Remote, Canada; Remote, United Kingdom; Remote, US",
+    "remote.eligible_regions": "Remote, Canada; Remote, United Kingdom; Remote, US",
+    "stack.languages": "Ruby on Rails and Go",
+    "stack.platforms": "Kubernetes on GCP"
+  }
+}
