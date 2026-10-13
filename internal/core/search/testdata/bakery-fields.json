@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "fields": {
+    "loaf.grain": {"kind": "scalar", "enum": ["wheat", "rye", "spelt"]},
+    "loaf.vegan": {"kind": "bool"},
+    "loaf.toppings": {"kind": "list", "canonical": true},
+    "price.amount": {"kind": "number"},
+    "price.currency": {"kind": "scalar", "pattern": "^[A-Z]{3}$"},
+    "open.hours": {"kind": "range", "min": 0, "max": 24},
+    "notes": {"kind": "text"},
+    "allergens": {"kind": "texts"}
+  },
+  "aliases": {"sesame seeds": "sesame", "poppy seeds": "poppy"}
+}
