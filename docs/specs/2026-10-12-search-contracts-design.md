@@ -108,7 +108,7 @@ another.
 
 Every field may be `null`, which means the subject does not say.
 
-Loading rejects a document with an unknown kind, both `enum` and `pattern`, an invalid
+Loading rejects a document with an unknown key, an unknown kind, both `enum` and `pattern`, an invalid
 pattern, a range without bounds, or a path that is malformed or prefixes another, naming every
 problem.
 
@@ -204,8 +204,8 @@ Each condition evaluates to `met`, `unmet` or `unknown`:
 
 ### Validation
 
-Criteria are validated against a field declaration. A set is rejected as a whole when an `id`
-repeats, a criterion has both or neither of `must` and `weight`, a `must` criterion has
+Criteria are validated against a field declaration. A set is rejected as a whole when it has an
+unknown key, an `id` repeats, a criterion has both or neither of `must` and `weight`, a `must` criterion has
 `partial`, a `field` is not a checkable declared field, an `op` does not fit the field's kind,
 a value lies outside the field's `enum`, `pattern`, `canonical` form or range bounds, or a
 `display` path is not declared. Rejection names every problem, not just the first.
