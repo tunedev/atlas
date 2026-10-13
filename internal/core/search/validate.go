@@ -6,6 +6,7 @@ import (
 	"math"
 	"regexp"
 	"slices"
+	"strings"
 )
 
 var criterionID = regexp.MustCompile(`^[a-z0-9-]+$`)
@@ -38,10 +39,13 @@ func validateCriterion(f Fields, cr Criterion, seen map[string]bool) []error {
 		errs = append(errs, fmt.Errorf("%s: id repeats", at))
 	}
 	seen[cr.ID] = true
-	if cr.Must == (cr.Weight != 0) {
+	if strings.TrimSpace(cr.Statement) == "" {
+		errs = append(errs, fmt.Errorf("%s: statement is empty", at))
+	}
+	if cr.Must == (cr.Weight != nil) {
 		errs = append(errs, fmt.Errorf("%s: needs exactly one of must and weight", at))
 	}
-	if cr.Weight < 0 {
+	if cr.Weight != nil && *cr.Weight < 1 {
 		errs = append(errs, fmt.Errorf("%s: weight must be positive", at))
 	}
 	if cr.Must && cr.Partial != nil {

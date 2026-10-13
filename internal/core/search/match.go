@@ -69,7 +69,7 @@ func matchOne(c Criteria, e *Enrichment) (Row, bool) {
 			}
 			continue
 		}
-		w := float64(cr.Weight)
+		w := float64(*cr.Weight)
 		switch r.Outcome {
 		case NA:
 			continue
@@ -204,7 +204,7 @@ func compare(op string, got, want any) (met, ok bool) {
 	return false, false
 }
 
-// pair reads a stored [min, max] range.
+// pair reads a stored [min, max] range; a backwards range is not one.
 func pair(v any) (lo, hi float64, ok bool) {
 	p, ok := v.([]any)
 	if !ok || len(p) != 2 {
@@ -212,7 +212,7 @@ func pair(v any) (lo, hi float64, ok bool) {
 	}
 	lo, loOK := p[0].(float64)
 	hi, hiOK := p[1].(float64)
-	return lo, hi, loOK && hiOK
+	return lo, hi, loOK && hiOK && lo <= hi
 }
 
 // compareRows orders full passes before rows with unknown must-haves, then

@@ -1,8 +1,7 @@
 package search
 
 import (
-	"bytes"
-	"encoding/json"
+	json "encoding/json/v2"
 	"errors"
 	"fmt"
 	"maps"
@@ -62,11 +61,32 @@ func ParseFields(data []byte) (Fields, error) {
 			errs = append(errs, fmt.Errorf("field %q: prefixes %q", path, paths[i+1]))
 		}
 	}
+	errs = append(errs, f.validateAliases()...)
 	if err := errors.Join(errs...); err != nil {
 		return Fields{}, err
 	}
 	return f, nil
 }
+
+// validateAliases requires every alias key and target in the form Normalize
+// produces, and no target that is itself an alias, so Normalize is idempotent.
+func (f Fields) validateAliases() []error {
+	var errs []error
+	for _, key := range slices.Sorted(maps.Keys(f.Aliases)) {
+		target := f.Aliases[key]
+		if !trimmedLower(key) {
+			errs = append(errs, fmt.Errorf("alias %q: key is not trimmed lowercase", key))
+		}
+		if _, chained := f.Aliases[target]; chained {
+			errs = append(errs, fmt.Errorf("alias %q: target %q is itself an alias", key, target))
+		} else if !trimmedLower(target) {
+			errs = append(errs, fmt.Errorf("alias %q: target %q is not trimmed lowercase", key, target))
+		}
+	}
+	return errs
+}
+
+func trimmedLower(s string) bool { return s != "" && strings.ToLower(strings.TrimSpace(s)) == s }
 
 func parseField(path string, fd Field) (Field, error) {
 	var errs []error
@@ -138,9 +158,8 @@ func (f Fields) displayable(path string) bool {
 	return false
 }
 
-// decodeStrict decodes data into v and rejects keys v does not declare.
+// decodeStrict decodes one JSON value into v. Keys match case-sensitively;
+// a key v does not declare, a repeated key or trailing data is an error.
 func decodeStrict(data []byte, v any) error {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	return dec.Decode(v)
+	return json.Unmarshal(data, v, json.RejectUnknownMembers(true))
 }

@@ -255,3 +255,13 @@ func TestARowWithNoCriteriaFitsTheResultSchema(t *testing.T) {
 		t.Errorf("Match output against the result schema: %v\n%s", err, got)
 	}
 }
+
+func TestABackwardsStoredRangeIsUnknown(t *testing.T) {
+	c := criteria(t, `{"version": 1, "criteria": [
+	  {"id": "hours", "statement": "s", "weight": 1, "check": {"field": "open.hours", "op": "overlaps", "value": [6, 9]}}]}`)
+	e := subject(t, "s", `{"open": {"hours": [18, 7]}}`)
+
+	if got := outcome(onlyRow(t, search.Match(c, []search.Enrichment{e})), "hours"); got != search.Unknown {
+		t.Errorf("hours outcome = %s, want unknown", got)
+	}
+}

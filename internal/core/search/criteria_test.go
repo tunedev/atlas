@@ -38,41 +38,59 @@ func TestParseCriteriaNamesEveryProblem(t *testing.T) {
 }
 
 func TestParseCriteriaRejectsMalformedCriteria(t *testing.T) {
-	cases := map[string]string{
-		"repeated id": `{"version": 1, "criteria": [
-		  {"id": "a", "statement": "s", "weight": 1, "check": {"field": "loaf.grain", "op": "==", "value": "rye"}},
-		  {"id": "a", "statement": "s", "weight": 1, "check": {"field": "loaf.grain", "op": "==", "value": "rye"}}]}`,
-		"must and weight": `{"version": 1, "criteria": [
-		  {"id": "a", "statement": "s", "must": true, "weight": 1, "check": {"field": "loaf.grain", "op": "==", "value": "rye"}}]}`,
-		"neither must nor weight": `{"version": 1, "criteria": [
-		  {"id": "a", "statement": "s", "check": {"field": "loaf.grain", "op": "==", "value": "rye"}}]}`,
-		"op does not fit the kind": `{"version": 1, "criteria": [
+	const rye = `"check": {"field": "loaf.grain", "op": "==", "value": "rye"}`
+	cases := map[string]struct{ doc, want string }{
+		"repeated id": {`{"version": 1, "criteria": [
+		  {"id": "a", "statement": "s", "weight": 1, ` + rye + `},
+		  {"id": "a", "statement": "s", "weight": 1, ` + rye + `}]}`, `id repeats`},
+		"must and weight": {`{"version": 1, "criteria": [
+		  {"id": "a", "statement": "s", "must": true, "weight": 1, ` + rye + `}]}`, `needs exactly one of must and weight`},
+		"must and a zero weight": {`{"version": 1, "criteria": [
+		  {"id": "a", "statement": "s", "must": true, "weight": 0, ` + rye + `}]}`, `needs exactly one of must and weight`},
+		"neither must nor weight": {`{"version": 1, "criteria": [
+		  {"id": "a", "statement": "s", ` + rye + `}]}`, `needs exactly one of must and weight`},
+		"zero weight": {`{"version": 1, "criteria": [
+		  {"id": "a", "statement": "s", "weight": 0, ` + rye + `}]}`, `weight must be positive`},
+		"empty statement": {`{"version": 1, "criteria": [
+		  {"id": "a", "statement": " ", "weight": 1, ` + rye + `}]}`, `statement is empty`},
+		"op does not fit the kind": {`{"version": 1, "criteria": [
 		  {"id": "a", "statement": "s", "weight": 1, "check": {"field": "loaf.toppings", "op": "==", "value": "sesame"}}]}`,
-		"uncanonical value": `{"version": 1, "criteria": [
+			`op "==" does not apply to loaf.toppings`},
+		"uncanonical value": {`{"version": 1, "criteria": [
 		  {"id": "a", "statement": "s", "weight": 1, "check": {"field": "loaf.toppings", "op": "contains_any", "value": ["sesame seeds"]}}]}`,
-		"value outside the pattern": `{"version": 1, "criteria": [
+			`value sesame seeds is outside the vocabulary`},
+		"value outside the pattern": {`{"version": 1, "criteria": [
 		  {"id": "a", "statement": "s", "weight": 1, "check": {"field": "price.currency", "op": "==", "value": "euro"}}]}`,
-		"range outside the bounds": `{"version": 1, "criteria": [
+			`value euro is outside the vocabulary`},
+		"range outside the bounds": {`{"version": 1, "criteria": [
 		  {"id": "a", "statement": "s", "weight": 1, "check": {"field": "open.hours", "op": "overlaps", "value": [20, 26]}}]}`,
-		"backwards range": `{"version": 1, "criteria": [
+			`is not an integer range within 0 to 24`},
+		"backwards range": {`{"version": 1, "criteria": [
 		  {"id": "a", "statement": "s", "weight": 1, "check": {"field": "open.hours", "op": "overlaps", "value": [9, 6]}}]}`,
-		"comparison and combinator together": `{"version": 1, "criteria": [
+			`is not an integer range within 0 to 24`},
+		"comparison and combinator together": {`{"version": 1, "criteria": [
 		  {"id": "a", "statement": "s", "weight": 1, "check": {"field": "loaf.grain", "op": "==", "value": "rye",
 		   "any": [{"field": "loaf.grain", "op": "==", "value": "spelt"}]}}]}`,
-		"empty condition":         `{"version": 1, "criteria": [{"id": "a", "statement": "s", "weight": 1, "check": {}}]}`,
-		"undeclared display":      `{"version": 1, "criteria": [], "display": ["crust"]}`,
-		"partial segment display": `{"version": 1, "criteria": [], "display": ["pri"]}`,
-		"empty in list": `{"version": 1, "criteria": [
+			`a condition is one comparison, one any, or one all`},
+		"empty condition": {`{"version": 1, "criteria": [{"id": "a", "statement": "s", "weight": 1, "check": {}}]}`,
+			`empty condition`},
+		"undeclared display":      {`{"version": 1, "criteria": [], "display": ["crust"]}`, `display "crust" is not a declared field`},
+		"partial segment display": {`{"version": 1, "criteria": [], "display": ["pri"]}`, `display "pri" is not a declared field`},
+		"empty in list": {`{"version": 1, "criteria": [
 		  {"id": "a", "statement": "s", "weight": 1, "check": {"field": "loaf.grain", "op": "in", "value": []}}]}`,
-		"misspelt key": `{"version": 1, "criteria": [
-		  {"id": "a", "statement": "s", "weight": 1, "check": {"field": "loaf.grain", "op": "==", "value": "rye"},
-		   "partail": {"field": "loaf.grain", "op": "==", "value": "spelt"}}]}`,
-		"wrong version": `{"version": 2, "criteria": []}`,
+			`is not a non-empty list`},
+		"misspelt key": {`{"version": 1, "criteria": [
+		  {"id": "a", "statement": "s", "weight": 1, ` + rye + `,
+		   "partail": {"field": "loaf.grain", "op": "==", "value": "spelt"}}]}`, `"partail"`},
+		"wrong-case key": {`{"version": 1, "Criteria": []}`, `"Criteria"`},
+		"trailing data":  {`{"version": 1, "criteria": []} {"version": 1}`, `after top-level value`},
+		"wrong version":  {`{"version": 2, "criteria": []}`, `version 2 is not supported`},
 	}
 	f := bakery(t)
-	for name, doc := range cases {
-		if _, err := search.ParseCriteria([]byte(doc), f); err == nil {
-			t.Errorf("%s: ParseCriteria accepted it", name)
+	for name, tc := range cases {
+		_, err := search.ParseCriteria([]byte(tc.doc), f)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: error = %v, want it to contain %s", name, err, tc.want)
 		}
 	}
 }

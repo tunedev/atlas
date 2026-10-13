@@ -22,7 +22,7 @@ type Criterion struct {
 	ID        string     `json:"id"`
 	Statement string     `json:"statement"`
 	Must      bool       `json:"must,omitempty"`
-	Weight    int        `json:"weight,omitempty"`
+	Weight    *int       `json:"weight,omitempty"`
 	Check     Condition  `json:"check"`
 	Partial   *Condition `json:"partial,omitempty"`
 	When      *Condition `json:"when,omitempty"`

@@ -30,20 +30,29 @@ func TestParseFieldsNamesEveryProblem(t *testing.T) {
 }
 
 func TestParseFieldsRejectsMalformedDeclarations(t *testing.T) {
-	cases := map[string]string{
-		"bad pattern":       `{"version": 1, "fields": {"a": {"kind": "scalar", "pattern": "("}}}`,
-		"uppercase path":    `{"version": 1, "fields": {"Loaf.grain": {"kind": "scalar"}}}`,
-		"wrong version":     `{"version": 2, "fields": {}}`,
-		"misspelt key":      `{"version": 1, "fields": {"a": {"kind": "scalar", "enun": ["x"]}}}`,
-		"enum on text":      `{"version": 1, "fields": {"a": {"kind": "text", "enum": ["x"]}}}`,
-		"pattern on number": `{"version": 1, "fields": {"a": {"kind": "number", "pattern": "^x$"}}}`,
-		"canonical on bool": `{"version": 1, "fields": {"a": {"kind": "bool", "canonical": true}}}`,
-		"min on a scalar":   `{"version": 1, "fields": {"a": {"kind": "scalar", "min": 0}}}`,
-		"min above max":     `{"version": 1, "fields": {"a": {"kind": "range", "min": 10, "max": 0}}}`,
+	cases := map[string]struct{ doc, want string }{
+		"bad pattern":       {`{"version": 1, "fields": {"a": {"kind": "scalar", "pattern": "("}}}`, `pattern: error parsing regexp`},
+		"uppercase path":    {`{"version": 1, "fields": {"Loaf.grain": {"kind": "scalar"}}}`, `path must match`},
+		"wrong version":     {`{"version": 2, "fields": {}}`, `version 2 is not supported`},
+		"misspelt key":      {`{"version": 1, "fields": {"a": {"kind": "scalar", "enun": ["x"]}}}`, `"enun"`},
+		"wrong-case key":    {`{"Version": 1, "fields": {}}`, `"Version"`},
+		"trailing data":     {`{"version": 1, "fields": {}} {"version": 1}`, `after top-level value`},
+		"enum on text":      {`{"version": 1, "fields": {"a": {"kind": "text", "enum": ["x"]}}}`, `enum, pattern and canonical apply only to scalar and list`},
+		"pattern on number": {`{"version": 1, "fields": {"a": {"kind": "number", "pattern": "^x$"}}}`, `enum, pattern and canonical apply only to scalar and list`},
+		"canonical on bool": {`{"version": 1, "fields": {"a": {"kind": "bool", "canonical": true}}}`, `enum, pattern and canonical apply only to scalar and list`},
+		"min on a scalar":   {`{"version": 1, "fields": {"a": {"kind": "scalar", "min": 0}}}`, `min and max apply only to range`},
+		"min above max":     {`{"version": 1, "fields": {"a": {"kind": "range", "min": 10, "max": 0}}}`, `min is above max`},
+		"uppercase alias key": {`{"version": 1, "fields": {}, "aliases": {"Golang": "go"}}`,
+			`alias "Golang": key is not trimmed lowercase`},
+		"uncanonical alias target": {`{"version": 1, "fields": {}, "aliases": {"golang": "Go"}}`,
+			`alias "golang": target "Go" is not trimmed lowercase`},
+		"alias chain": {`{"version": 1, "fields": {}, "aliases": {"a": "b", "b": "c"}}`,
+			`alias "a": target "b" is itself an alias`},
 	}
-	for name, doc := range cases {
-		if _, err := search.ParseFields([]byte(doc)); err == nil {
-			t.Errorf("%s: ParseFields accepted it", name)
+	for name, tc := range cases {
+		_, err := search.ParseFields([]byte(tc.doc))
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: error = %v, want it to contain %s", name, err, tc.want)
 		}
 	}
 }

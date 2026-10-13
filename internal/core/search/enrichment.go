@@ -7,7 +7,9 @@ import (
 
 // Enrichment is what a model read out of one subject. Values nests the
 // pack's declared fields by path segment; a null means the subject does not
-// say. Evidence maps a field path to a verbatim quote.
+// say. Values must have the shapes encoding/json decodes into an any:
+// map[string]any, []any, string, float64 and bool. Any other Go type
+// compares as null. Evidence maps a field path to a verbatim quote.
 type Enrichment struct {
 	Version     int               `json:"version"`
 	SubjectID   string            `json:"subject_id"`
