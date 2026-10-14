@@ -8,6 +8,7 @@ require (
 	github.com/go-git/go-git/v5 v5.19.2
 	github.com/go-rod/rod v0.116.2
 	github.com/gocolly/colly/v2 v2.3.0
+	github.com/google/jsonschema-go v0.4.3
 	github.com/marcboeker/go-duckdb/v2 v2.4.3
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/temoto/robotstxt v1.1.2
@@ -54,7 +55,6 @@ require (
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/flatbuffers v25.2.10+incompatible // indirect
-	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect

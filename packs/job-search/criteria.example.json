@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "query": "senior backend, Go, remote or relocation, agent-native teams",
+  "criteria": [
+    {"id": "can-work-it", "statement": "Remote open to Nigeria, or relocation/visa offered",
+     "must": true,
+     "check": {"any": [
+       {"field": "remote.eligible_regions", "op": "contains_any", "value": ["NG", "AFRICA", "EMEA", "WORLDWIDE"]},
+       {"field": "relocation.offered", "op": "==", "value": true}]}},
+    {"id": "focus", "statement": "Backend or platform role",
+     "must": true,
+     "check": {"field": "role.focus", "op": "in", "value": ["backend", "platform"]}},
+    {"id": "timezone", "statement": "Within 3 hours of WAT, for remote roles",
+     "weight": 1,
+     "when": {"field": "remote.mode", "op": "==", "value": "remote"},
+     "check": {"field": "remote.utc_offsets", "op": "overlaps", "value": [-2, 4]}},
+    {"id": "seniority", "statement": "Senior or staff",
+     "weight": 2,
+     "check": {"field": "role.seniority", "op": "in", "value": ["senior", "staff"]}},
+    {"id": "stack", "statement": "Go first, TypeScript second",
+     "weight": 2,
+     "check": {"field": "stack.languages", "op": "contains_any", "value": ["go"]},
+     "partial": {"field": "stack.languages", "op": "contains_any", "value": ["typescript", "node"]}},
+    {"id": "platform", "statement": "Kubernetes, cloud, observability",
+     "weight": 1,
+     "check": {"field": "stack.platforms", "op": "contains_any", "value": ["kubernetes", "gcp", "aws", "opentelemetry", "prometheus"]}},
+    {"id": "agent-native", "statement": "Engineers already work with AI agents",
+     "weight": 3,
+     "check": {"field": "signals.agent_native", "op": "==", "value": true}}
+  ],
+  "display": ["salary", "role.employment_type"]
+}
