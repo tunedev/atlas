@@ -229,15 +229,17 @@ The isolation sandbox, the credential broker and the suspend outcome are not in 
 `internal/` holds no code for them. Each joins with an `adds` PR when it is built.
 
 Invariants. Each lists the doc that states it and the test that enforces it, where one
-exists.
+exists. `credentials-never-in-model-context` has no test yet: the credential broker that
+would enforce it is not built.
 
 | id | summary | docs |
 |---|---|---|
 | `no-use-case-vocabulary` | The Go tree, the web source and this map name no pack's vocabulary. | `README.md`, `internal/arch/vocabulary_test.go` |
 | `core-imports-no-adapter` | The core imports no adapter, driver, network or TLS package. | `docs/design/surfaces.md`, `internal/arch/arch_test.go` |
 | `inbound-adapters-isolated` | An inbound adapter imports only the core and its own subtree. | `docs/design/surfaces.md`, `internal/arch/surfaces_test.go` |
-| `one-tool-registry` | The composition root builds the tool registry once; every surface shares it. | `docs/design/surfaces.md`, `internal/arch/surfaces_test.go` |
-| `credentials-never-in-model-context` | No credential reaches a model's context, a blueprint, or the crawler. | `README.md`, `internal/arch/conduct_test.go` |
+| `one-tool-registry` | The composition root builds the tool registry once; every surface shares it. | `docs/design/surfaces.md`, `cmd/atlas/main_test.go` |
+| `credentials-never-in-model-context` | No credential reaches a model's context or a blueprint. | `README.md` |
+| `crawler-holds-no-credential` | The crawler's config and target types have nowhere to hold a credential. | `internal/arch/conduct_test.go` |
 | `drafts-never-submit` | No tool sends a write method to a remote host other than the model endpoint. | `README.md`, `internal/arch/submit_test.go` |
 | `git-is-the-record` | Git is the system of record; every index rebuilds from git alone. | `docs/design/the-record.md` |
 
