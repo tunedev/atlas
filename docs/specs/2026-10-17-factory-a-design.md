@@ -44,8 +44,10 @@ docs/decisions/
 ```markdown
 # NNNN: Short decision title (the no)
 
-- **Status:** accepted <!-- accepted | superseded by [NNNN](./NNNN-slug.md) -->
+- **Status:** accepted
 - **Date:** YYYY-MM-DD
+
+<!-- Status is accepted, or superseded by [NNNN](./NNNN-slug.md). Delete this comment. -->
 
 ## Context
 
@@ -96,9 +98,10 @@ A record is about half a page.
 
 - a file other than `README.md` and `0000-template.md` does not match
   `^[0-9]{4}-[a-z0-9]+(-[a-z0-9]+)*\.md$`;
-- two records share a number;
-- a record's Status line is neither `accepted` nor `superseded by [NNNN](./NNNN-<slug>.md)`
-  naming a record that exists;
+- two records share a number (the template is not a record and is not counted);
+- a record's Status line, after `- **Status:** ` and with surrounding whitespace trimmed, is
+  neither exactly `accepted` nor exactly `superseded by [NNNN](./NNNN-<slug>.md)` naming a
+  record that exists;
 - a record lacks any of the headings `## Context`, `## Decision`, `## Consequences`,
   `## Revisit if`;
 - `README.md` does not link a record, or links one that does not exist.
@@ -145,8 +148,11 @@ with vouch: a new field means `version: 2`, agreed with vouch first.
 - A directory entry ends in `/` (`internal/adapters/outbound/gitdocs/`), so it never matches
   a sibling that shares its prefix.
 - A file entry names one file (`internal/core/app/judge.go`). File entries exist because
-  `internal/core/app`, `internal/core/ports` and `internal/adapters/outbound/tools` are flat
-  packages holding several primitives. A file entry lists its `_test.go` file beside it, since
+  `internal/core/app` and `internal/core/ports` are flat packages holding several primitives.
+- In `internal/adapters/outbound/tools`, only the registry is separated. Each tool wrapper
+  (`tools/judge.go`, `tools/ground.go` and the rest) belongs to `generic-tools` by design: a
+  tool's name and config are the generic-tools contract, and the logic it wraps lives in the
+  owning primitive's core files, so a change to that logic shows on that primitive. A file entry lists its `_test.go` file beside it, since
   a prefix match on `judge.go` does not cover `judge_test.go`.
 - In a flat package, one primitive owns the directory and the others own their files. A new
   file in that package belongs to the directory owner until the map gives it to another.
@@ -206,7 +212,7 @@ to use, each kept only if it describes the primitive:
 
 | Primitive | docs |
 |---|---|
-| `cli`, `mcp-server`, `store-lock`, `arch-rules` | `docs/design/surfaces.md` |
+| `cli`, `mcp-server`, `config`, `telemetry`, `store-lock`, `arch-rules` | `docs/design/surfaces.md` |
 | `web-ui` | `docs/design/web.md` |
 | `pack-loader`, `blueprint-runner`, `tool-registry`, `generic-tools` | `docs/specs/2026-08-24-agent-substrate-design.md` |
 | `permission-engine` | `docs/specs/2026-09-09-increment-1-boundaries-design.md` |
@@ -218,7 +224,6 @@ to use, each kept only if it describes the primitive:
 | `sources` | `docs/specs/2026-09-24-epic-5-feed.md` |
 | `agent-delegation` | `docs/specs/2026-09-24-epic-4-agent.md` |
 | `conversion` | `docs/specs/2026-09-27-epic-9-tailoring.md` |
-| `config`, `telemetry` | `docs/specs/2026-09-17-job-hunt-harness-design.md` |
 
 The isolation sandbox, the credential broker and the suspend outcome are not in the map:
 `internal/` holds no code for them. Each joins with an `adds` PR when it is built.
@@ -260,7 +265,8 @@ and fails, naming the file, when a file has no longest-prefix owner. Both walks 
 test result.
 
 `TestPrimitivesMapIsFreeOfUseCaseVocabulary` runs the existing `checkFileVocabulary` over the
-map.
+whole map, paths included, so a `docs` entry whose file name carries pack words (such as
+`docs/specs/2026-09-17-job-hunt-harness-design.md`) cannot be used.
 
 ### CI
 
@@ -440,7 +446,7 @@ Each PR's Verified section pastes the output.
 
 | Item | Check |
 |---|---|
-| `atlas/decisions` | `go test ./internal/arch -run TestDecision` passes. A scratch copy of the template saved as a second `0000`-numbered record, and a record without `## Revisit if`, each make it fail, shown and then removed. |
+| `atlas/decisions` | `go test ./internal/arch -run TestDecision` passes. Two well-formed scratch records `0002-a.md` and `0002-b.md`, both linked from README, fail it on the duplicate number; a linked record without `## Revisit if` fails it on the heading. Each is shown and then removed. |
 | `atlas/primitives` | `go test ./internal/arch -run TestPrimitives` passes, and `go test -race ./...` passes. Each of a repeated id, an unknown group, a missing path, a 121-character summary, a directory entry without `/`, and a new file under `internal/core/` moved outside every root makes a named failure, shown and then reverted. |
 | `atlas/decision-self-hosted` | `TestDecision` passes with 0001. `grep -n "Design, no code\|does not exist\|Everything runs on a laptop" README.md CLAUDE.md` prints nothing. The PR is docs-tier, so its checks show the Docs map step ran. |
 | `atlas/pr-template` | `go test ./internal/arch -run TestPullRequestTemplate` passes, and fails when Touched and Risk swap places, shown and then reverted. |
